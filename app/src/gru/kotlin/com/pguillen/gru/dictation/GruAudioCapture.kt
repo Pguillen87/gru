@@ -8,7 +8,7 @@
 package com.pguillen.gru.dictation
 
 import android.content.Context
-import com.pguillen.gru.audio.RecordingController
+import com.pguillen.gru.audio.AndroidAudioRecorder
 import java.io.File
 
 interface GruAudioCapture {
@@ -39,7 +39,7 @@ class AndroidGruAudioCapture(
     context: Context,
     private val nowMillis: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) : GruAudioCapture {
-    private val recorder = RecordingController(context.applicationContext)
+    private val recorder = AndroidAudioRecorder(context.applicationContext)
     private var startedAtMillis = 0L
     private var peakAmplitude = 0
 

@@ -32,7 +32,7 @@ import java.nio.ByteOrder
  *
  * Requires the RECORD_AUDIO runtime permission; [start] throws if the microphone cannot be acquired.
  */
-class RecordingController(private val context: Context) {
+class AndroidAudioRecorder(private val context: Context) {
 
     private var record: AudioRecord? = null
     private var thread: Thread? = null
@@ -134,7 +134,7 @@ class RecordingController(private val context: Context) {
             old.write(wavHeader(bytes))
             old.close()
             if (bytes > 0 && base != null) {
-                val seg = File(context.cacheDir, "dictate_seg_${segmentSeq++}.wav")
+                val seg = File(context.cacheDir, "gru_segment_${segmentSeq++}.wav")
                 seg.delete()
                 if (base.renameTo(seg)) seg else null
             } else null
@@ -246,7 +246,7 @@ class RecordingController(private val context: Context) {
     }
 
     companion object {
-        private const val AUDIO_FILE_NAME = "dictate_audio.wav"
+        private const val AUDIO_FILE_NAME = "gru_audio.wav"
         private const val SAMPLE_RATE = 16_000
         private const val CHANNEL = AudioFormat.CHANNEL_IN_MONO
         private const val ENCODING = AudioFormat.ENCODING_PCM_16BIT

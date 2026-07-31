@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="gru__accessibility_service_label">Gru floating pet</string>
-  <string name="dictate__error_no_api_key">Add your Groq API key in Gru settings.</string>
-  <string name="dictate__error_unknown">Unknown error during transcription.</string>
-  <string name="dictate__no_speech_detected">No speech detected</string>
-  <string name="dictate__overlay_notification_channel">Gru recording</string>
-  <string name="dictate__overlay_notification_recording">Listening — tap the pet to transcribe</string>
+  <string name="gru__error_no_api_key">Add your Groq API key in Gru settings.</string>
+  <string name="gru__error_unknown">Unknown error during transcription.</string>
+  <string name="gru__no_speech_detected">No speech detected</string>
+  <string name="gru__overlay_notification_channel">Gru recording</string>
+  <string name="gru__overlay_notification_recording">Listening — tap the pet to transcribe</string>
   <string name="gru__accessibility_action">Open Accessibility</string>
   <string name="gru__accessibility_summary">Gru uses Accessibility only to detect the focused text field and insert your transcription. It does not store typed text.</string>
   <string name="gru__accessibility_title">Write in the focused field</string>

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="gru__accessibility_service_label">Pet flutuante do Gru</string>
-  <string name="dictate__error_no_api_key">Adicione sua chave da Groq nas configurações do Gru.</string>
-  <string name="dictate__error_unknown">Erro desconhecido durante a transcrição.</string>
-  <string name="dictate__no_speech_detected">Nenhuma fala detectada</string>
-  <string name="dictate__overlay_notification_channel">Gravação do Gru</string>
-  <string name="dictate__overlay_notification_recording">Ouvindo — toque no pet para transcrever</string>
+  <string name="gru__error_no_api_key">Adicione sua chave da Groq nas configurações do Gru.</string>
+  <string name="gru__error_unknown">Erro desconhecido durante a transcrição.</string>
+  <string name="gru__no_speech_detected">Nenhuma fala detectada</string>
+  <string name="gru__overlay_notification_channel">Gravação do Gru</string>
+  <string name="gru__overlay_notification_recording">Ouvindo — toque no pet para transcrever</string>
   <string name="gru__accessibility_action">Abrir Acessibilidade</string>
   <string name="gru__accessibility_summary">O Gru usa Acessibilidade somente para detectar o campo de texto selecionado e inserir a transcrição. Ele não armazena o que você digita.</string>
   <string name="gru__accessibility_title">Escrever no campo selecionado</string>

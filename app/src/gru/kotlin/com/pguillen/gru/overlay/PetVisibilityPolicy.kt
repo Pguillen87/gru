@@ -6,7 +6,7 @@
 
 package com.pguillen.gru.overlay
 
-internal object BubbleVisibilityPolicy {
+internal object PetVisibilityPolicy {
     fun shouldShow(
         enabled: Boolean,
         editableFocused: Boolean,

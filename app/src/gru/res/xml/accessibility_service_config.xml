@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Configuration for DictateAccessibilityService (issue #88, floating dictation button).
+  Configuration for GruAccessibilityService (issue #88, floating dictation button).
 
   canRetrieveWindowContent is required to read the focused field (to detect that it is editable and
   to insert the transcribed text at the cursor). The event types are limited to focus/selection/window

@@ -78,7 +78,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import com.pguillen.gru.R
-import com.pguillen.gru.overlay.DictateAccessibilityService
+import com.pguillen.gru.overlay.GruAccessibilityService
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -370,7 +370,7 @@ class GruActivity : ComponentActivity() {
     }
 
     private fun isGruAccessibilityEnabled(context: Context): Boolean {
-        val expected = ComponentName(context, DictateAccessibilityService::class.java)
+        val expected = ComponentName(context, GruAccessibilityService::class.java)
         val enabled = Settings.Secure.getString(
             context.contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,

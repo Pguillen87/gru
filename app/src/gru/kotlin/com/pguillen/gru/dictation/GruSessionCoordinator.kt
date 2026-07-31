@@ -11,7 +11,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
-import com.pguillen.gru.overlay.DictateAccessibilityService
+import com.pguillen.gru.overlay.GruAccessibilityService
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -161,7 +161,7 @@ object GruDictation {
                 scope = scope,
                 captureFactory = { AndroidGruAudioCapture(appContext) },
                 transcription = GroqTranscriptionGateway(StoredGroqSettings(appContext)),
-                textTarget = GruTextTarget(DictateAccessibilityService::injectText),
+                textTarget = GruTextTarget(GruAccessibilityService::injectText),
                 nowMillis = android.os.SystemClock::elapsedRealtime,
             )
         }

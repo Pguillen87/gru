@@ -31,17 +31,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** Detects the active editor and inserts Gru's finished transcript at its cursor. */
-class DictateAccessibilityService : AccessibilityService() {
+class GruAccessibilityService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val focusUpdate = Runnable(::updateEditorState)
-    private var bubble: DictateBubbleController? = null
+    private var bubble: GruPetOverlayController? = null
     private var foreground = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         createNotificationChannel()
-        bubble = DictateBubbleController(this).also(DictateBubbleController::start)
+        bubble = GruPetOverlayController(this).also(GruPetOverlayController::start)
         updateEditorState()
         Log.d(TAG, "Accessibility service connected")
     }
@@ -196,9 +196,9 @@ class DictateAccessibilityService : AccessibilityService() {
     fun startMicForeground() {
         if (foreground) return
         val notification = Notification.Builder(this, NOTIFICATION_CHANNEL)
-            .setSmallIcon(R.drawable.ic_dictate_overlay_mic)
+            .setSmallIcon(R.drawable.ic_gru_microphone)
             .setContentTitle(getString(R.string.gru__app_name))
-            .setContentText(getString(R.string.dictate__overlay_notification_recording))
+            .setContentText(getString(R.string.gru__overlay_notification_recording))
             .setOngoing(true)
             .build()
         runCatching {
@@ -224,7 +224,7 @@ class DictateAccessibilityService : AccessibilityService() {
         manager.createNotificationChannel(
             NotificationChannel(
                 NOTIFICATION_CHANNEL,
-                getString(R.string.dictate__overlay_notification_channel),
+                getString(R.string.gru__overlay_notification_channel),
                 NotificationManager.IMPORTANCE_LOW,
             ),
         )
@@ -254,7 +254,7 @@ class DictateAccessibilityService : AccessibilityService() {
         private const val FOCUS_UPDATE_DEBOUNCE_MILLIS = 150L
         private const val CLIPBOARD_RESTORE_MILLIS = 400L
 
-        @Volatile private var instance: DictateAccessibilityService? = null
+        @Volatile private var instance: GruAccessibilityService? = null
 
         private val mutableEditableFocused = MutableStateFlow(false)
         val editableFocused: StateFlow<Boolean> = mutableEditableFocused.asStateFlow()

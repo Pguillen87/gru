@@ -31,7 +31,7 @@
         </activity>
 
         <service
-            android:name="com.pguillen.gru.overlay.DictateAccessibilityService"
+            android:name="com.pguillen.gru.overlay.GruAccessibilityService"
             android:label="@string/gru__accessibility_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:foregroundServiceType="microphone"

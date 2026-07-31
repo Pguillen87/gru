@@ -42,7 +42,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.hypot
 
 /** Owns Gru's draggable accessibility overlay and renders the current dictation state. */
-class DictateBubbleController(private val service: DictateAccessibilityService) {
+class GruPetOverlayController(private val service: GruAccessibilityService) {
     private val context: Context get() = service
     private val windowManager = service.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
@@ -77,7 +77,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
 
     fun start() {
         scope.launch {
-            DictateAccessibilityService.foregroundPackage.collect(::onForegroundPackageChanged)
+            GruAccessibilityService.foregroundPackage.collect(::onForegroundPackageChanged)
         }
         scope.launch {
             val appearance = combine(
@@ -86,8 +86,8 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                 prefs.opacity,
             ) { design, size, opacity -> Appearance(design, size, opacity.coerceIn(40, 100)) }
             val target = combine(
-                DictateAccessibilityService.editableFocused,
-                DictateAccessibilityService.imeVisible,
+                GruAccessibilityService.editableFocused,
+                GruAccessibilityService.imeVisible,
             ) { focused, imeVisible -> TargetState(focused, imeVisible) }
             combine(
                 prefs.enabled,
@@ -127,7 +127,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
 
         val targetAvailable = target.editableFocused && target.imeVisible
         if (!targetAvailable && state is GruDictationState.Recording) GruDictation.cancel()
-        val shouldShow = BubbleVisibilityPolicy.shouldShow(
+        val shouldShow = PetVisibilityPolicy.shouldShow(
             enabled = enabled,
             editableFocused = target.editableFocused,
             imeVisible = target.imeVisible,
@@ -200,12 +200,12 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
     private fun createView(): FrameLayout {
         val viewSize = scaledDp(96)
         val petSize = scaledDp(86)
-        val accent = ContextCompat.getColor(context, R.color.dictate_overlay_accent)
+        val accent = ContextCompat.getColor(context, R.color.gru_pet_accent)
         val signal = PetSignalView(
             context = context,
             accentColor = accent,
-            recordingColor = ContextCompat.getColor(context, R.color.dictate_overlay_recording),
-            successColor = ContextCompat.getColor(context, R.color.dictate_overlay_success),
+            recordingColor = ContextCompat.getColor(context, R.color.gru_pet_recording),
+            successColor = ContextCompat.getColor(context, R.color.gru_pet_success),
             errorColor = ContextCompat.getColor(context, R.color.colorError),
         ).also { signalView = it }
         val pet = LivingPetView(context, petAtlas(currentDesign)).apply {
@@ -219,7 +219,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
             includeFontPadding = false
             maxLines = 1
             background = roundedRect(
-                ContextCompat.getColor(context, R.color.dictate_overlay_recording),
+                ContextCompat.getColor(context, R.color.gru_pet_recording),
                 scaledDp(10).toFloat(),
             )
             elevation = scaledDp(5).toFloat()
@@ -277,9 +277,9 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
     }
 
     private fun errorMessage(reason: GruDictationFailure): String = when (reason) {
-        GruDictationFailure.MISSING_API_KEY -> context.getString(R.string.dictate__error_no_api_key)
-        GruDictationFailure.NO_SPEECH -> context.getString(R.string.dictate__no_speech_detected)
-        else -> context.getString(R.string.dictate__error_unknown)
+        GruDictationFailure.MISSING_API_KEY -> context.getString(R.string.gru__error_no_api_key)
+        GruDictationFailure.NO_SPEECH -> context.getString(R.string.gru__no_speech_detected)
+        else -> context.getString(R.string.gru__error_unknown)
     }
 
     private fun descriptionFor(state: GruDictationState): Int = when (state) {
