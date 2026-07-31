@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="gru_splash_background">#FFFFFF</color>
+    <color name="gru_splash_icon_background">#4F576D</color>
+    <color name="colorError">#B00020</color>
+    <color name="dictate_overlay_accent">#30B7E6</color>
+    <color name="dictate_overlay_recording">#EC6A5E</color>
+    <color name="dictate_overlay_icon">#FFFFFF</color>
+    <color name="dictate_overlay_success">#43A047</color>
+</resources>

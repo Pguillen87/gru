@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="GruTheme.Splash" parent="Theme.SplashScreen.IconBackground">
+        <item name="postSplashScreenTheme">@style/GruTheme</item>
+        <item name="windowSplashScreenBackground">@color/gru_splash_background</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/gru_splash_icon_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/gru_pet_lume</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
+    </style>
+
+    <style name="GruTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/gru_splash_background</item>
+        <item name="android:colorBackground">@color/gru_splash_background</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
+    </style>
+</resources>

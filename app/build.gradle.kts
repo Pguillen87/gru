@@ -57,6 +57,8 @@ configure<ApplicationExtension> {
     sourceSets.named("main") {
         java.setSrcDirs(listOf("src/gru/kotlin"))
         kotlin.setSrcDirs(listOf("src/gru/kotlin"))
+        res.setSrcDirs(listOf("src/gru/res"))
+        manifest.srcFile("src/gru/AndroidManifest.xml")
     }
 
     sourceSets.named("test") {
