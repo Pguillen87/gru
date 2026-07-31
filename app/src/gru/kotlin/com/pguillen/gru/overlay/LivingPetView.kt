@@ -38,7 +38,7 @@ internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
     private var modeStartedAt = SystemClock.elapsedRealtime()
     private var targetLevel = 0f
     private var renderedLevel = 0f
-    private val animator = createAnimator()
+    private var animator: ValueAnimator? = null
 
     fun setMode(value: PetMotionMode) {
         if (mode == value) return
@@ -53,7 +53,19 @@ internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
 
     fun release() {
         animator?.cancel()
+        animator = null
         if (!bitmap.isRecycled) bitmap.recycle()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        animator = createAnimator()?.also(ValueAnimator::start)
+    }
+
+    override fun onDetachedFromWindow() {
+        animator?.cancel()
+        animator = null
+        super.onDetachedFromWindow()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -199,7 +211,6 @@ internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener { invalidate() }
-            start()
         }
     }
 
@@ -241,7 +252,7 @@ internal class PetSignalView(
     private var mode = PetMotionMode.IDLE
     private var targetLevel = 0f
     private var renderedLevel = 0f
-    private val animator = createAnimator()
+    private var animator: ValueAnimator? = null
 
     fun setMode(value: PetMotionMode) {
         mode = value
@@ -252,7 +263,21 @@ internal class PetSignalView(
         targetLevel = value.coerceIn(0f, 1f)
     }
 
-    fun release() = animator?.cancel() ?: Unit
+    fun release() {
+        animator?.cancel()
+        animator = null
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        animator = createAnimator()?.also(ValueAnimator::start)
+    }
+
+    override fun onDetachedFromWindow() {
+        animator?.cancel()
+        animator = null
+        super.onDetachedFromWindow()
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -309,7 +334,6 @@ internal class PetSignalView(
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener { invalidate() }
-            start()
         }
     }
 }

@@ -21,6 +21,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.graphics.Rect
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -117,6 +118,13 @@ class GruAccessibilityService : AccessibilityService() {
     private fun isImeWindowShown(): Boolean = runCatching {
         windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
     }.getOrDefault(false)
+
+    internal fun editorAreaBottom(): Int = runCatching {
+        val bounds = Rect()
+        windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+            ?.getBoundsInScreen(bounds)
+        bounds.top.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+    }.getOrDefault(resources.displayMetrics.heightPixels)
 
     private fun currentAppPackage(): String? = runCatching {
         windows

@@ -132,7 +132,12 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             editableFocused = target.editableFocused,
             imeVisible = target.imeVisible,
         )
-        if (shouldShow) ensureShown() else hide()
+        if (shouldShow) {
+            ensureShown()
+            clampPosition()
+        } else {
+            hide()
+        }
         renderState(state)
         manageForeground(state)
         rootView?.keepScreenOn = state is GruDictationState.Recording
@@ -338,7 +343,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
                     if (!dragging && hypot(dx.toDouble(), dy.toDouble()) >= slop) dragging = true
                     if (dragging) {
                         layout.x = (startX + dx.toInt()).coerceIn(0, maxX())
-                        layout.y = (startY + dy.toInt()).coerceIn(0, maxY())
+                        layout.y = (startY + dy.toInt()).coerceIn(minY(), maxY())
                         updateWindowLayout()
                     }
                     true
@@ -387,7 +392,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = (screenWidth() - width - EDGE_MARGIN).coerceAtLeast(0)
-            y = ((screenHeight() - width) / 2).coerceAtLeast(0)
+            y = ((service.editorAreaBottom() - width) / 2).coerceIn(minY(), maxY())
         }
     }
 
@@ -399,10 +404,10 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         params?.let { layout ->
             if (saved != null) {
                 layout.x = saved.first.coerceIn(0, maxX())
-                layout.y = saved.second.coerceIn(0, maxY())
+                layout.y = saved.second.coerceIn(minY(), maxY())
             } else {
                 layout.x = (maxX() - EDGE_MARGIN).coerceAtLeast(0)
-                layout.y = ((screenHeight() - rootHeight()) / 2).coerceAtLeast(0)
+                layout.y = ((service.editorAreaBottom() - rootHeight()) / 2).coerceIn(minY(), maxY())
             }
             updateWindowLayout()
         }
@@ -416,6 +421,16 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
 
     private fun updateWindowLayout() {
         if (added) rootView?.let { view -> params?.let { runCatching { windowManager.updateViewLayout(view, it) } } }
+    }
+
+    private fun clampPosition() {
+        val layout = params ?: return
+        val x = layout.x.coerceIn(0, maxX())
+        val y = layout.y.coerceIn(minY(), maxY())
+        if (layout.x == x && layout.y == y) return
+        layout.x = x
+        layout.y = y
+        updateWindowLayout()
     }
 
     private fun petAtlas(design: GruPet): Int = when (design) {
@@ -445,7 +460,8 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private fun screenWidth(): Int = context.resources.displayMetrics.widthPixels
     private fun screenHeight(): Int = context.resources.displayMetrics.heightPixels
     private fun maxX(): Int = (screenWidth() - rootWidth()).coerceAtLeast(0)
-    private fun maxY(): Int = (screenHeight() - rootHeight()).coerceAtLeast(0)
+    private fun minY(): Int = EDGE_MARGIN
+    private fun maxY(): Int = (service.editorAreaBottom() - rootHeight() - EDGE_MARGIN).coerceAtLeast(minY())
 
     private fun animationsEnabled(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.O || ValueAnimator.areAnimatorsEnabled()
