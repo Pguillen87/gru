@@ -11,11 +11,7 @@ internal object BubbleVisibilityPolicy {
         enabled: Boolean,
         editableFocused: Boolean,
         imeVisible: Boolean,
-        blockedByOwnKeyboard: Boolean,
-        recognitionOverlayActive: Boolean,
     ): Boolean = enabled &&
         editableFocused &&
-        imeVisible &&
-        !blockedByOwnKeyboard &&
-        !recognitionOverlayActive
+        imeVisible
 }
