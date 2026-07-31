@@ -7,10 +7,11 @@
 
 package dev.patrickgold.florisboard.gru.dictation
 
-import dev.patrickgold.florisboard.app.FlorisPreferenceStore
 import dev.patrickgold.florisboard.dictate.provider.OpenAiCompatibleClient
 import dev.patrickgold.florisboard.dictate.provider.ProviderConfig
 import dev.patrickgold.florisboard.dictate.provider.TranscriptionRequest
+import dev.patrickgold.florisboard.gru.GruPreferences
+import android.content.Context
 import java.io.File
 import java.io.IOException
 
@@ -23,22 +24,14 @@ interface GruTranscriptionSettings {
     val model: String
 }
 
-class LegacyGroqSettings : GruTranscriptionSettings {
-    private val prefs by FlorisPreferenceStore
+class StoredGroqSettings(context: Context) : GruTranscriptionSettings {
+    private val prefs = GruPreferences.get(context)
 
     override val apiKey: String
-        get() = prefs.dictate.providerAccounts.get()[GROQ_ID]?.apiKey.orEmpty()
+        get() = prefs.groqApiKey
 
     override val model: String
-        get() = prefs.dictate.providerAccounts.get()[GROQ_ID]
-            ?.transcriptionModel
-            ?.takeIf(String::isNotBlank)
-            ?: DEFAULT_MODEL
-
-    private companion object {
-        const val GROQ_ID = "groq"
-        const val DEFAULT_MODEL = "whisper-large-v3-turbo"
-    }
+        get() = prefs.groqModel
 }
 
 class GroqTranscriptionGateway(

@@ -15,9 +15,6 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -30,9 +27,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import dev.patrickgold.florisboard.R
-import dev.patrickgold.florisboard.app.FlorisPreferenceStore
-import dev.patrickgold.florisboard.dictate.DictateFloatingButtonDesign
-import dev.patrickgold.florisboard.dictate.DictateFloatingButtonSize
+import dev.patrickgold.florisboard.gru.GruPet
+import dev.patrickgold.florisboard.gru.GruPetSize
+import dev.patrickgold.florisboard.gru.GruPreferences
 import dev.patrickgold.florisboard.gru.dictation.GruDictation
 import dev.patrickgold.florisboard.gru.dictation.GruDictationFailure
 import dev.patrickgold.florisboard.gru.dictation.GruDictationState
@@ -49,7 +46,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
     private val context: Context get() = service
     private val windowManager = service.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
-    private val prefs by FlorisPreferenceStore
+    private val prefs = GruPreferences.get(context)
 
     private var rootView: FrameLayout? = null
     private var petView: LivingPetView? = null
@@ -59,8 +56,8 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
     private var added = false
     private var desiredVisible = false
 
-    private var currentDesign = DictateFloatingButtonDesign.PILL
-    private var currentSize = DictateFloatingButtonSize.MEDIUM
+    private var currentDesign = GruPet.FAISCA
+    private var currentSize = GruPetSize.MEDIUM
     private var currentOpacity = 100
     private var previousState: GruDictationState = GruDictationState.Idle
     private var currentPackage: String? = null
@@ -68,8 +65,8 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
     private var snapAnimator: ValueAnimator? = null
 
     private data class Appearance(
-        val design: DictateFloatingButtonDesign,
-        val size: DictateFloatingButtonSize,
+        val design: GruPet,
+        val size: GruPetSize,
         val opacity: Int,
     )
 
@@ -84,16 +81,16 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
         }
         scope.launch {
             val appearance = combine(
-                prefs.dictate.floatingButtonDesign.asFlow(),
-                prefs.dictate.floatingButtonSize.asFlow(),
-                prefs.dictate.floatingButtonOpacity.asFlow(),
+                prefs.pet,
+                prefs.size,
+                prefs.opacity,
             ) { design, size, opacity -> Appearance(design, size, opacity.coerceIn(40, 100)) }
             val target = combine(
                 DictateAccessibilityService.editableFocused,
                 DictateAccessibilityService.imeVisible,
             ) { focused, imeVisible -> TargetState(focused, imeVisible) }
             combine(
-                prefs.dictate.floatingButtonEnabled.asFlow(),
+                prefs.enabled,
                 appearance,
                 target,
                 GruDictation.state(context),
@@ -303,7 +300,6 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
     }
 
     private fun onTap() {
-        if (prefs.dictate.floatingButtonHaptic.get()) vibrateTap()
         val state = GruDictation.state(context).value
         if (state !is GruDictationState.Recording && state !is GruDictationState.Transcribing) {
             service.startMicForeground()
@@ -416,28 +412,12 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
         if (added) rootView?.let { view -> params?.let { runCatching { windowManager.updateViewLayout(view, it) } } }
     }
 
-    private fun vibrateTap() {
-        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        }
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
-            } else {
-                vibrator.vibrate(VibrationEffect.createOneShot(20L, VibrationEffect.DEFAULT_AMPLITUDE))
-            }
-        }
-    }
-
-    private fun petAtlas(design: DictateFloatingButtonDesign): Int = when (design) {
-        DictateFloatingButtonDesign.PILL -> R.drawable.gru_pet_lume_atlas
-        DictateFloatingButtonDesign.RING -> R.drawable.gru_pet_faisca_atlas
-        DictateFloatingButtonDesign.ORB -> R.drawable.gru_pet_bip_atlas
-        DictateFloatingButtonDesign.CLOUD -> R.drawable.gru_pet_pingo_atlas
-        DictateFloatingButtonDesign.PUDIM -> R.drawable.gru_pet_pudim_atlas
+    private fun petAtlas(design: GruPet): Int = when (design) {
+        GruPet.LUME -> R.drawable.gru_pet_lume_atlas
+        GruPet.FAISCA -> R.drawable.gru_pet_faisca_atlas
+        GruPet.BIP -> R.drawable.gru_pet_bip_atlas
+        GruPet.PINGO -> R.drawable.gru_pet_pingo_atlas
+        GruPet.PUDIM -> R.drawable.gru_pet_pudim_atlas
     }
 
     private fun roundedRect(color: Int, radius: Float) = GradientDrawable().apply {

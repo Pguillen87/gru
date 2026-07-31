@@ -1635,6 +1635,12 @@
     <string name="gru__size_medium">Médio</string>
     <string name="gru__size_large">Grande</string>
     <string name="gru__opacity">Transparência: %1$d%%</string>
+    <string name="gru__transcription_title">Transcrição</string>
+    <string name="gru__provider_name">Provedor: Groq</string>
+    <string name="gru__api_key_label">Chave de API da Groq</string>
+    <string name="gru__api_key_summary">Salva somente neste aparelho e usada para transcrever seu áudio.</string>
+    <string name="gru__api_key_show">Mostrar chave de API</string>
+    <string name="gru__api_key_hide">Ocultar chave de API</string>
     <string name="gru__ready_message">Abra qualquer app, toque em um campo de texto e depois toque no seu pet.</string>
     <string name="gru__preview_description">Pet selecionado: %1$s</string>
     <string name="gru__pet_idle_description">Gru está pronto. Toque para falar.</string>

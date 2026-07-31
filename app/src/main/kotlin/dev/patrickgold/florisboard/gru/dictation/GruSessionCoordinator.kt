@@ -160,7 +160,7 @@ object GruDictation {
             coordinator = GruSessionCoordinator(
                 scope = scope,
                 captureFactory = { AndroidGruAudioCapture(appContext) },
-                transcription = GroqTranscriptionGateway(LegacyGroqSettings()),
+                transcription = GroqTranscriptionGateway(StoredGroqSettings(appContext)),
                 textTarget = GruTextTarget(DictateAccessibilityService::injectText),
                 nowMillis = android.os.SystemClock::elapsedRealtime,
             )

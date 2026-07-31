@@ -41,7 +41,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -50,11 +53,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,37 +71,27 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
-import androidx.lifecycle.lifecycleScope
 import dev.patrickgold.florisboard.R
-import dev.patrickgold.florisboard.app.AppTheme
-import dev.patrickgold.florisboard.app.FlorisPreferenceStore
-import dev.patrickgold.florisboard.app.apptheme.FlorisAppTheme
-import dev.patrickgold.florisboard.appContext
-import dev.patrickgold.florisboard.dictate.DictateFloatingButtonDesign
-import dev.patrickgold.florisboard.dictate.DictateFloatingButtonSize
 import dev.patrickgold.florisboard.dictate.overlay.DictateAccessibilityService
-import dev.patrickgold.jetpref.datastore.model.collectAsState
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.launch
-import org.florisboard.lib.kotlin.collectIn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 
 class GruActivity : ComponentActivity() {
-    private val prefs by FlorisPreferenceStore
-    private val appContext by appContext()
+    private val prefs by lazy { GruPreferences.get(this) }
     private var permissionRefresh by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen().setKeepOnScreenCondition { !appContext.preferenceStoreLoaded.value }
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        val contentInstalled = AtomicBoolean(false)
-        appContext.preferenceStoreLoaded.collectIn(lifecycleScope) { loaded ->
-            if (loaded && !contentInstalled.getAndSet(true)) installContent()
-        }
+        installContent()
     }
 
     override fun onResume() {
@@ -107,7 +100,7 @@ class GruActivity : ComponentActivity() {
     }
 
     private fun installContent() = setContent {
-        FlorisAppTheme(theme = AppTheme.AUTO) {
+        GruTheme {
             Surface(color = MaterialTheme.colorScheme.background) {
                 GruScreen(permissionRefresh)
             }
@@ -130,11 +123,10 @@ class GruActivity : ComponentActivity() {
     @Composable
     private fun GruContent(permissionRefresh: Int, modifier: Modifier = Modifier) {
         val context = LocalContext.current
-        val scope = rememberCoroutineScope()
-        val enabled by prefs.dictate.floatingButtonEnabled.collectAsState()
-        val design by prefs.dictate.floatingButtonDesign.collectAsState()
-        val size by prefs.dictate.floatingButtonSize.collectAsState()
-        val opacity by prefs.dictate.floatingButtonOpacity.collectAsState()
+        val enabled by prefs.enabled.collectAsState()
+        val design by prefs.pet.collectAsState()
+        val size by prefs.size.collectAsState()
+        val opacity by prefs.opacity.collectAsState()
         val accessibilityReady = remember(permissionRefresh) { isGruAccessibilityEnabled(context) }
         val microphoneReady = remember(permissionRefresh) { hasPermission(context, Manifest.permission.RECORD_AUDIO) }
         val notificationsReady = remember(permissionRefresh) { notificationsAllowed(context) }
@@ -148,9 +140,10 @@ class GruActivity : ComponentActivity() {
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             PetPreview(design, opacity)
-            MasterToggle(enabled) { value -> scope.launch { prefs.dictate.floatingButtonEnabled.set(value) } }
-            PetPicker(design) { value -> scope.launch { prefs.dictate.floatingButtonDesign.set(value) } }
+            MasterToggle(enabled, prefs::setEnabled)
+            PetPicker(design, prefs::setPet)
             AppearanceControls(size, opacity)
+            TranscriptionSection()
             SetupSection(accessibilityReady, microphoneReady, notificationsReady)
             if (accessibilityReady && microphoneReady) {
                 Text(
@@ -164,7 +157,7 @@ class GruActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun PetPreview(design: DictateFloatingButtonDesign, opacity: Int) {
+    private fun PetPreview(design: GruPet, opacity: Int) {
         val pet = petFor(design)
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -204,7 +197,7 @@ class GruActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun PetPicker(selected: DictateFloatingButtonDesign, onSelect: (DictateFloatingButtonDesign) -> Unit) {
+    private fun PetPicker(selected: GruPet, onSelect: (GruPet) -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SectionTitle(R.string.gru__choose_pet)
             pets.chunked(PET_PICKER_COLUMNS).forEach { rowPets ->
@@ -237,22 +230,19 @@ class GruActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun AppearanceControls(size: DictateFloatingButtonSize, opacity: Int) {
-        val scope = rememberCoroutineScope()
+    private fun AppearanceControls(size: GruPetSize, opacity: Int) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SectionTitle(R.string.gru__appearance)
             Text(stringResource(R.string.gru__size), style = MaterialTheme.typography.bodyLarge)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SizeChip(R.string.gru__size_small, DictateFloatingButtonSize.SMALL, size)
-                SizeChip(R.string.gru__size_medium, DictateFloatingButtonSize.MEDIUM, size)
-                SizeChip(R.string.gru__size_large, DictateFloatingButtonSize.LARGE, size)
+                SizeChip(R.string.gru__size_small, GruPetSize.SMALL, size)
+                SizeChip(R.string.gru__size_medium, GruPetSize.MEDIUM, size)
+                SizeChip(R.string.gru__size_large, GruPetSize.LARGE, size)
             }
             Text(stringResource(R.string.gru__opacity, opacity), style = MaterialTheme.typography.bodyLarge)
             Slider(
                 value = opacity.toFloat(),
-                onValueChange = { value ->
-                    scope.launch { prefs.dictate.floatingButtonOpacity.set(value.toInt().coerceIn(40, 100)) }
-                },
+                onValueChange = { value -> prefs.setOpacity(value.toInt()) },
                 valueRange = 40f..100f,
                 steps = 5,
             )
@@ -260,13 +250,48 @@ class GruActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun SizeChip(label: Int, value: DictateFloatingButtonSize, selected: DictateFloatingButtonSize) {
-        val scope = rememberCoroutineScope()
+    private fun SizeChip(label: Int, value: GruPetSize, selected: GruPetSize) {
         FilterChip(
             selected = value == selected,
-            onClick = { scope.launch { prefs.dictate.floatingButtonSize.set(value) } },
+            onClick = { prefs.setSize(value) },
             label = { Text(stringResource(label)) },
         )
+    }
+
+    @Composable
+    private fun TranscriptionSection() {
+        var apiKey by remember { mutableStateOf(prefs.groqApiKey) }
+        var showKey by remember { mutableStateOf(false) }
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionTitle(R.string.gru__transcription_title)
+            Text(
+                stringResource(R.string.gru__provider_name),
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+            )
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { value ->
+                    apiKey = value
+                    prefs.groqApiKey = value
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(stringResource(R.string.gru__api_key_label)) },
+                supportingText = { Text(stringResource(R.string.gru__api_key_summary)) },
+                singleLine = true,
+                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { showKey = !showKey }) {
+                        Icon(
+                            imageVector = if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = stringResource(
+                                if (showKey) R.string.gru__api_key_hide else R.string.gru__api_key_show,
+                            ),
+                        )
+                    }
+                },
+            )
+        }
     }
 
     @Composable
@@ -359,17 +384,17 @@ class GruActivity : ComponentActivity() {
     private fun notificationsAllowed(context: Context): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || hasPermission(context, Manifest.permission.POST_NOTIFICATIONS)
 
-    private data class PetOption(val design: DictateFloatingButtonDesign, val drawable: Int, val name: Int)
+    private data class PetOption(val design: GruPet, val drawable: Int, val name: Int)
 
-    private fun petFor(design: DictateFloatingButtonDesign): PetOption = pets.first { it.design == design }
+    private fun petFor(design: GruPet): PetOption = pets.first { it.design == design }
 
     private companion object {
         val pets = listOf(
-            PetOption(DictateFloatingButtonDesign.PILL, R.drawable.gru_pet_lume, R.string.gru__pet_lume),
-            PetOption(DictateFloatingButtonDesign.RING, R.drawable.gru_pet_faisca, R.string.gru__pet_faisca),
-            PetOption(DictateFloatingButtonDesign.ORB, R.drawable.gru_pet_bip, R.string.gru__pet_bip),
-            PetOption(DictateFloatingButtonDesign.CLOUD, R.drawable.gru_pet_pingo, R.string.gru__pet_pingo),
-            PetOption(DictateFloatingButtonDesign.PUDIM, R.drawable.gru_pet_pudim, R.string.gru__pet_pudim),
+            PetOption(GruPet.LUME, R.drawable.gru_pet_lume, R.string.gru__pet_lume),
+            PetOption(GruPet.FAISCA, R.drawable.gru_pet_faisca, R.string.gru__pet_faisca),
+            PetOption(GruPet.BIP, R.drawable.gru_pet_bip, R.string.gru__pet_bip),
+            PetOption(GruPet.PINGO, R.drawable.gru_pet_pingo, R.string.gru__pet_pingo),
+            PetOption(GruPet.PUDIM, R.drawable.gru_pet_pudim, R.string.gru__pet_pudim),
         )
 
         const val PET_PICKER_COLUMNS = 3

@@ -1993,6 +1993,12 @@
     <string name="gru__size_medium">Medium</string>
     <string name="gru__size_large">Large</string>
     <string name="gru__opacity">Opacity: %1$d%%</string>
+    <string name="gru__transcription_title">Transcription</string>
+    <string name="gru__provider_name">Provider: Groq</string>
+    <string name="gru__api_key_label">Groq API key</string>
+    <string name="gru__api_key_summary">Stored only on this device and used to transcribe your audio.</string>
+    <string name="gru__api_key_show">Show API key</string>
+    <string name="gru__api_key_hide">Hide API key</string>
     <string name="gru__ready_message">Open any app, tap a text field, then tap your pet.</string>
     <string name="gru__preview_description">Selected pet: %1$s</string>
     <string name="gru__pet_idle_description">Gru is ready. Tap to speak.</string>
