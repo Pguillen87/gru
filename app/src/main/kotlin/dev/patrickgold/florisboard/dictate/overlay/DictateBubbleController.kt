@@ -57,6 +57,9 @@ import dev.patrickgold.florisboard.dictate.data.prompts.PromptModel
 import dev.patrickgold.florisboard.dictate.data.prompts.PromptsDatabaseHelper
 import dev.patrickgold.florisboard.dictate.ui.AudioReactiveCloudOrbView
 import dev.patrickgold.florisboard.gru.GruActivity
+import dev.patrickgold.florisboard.gru.dictation.GruDictation
+import dev.patrickgold.florisboard.gru.dictation.GruDictationFailure
+import dev.patrickgold.florisboard.gru.dictation.GruDictationState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -64,6 +67,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -197,7 +201,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                 prefs.dictate.floatingButtonShowWithDictateKeyboard.asFlow(),
                 DictateAccessibilityService.editableFocused,
                 DictateAccessibilityService.dictateKeyboardActive,
-                DictateController.state,
+                GruDictation.state(context).map(::toLegacyState),
             ) { enabled, showWithKeyboard, focused, dictateKeyboard, state ->
                 Inputs(enabled, showWithKeyboard, focused, dictateKeyboard, state)
             }
@@ -238,7 +242,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                 val targetAvailable = focused && imeVisible
                 if (!targetAvailable && weStartedDictation && state is DictateController.UiState.Recording) {
                     weStartedDictation = false
-                    DictateController.cancelRecording()
+                    GruDictation.cancel()
                 }
                 val show = BubbleVisibilityPolicy.shouldShow(
                     enabled = enabled,
@@ -403,7 +407,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
     // --- Long-press rewording menu ---------------------------------------------------------------
 
     private fun onLongPress() {
-        val state = DictateController.state.value
+        val state = currentLegacyState()
         if (state !is DictateController.UiState.Idle && state !is DictateController.UiState.Error) return
         if (prefs.dictate.floatingButtonHaptic.get()) vibrateTap()
         cancelDim()
@@ -546,7 +550,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                 if (undoAdded) positionUndo()
             }
         }
-        newSkin.applyState(DictateController.state.value)
+        newSkin.applyState(currentLegacyState())
         return root
     }
 
@@ -755,7 +759,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
         if (!prefs.dictate.floatingButtonAutoDim.get()) return
         dimJob = scope.launch {
             delay(AUTO_DIM_DELAY_MS)
-            if (added && DictateController.state.value is DictateController.UiState.Idle) applyDim(true)
+            if (added && currentLegacyState() is DictateController.UiState.Idle) applyDim(true)
         }
     }
 
@@ -781,7 +785,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
             .setDuration(200)
             .start()
         // Keep the undo button in step with the bubble: hide it while dimmed, restore it on wake.
-        if (dim) hideUndo() else manageUndo(DictateController.state.value, added)
+        if (dim) hideUndo() else manageUndo(currentLegacyState(), added)
     }
 
     private fun vibrateTap() {
@@ -802,18 +806,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
 
     private fun onTap() {
         if (prefs.dictate.floatingButtonHaptic.get()) vibrateTap()
-        val current = DictateController.state.value
-        // Recovery (#160): if the previous floating-button dictation failed but its recording was kept
-        // (e.g. a flaky signal dropped the upload), a tap re-sends that audio instead of starting a new
-        // recording — so the dictation isn't lost just because the bubble has no resend chip of its own.
-        if (current is DictateController.UiState.Error &&
-            current.action == DictateController.ErrorAction.RESEND
-        ) {
-            service.startMicForeground()
-            weStartedDictation = true
-            DictateController.sendRetainedAudio(context)
-            return
-        }
+        val current = currentLegacyState()
         // Promote the service to a microphone foreground service *before* recording starts, so the mic
         // capture is allowed while the app is in the background (Android 14+). Demoted again when the
         // dictation finishes (see manageForeground).
@@ -822,7 +815,26 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
             service.startMicForeground()
             weStartedDictation = true
         }
-        DictateController.onMicClick(context, DictateController.OutputTarget.OVERLAY)
+        GruDictation.onPetTapped(context)
+    }
+
+    private fun currentLegacyState(): DictateController.UiState =
+        toLegacyState(GruDictation.state(context).value)
+
+    private fun toLegacyState(state: GruDictationState): DictateController.UiState = when (state) {
+        GruDictationState.Idle,
+        GruDictationState.Success,
+        -> DictateController.UiState.Idle
+        is GruDictationState.Recording -> DictateController.UiState.Recording(state.startedAtMillis)
+        GruDictationState.Transcribing -> DictateController.UiState.Transcribing()
+        is GruDictationState.Error -> DictateController.UiState.Error(
+            message = when (state.reason) {
+                GruDictationFailure.MISSING_API_KEY -> context.getString(R.string.dictate__error_no_api_key)
+                GruDictationFailure.NO_SPEECH -> context.getString(R.string.dictate__no_speech_detected)
+                else -> context.getString(R.string.dictate__error_unknown)
+            },
+            neutral = state.reason == GruDictationFailure.NO_SPEECH,
+        )
     }
 
     // --- State → visuals -------------------------------------------------------------------------
@@ -873,7 +885,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
         holdJob = scope.launch {
             delay(durationMs)
             holding = false
-            applyState(DictateController.state.value)
+            applyState(currentLegacyState())
         }
     }
 
@@ -902,7 +914,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                 val level = if (rec?.paused == true) {
                     0f
                 } else {
-                    DictateController.audioLevel.value
+                    (GruDictation.state(context).value as? GruDictationState.Recording)?.audioLevel ?: 0f
                 }
                 val elapsed = rec?.let { elapsedOf(it) } ?: 0L
                 skin?.onRecordingTick(level, elapsed)
