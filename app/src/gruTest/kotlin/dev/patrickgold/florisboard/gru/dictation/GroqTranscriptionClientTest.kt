@@ -1,0 +1,40 @@
+/*
+ * Copyright (C) 2026 Gru Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ */
+
+package dev.patrickgold.florisboard.gru.dictation
+
+import java.io.File
+import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+class GroqTranscriptionClientTest {
+    @Test
+    fun `uploads wav to Groq compatible endpoint`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("{\"text\":\" Texto ditado \"}"))
+        server.start()
+        try {
+            val audio = File.createTempFile("gru-audio", ".wav").apply {
+                writeBytes(byteArrayOf(1, 2, 3, 4))
+                deleteOnExit()
+            }
+            val client = GroqTranscriptionClient(endpoint = server.url("audio/transcriptions").toString())
+
+            assertEquals("Texto ditado", client.transcribe(audio, "secret", "whisper-test"))
+
+            val request = server.takeRequest()
+            assertEquals("Bearer secret", request.getHeader("Authorization"))
+            assertTrue(request.body.readUtf8().contains("whisper-test"))
+        } finally {
+            server.shutdown()
+        }
+    }
+}

@@ -7,9 +7,6 @@
 
 package dev.patrickgold.florisboard.gru.dictation
 
-import dev.patrickgold.florisboard.dictate.provider.OpenAiCompatibleClient
-import dev.patrickgold.florisboard.dictate.provider.ProviderConfig
-import dev.patrickgold.florisboard.dictate.provider.TranscriptionRequest
 import dev.patrickgold.florisboard.gru.GruPreferences
 import android.content.Context
 import java.io.File
@@ -34,24 +31,15 @@ class StoredGroqSettings(context: Context) : GruTranscriptionSettings {
         get() = prefs.groqModel
 }
 
-class GroqTranscriptionGateway(
+internal class GroqTranscriptionGateway(
     private val settings: GruTranscriptionSettings,
+    private val client: GroqTranscriptionClient = GroqTranscriptionClient(),
 ) : GruTranscriptionGateway {
     override suspend fun transcribe(audioFile: File): String {
         val key = settings.apiKey.trim()
         if (key.isEmpty()) throw GruTranscriptionException(GruDictationFailure.MISSING_API_KEY)
         return try {
-            OpenAiCompatibleClient(
-                ProviderConfig(
-                    baseUrl = GROQ_BASE_URL,
-                    apiKey = key,
-                ),
-            ).transcribe(
-                TranscriptionRequest(
-                    audioFile = audioFile,
-                    model = settings.model,
-                ),
-            ).text.trim().ifEmpty {
+            client.transcribe(audioFile, key, settings.model).ifEmpty {
                 throw GruTranscriptionException(GruDictationFailure.EMPTY_RESPONSE)
             }
         } catch (error: GruTranscriptionException) {
@@ -61,10 +49,6 @@ class GroqTranscriptionGateway(
         } catch (error: Throwable) {
             throw GruTranscriptionException(GruDictationFailure.PROVIDER, error)
         }
-    }
-
-    private companion object {
-        const val GROQ_BASE_URL = "https://api.groq.com/openai/v1/"
     }
 }
 
