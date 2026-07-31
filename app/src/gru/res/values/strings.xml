@@ -2,6 +2,12 @@
 <resources>
   <string name="gru__accessibility_service_label">Gru floating pet</string>
   <string name="gru__error_no_api_key">Add your Groq API key in Gru settings.</string>
+  <string name="gru__error_microphone_permission">Allow microphone access in Gru settings.</string>
+  <string name="gru__error_microphone_unavailable">The microphone is busy. Close the other recording app and try again.</string>
+  <string name="gru__error_network">No connection. Check your internet and try again.</string>
+  <string name="gru__error_provider">Groq could not transcribe. Check your API key and try again.</string>
+  <string name="gru__error_empty_response">No text was returned. Speak again and retry.</string>
+  <string name="gru__error_insertion">This field refused the text. Tap it again and retry.</string>
   <string name="gru__error_unknown">Unknown error during transcription.</string>
   <string name="gru__no_speech_detected">No speech detected</string>
   <string name="gru__overlay_notification_channel">Gru recording</string>

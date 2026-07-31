@@ -107,6 +107,7 @@ class GruAccessibilityService : AccessibilityService() {
     }
 
     private fun AccessibilityNodeInfo.isLikelyEditable(): Boolean {
+        if (isPassword) return false
         if (isEditable) return true
         if (className?.toString()?.contains("EditText") == true) return true
         return actionList.contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_TEXT) &&

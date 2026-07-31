@@ -44,6 +44,8 @@ internal class GroqTranscriptionGateway(
             }
         } catch (error: GruTranscriptionException) {
             throw error
+        } catch (error: GroqProviderException) {
+            throw GruTranscriptionException(GruDictationFailure.PROVIDER, error)
         } catch (error: IOException) {
             throw GruTranscriptionException(GruDictationFailure.NETWORK, error)
         } catch (error: Throwable) {

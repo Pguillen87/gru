@@ -279,7 +279,13 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private fun errorMessage(reason: GruDictationFailure): String = when (reason) {
         GruDictationFailure.MISSING_API_KEY -> context.getString(R.string.gru__error_no_api_key)
         GruDictationFailure.NO_SPEECH -> context.getString(R.string.gru__no_speech_detected)
-        else -> context.getString(R.string.gru__error_unknown)
+        GruDictationFailure.MICROPHONE_PERMISSION -> context.getString(R.string.gru__error_microphone_permission)
+        GruDictationFailure.MICROPHONE_UNAVAILABLE -> context.getString(R.string.gru__error_microphone_unavailable)
+        GruDictationFailure.NETWORK -> context.getString(R.string.gru__error_network)
+        GruDictationFailure.PROVIDER -> context.getString(R.string.gru__error_provider)
+        GruDictationFailure.EMPTY_RESPONSE -> context.getString(R.string.gru__error_empty_response)
+        GruDictationFailure.INSERTION_REJECTED -> context.getString(R.string.gru__error_insertion)
+        GruDictationFailure.UNKNOWN -> context.getString(R.string.gru__error_unknown)
     }
 
     private fun descriptionFor(state: GruDictationState): Int = when (state) {
