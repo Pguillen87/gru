@@ -107,6 +107,16 @@ configure<ApplicationExtension> {
         compose = true
     }
 
+    sourceSets.named("main") {
+        java.setSrcDirs(listOf("src/gru/kotlin"))
+        kotlin.setSrcDirs(listOf("src/gru/kotlin"))
+    }
+
+    sourceSets.named("test") {
+        java.setSrcDirs(listOf("src/gruTest/kotlin"))
+        kotlin.setSrcDirs(listOf("src/gruTest/kotlin"))
+    }
+
     // Release signing. Credentials live in a local, untracked `keystore.properties` at the repo root
     // (see keystore.properties.template) so the keystore/passwords never get committed. When the file
     // is absent (e.g. on CI without secrets, or a contributor's machine) the release build simply has
