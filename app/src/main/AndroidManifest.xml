@@ -2,15 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:allowBackup="false"
@@ -48,26 +44,5 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <service
-            android:name="dev.patrickgold.florisboard.dictate.provider.ModelDownloadService"
-            android:foregroundServiceType="dataSync"
-            android:exported="false" />
-
-        <provider
-            android:name="androidx.startup.InitializationProvider"
-            android:authorities="${applicationId}.androidx-startup"
-            android:exported="false"
-            tools:node="merge">
-            <meta-data
-                android:name="androidx.emoji2.text.EmojiCompatInitializer"
-                tools:node="remove" />
-        </provider>
-
-        <activity
-            android:name="androidx.compose.ui.tooling.PreviewActivity"
-            tools:node="remove" />
-        <receiver
-            android:name="androidx.profileinstaller.ProfileInstallReceiver"
-            tools:node="remove" />
     </application>
 </manifest>

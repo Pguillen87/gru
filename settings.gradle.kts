@@ -43,10 +43,4 @@ dependencyResolutionManagement {
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 include(":app")
-//include(":benchmark")
-include(":lib:android")
-include(":lib:color")
 include(":lib:dictate-core")
-include(":lib:compose")
-include(":lib:kotlin")
-include(":lib:snygg")
