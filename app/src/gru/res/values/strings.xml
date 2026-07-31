@@ -47,6 +47,12 @@
   <string name="gru__preview_description">Selected pet: %1$s</string>
   <string name="gru__provider_name">Provider: Groq</string>
   <string name="gru__ready_message">Open any app, tap a text field, then tap your pet.</string>
+  <string name="gru__status_accessibility">Enable writing in focused fields</string>
+  <string name="gru__status_microphone">Allow microphone access</string>
+  <string name="gru__status_api_key">Add your Groq API key</string>
+  <string name="gru__status_enable_pet">Turn on the floating pet</string>
+  <string name="gru__status_ready">Gru is ready</string>
+  <string name="gru__status_pending_summary">Complete the first pending item below.</string>
   <string name="gru__setup_pending">Finish setup</string>
   <string name="gru__setup_title">Ready to dictate</string>
   <string name="gru__size">Size</string>

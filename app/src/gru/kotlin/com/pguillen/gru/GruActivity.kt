@@ -127,9 +127,11 @@ class GruActivity : ComponentActivity() {
         val design by prefs.pet.collectAsState()
         val size by prefs.size.collectAsState()
         val opacity by prefs.opacity.collectAsState()
+        val apiKey by prefs.groqApiKeyState.collectAsState()
         val accessibilityReady = remember(permissionRefresh) { isGruAccessibilityEnabled(context) }
         val microphoneReady = remember(permissionRefresh) { hasPermission(context, Manifest.permission.RECORD_AUDIO) }
         val notificationsReady = remember(permissionRefresh) { notificationsAllowed(context) }
+        val setupReady = accessibilityReady && microphoneReady && apiKey.isNotBlank()
 
         Column(
             modifier = modifier
@@ -139,20 +141,46 @@ class GruActivity : ComponentActivity() {
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
+            StatusSummary(enabled, accessibilityReady, microphoneReady, apiKey.isNotBlank())
+            SetupSection(accessibilityReady, microphoneReady, notificationsReady, apiKey)
             PetPreview(design, opacity)
-            MasterToggle(enabled, prefs::setEnabled)
+            MasterToggle(enabled, setupReady, prefs::setEnabled)
             PetPicker(design, prefs::setPet)
             AppearanceControls(size, opacity)
-            TranscriptionSection()
-            SetupSection(accessibilityReady, microphoneReady, notificationsReady)
-            if (accessibilityReady && microphoneReady) {
-                Text(
-                    text = stringResource(R.string.gru__ready_message),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
             Spacer(Modifier.height(8.dp))
+        }
+    }
+
+    @Composable
+    private fun StatusSummary(
+        enabled: Boolean,
+        accessibilityReady: Boolean,
+        microphoneReady: Boolean,
+        apiKeyReady: Boolean,
+    ) {
+        val title = when {
+            !accessibilityReady -> R.string.gru__status_accessibility
+            !microphoneReady -> R.string.gru__status_microphone
+            !apiKeyReady -> R.string.gru__status_api_key
+            !enabled -> R.string.gru__status_enable_pet
+            else -> R.string.gru__status_ready
+        }
+        val summary = if (enabled && accessibilityReady && microphoneReady && apiKeyReady) {
+            R.string.gru__ready_message
+        } else {
+            R.string.gru__status_pending_summary
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = stringResource(title),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = stringResource(summary),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 
@@ -178,7 +206,7 @@ class GruActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun MasterToggle(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    private fun MasterToggle(enabled: Boolean, setupReady: Boolean, onChange: (Boolean) -> Unit) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -192,7 +220,11 @@ class GruActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Switch(checked = enabled, onCheckedChange = onChange)
+            Switch(
+                checked = enabled,
+                onCheckedChange = onChange,
+                enabled = setupReady,
+            )
         }
     }
 
@@ -259,8 +291,7 @@ class GruActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun TranscriptionSection() {
-        var apiKey by remember { mutableStateOf(prefs.groqApiKey) }
+    private fun TranscriptionSection(apiKey: String) {
         var showKey by remember { mutableStateOf(false) }
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SectionTitle(R.string.gru__transcription_title)
@@ -271,10 +302,7 @@ class GruActivity : ComponentActivity() {
             )
             OutlinedTextField(
                 value = apiKey,
-                onValueChange = { value ->
-                    apiKey = value
-                    prefs.groqApiKey = value
-                },
+                onValueChange = { prefs.groqApiKey = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text(stringResource(R.string.gru__api_key_label)) },
                 supportingText = { Text(stringResource(R.string.gru__api_key_summary)) },
@@ -295,13 +323,25 @@ class GruActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun SetupSection(accessibilityReady: Boolean, microphoneReady: Boolean, notificationsReady: Boolean) {
+    private fun SetupSection(
+        accessibilityReady: Boolean,
+        microphoneReady: Boolean,
+        notificationsReady: Boolean,
+        apiKey: String,
+    ) {
         val context = LocalContext.current
         var showDisclosure by remember { mutableStateOf(false) }
         val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permissionRefresh++ }
         val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permissionRefresh++ }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            SectionTitle(if (accessibilityReady && microphoneReady) R.string.gru__setup_title else R.string.gru__setup_pending)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionTitle(
+                if (accessibilityReady && microphoneReady && apiKey.isNotBlank()) {
+                    R.string.gru__setup_title
+                } else {
+                    R.string.gru__setup_pending
+                },
+            )
+            TranscriptionSection(apiKey)
             PermissionRow(R.string.gru__accessibility_title, R.string.gru__accessibility_summary, accessibilityReady) { showDisclosure = true }
             HorizontalDivider()
             PermissionRow(R.string.gru__microphone_title, R.string.gru__microphone_summary, microphoneReady) {

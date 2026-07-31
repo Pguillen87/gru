@@ -28,9 +28,16 @@ class GruPreferences private constructor(context: Context) {
     private val mutableOpacity = MutableStateFlow(store.getInt(KEY_OPACITY, 100).coerceIn(40, 100))
     val opacity: StateFlow<Int> = mutableOpacity.asStateFlow()
 
+    private val mutableGroqApiKey = MutableStateFlow(store.getString(KEY_GROQ_API_KEY, "").orEmpty())
+    val groqApiKeyState: StateFlow<String> = mutableGroqApiKey.asStateFlow()
+
     var groqApiKey: String
-        get() = store.getString(KEY_GROQ_API_KEY, "").orEmpty()
-        set(value) = store.edit().putString(KEY_GROQ_API_KEY, value.trim()).apply()
+        get() = mutableGroqApiKey.value
+        set(value) {
+            val normalized = value.trim()
+            mutableGroqApiKey.value = normalized
+            store.edit().putString(KEY_GROQ_API_KEY, normalized).apply()
+        }
 
     var groqModel: String
         get() = store.getString(KEY_GROQ_MODEL, DEFAULT_GROQ_MODEL).orEmpty().ifBlank { DEFAULT_GROQ_MODEL }
