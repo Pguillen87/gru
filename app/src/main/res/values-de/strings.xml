@@ -1376,8 +1376,6 @@
     <string name="dictate__mappings_title">Eigene Zuordnungen</string>
     <string name="dictate__mappings_wholeword_summary">Nur eigenständige Wörter ersetzen, keine Treffer innerhalb längerer Wörter.</string>
     <string name="dictate__mappings_wholeword_title">Nur ganzes Wort</string>
-    <string name="dictate__wear_standalone_summary">Sende deinen API-Key an die Uhr, damit sie auch ohne Handy in der Nähe diktieren kann.</string>
-    <string name="dictate__wear_standalone_title">Schlüssel mit Uhr synchronisieren</string>
     <string name="emoji__search__hint">Emoji suchen</string>
     <string name="emoji__search__no_results">Keine passenden Emojis</string>
     <string name="pref__suggestion__api30_inline_suggestions_enabled__label">Autofill-Vorschläge des Systems</string>
@@ -1390,12 +1388,6 @@
     <string name="dictate__providers_single_call_summary">Ein audiofähiges Modell transkribiert und formatiert in einer einzigen Anfrage.</string>
     <string name="dictate__providers_single_call_pick_audio">Wähle ein audiofähiges Modell (mit 🎤 in der Modellliste markiert).</string>
     <string name="dictate__providers_rewording_single_call_note">Wird gerade nicht genutzt – dein Transkriptions-Anbieter übernimmt die Umformulierung in seinem Single-Call.</string>
-    <string name="dictate__wear_title">Wear OS</string>
-    <string name="dictate__wear_summary">Optionen fürs Diktieren von einer gekoppelten Uhr</string>
-    <string name="dictate__wear_install_title">Dictate auf deiner Uhr installieren</string>
-    <string name="dictate__wear_install_summary">Öffnet den Play Store — wähle auf einer gekoppelten Wear OS 3+ Uhr deine Uhr als Ziel aus.</string>
-    <string name="dictate__wear_auto_rewording_title">Watch-Diktate automatisch umformulieren</string>
-    <string name="dictate__wear_auto_rewording_summary">Watch-Diktate umformulieren, wie am Handy.</string>
     <string name="quick_action__system_prev_input_method">Tastatur wechseln</string>
     <string name="quick_action__system_prev_input_method__tooltip">Zur vorherigen Tastatur zurückwechseln</string>
     <string name="quick_action__system_input_method_picker">Tastatur wählen</string>

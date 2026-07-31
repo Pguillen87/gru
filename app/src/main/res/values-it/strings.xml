@@ -1285,8 +1285,6 @@
     <string name="dictate__mappings_title">Regole personalizzate</string>
     <string name="dictate__mappings_wholeword_summary">Sostituisci solo parole isolate, non le corrispondenze all\'interno di parole più lunghe.</string>
     <string name="dictate__mappings_wholeword_title">Solo parola intera</string>
-    <string name="dictate__wear_standalone_summary">Invia la tua chiave API all\'orologio così può dettare senza il telefono vicino.</string>
-    <string name="dictate__wear_standalone_title">Sincronizza chiave con l\'orologio</string>
     <string name="emoji__search__hint">Cerca emoji</string>
     <string name="emoji__search__no_results">Nessun emoji corrispondente</string>
     <string name="pref__suggestion__api30_inline_suggestions_enabled__label">Suggerimenti di compilazione automatica del sistema</string>
@@ -1299,12 +1297,6 @@
     <string name="dictate__providers_single_call_summary">Un solo modello con supporto audio trascrive e formatta in un\'unica richiesta.</string>
     <string name="dictate__providers_single_call_pick_audio">Scegli un modello con supporto audio (contrassegnato da 🎤 nell\'elenco dei modelli).</string>
     <string name="dictate__providers_rewording_single_call_note">Al momento non utilizzato — il tuo provider di trascrizione esegue la riformulazione nella sua chiamata singola.</string>
-    <string name="dictate__wear_title">Wear OS</string>
-    <string name="dictate__wear_summary">Opzioni per dettare da un orologio abbinato</string>
-    <string name="dictate__wear_install_title">Installa Dictate sul tuo orologio</string>
-    <string name="dictate__wear_install_summary">Apre il Play Store — su un orologio Wear OS 3+ abbinato, scegli il tuo orologio come destinazione.</string>
-    <string name="dictate__wear_auto_rewording_title">Riformula automaticamente le dettature dall\'orologio</string>
-    <string name="dictate__wear_auto_rewording_summary">Riformula le dettature dall\'orologio, come sul telefono.</string>
     <string name="quick_action__system_prev_input_method">Cambia tastiera</string>
     <string name="quick_action__system_prev_input_method__tooltip">Torna alla tastiera precedente</string>
     <string name="quick_action__system_input_method_picker">Scegli tastiera</string>

@@ -25,7 +25,7 @@ import dev.patrickgold.florisboard.app.FlorisPreferenceStore
  * transcription is ready, and a longer single buzz when a rewording/LLM prompt has been applied. The
  * amplitude uses [VibrationEffect.DEFAULT_AMPLITUDE], which honours the system's haptic-intensity setting
  * — that is the intensity control, so there's no separate slider. Driven from [DictateController]'s state
- * transitions; the watch mirrors the same signals in `WearImeService`.
+ * transitions.
  */
 object DictateHaptics {
     private val prefs by FlorisPreferenceStore

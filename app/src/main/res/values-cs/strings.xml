@@ -1516,8 +1516,6 @@
     <string name="dictate__mappings_title">Vlastní pravidla</string>
     <string name="dictate__mappings_wholeword_summary">Nahradit pouze samostatná slova, nikoli shody uvnitř delších slov.</string>
     <string name="dictate__mappings_wholeword_title">Pouze celá slova</string>
-    <string name="dictate__wear_standalone_summary">Odešlete svůj API klíč do hodinek, aby mohly diktovat i bez telefonu poblíž.</string>
-    <string name="dictate__wear_standalone_title">Synchronizovat klíč do hodinek</string>
     <string name="emoji__search__hint">Hledat emoji</string>
     <string name="emoji__search__no_results">Žádné odpovídající emoji</string>
     <string name="pref__suggestion__api30_inline_suggestions_enabled__label">Návrhy automatického vyplňování systému</string>
@@ -1530,12 +1528,6 @@
     <string name="dictate__providers_single_call_summary">Jeden model s podporou zvuku přepíše a zformátuje text v jediném požadavku.</string>
     <string name="dictate__providers_single_call_pick_audio">Vyberte model s podporou zvuku (označený 🎤 v seznamu modelů).</string>
     <string name="dictate__providers_rewording_single_call_note">Momentálně se nepoužívá — váš poskytovatel přepisu provádí přeformulování ve svém jediném požadavku.</string>
-    <string name="dictate__wear_title">Wear OS</string>
-    <string name="dictate__wear_summary">Možnosti diktování ze spárovaných hodinek</string>
-    <string name="dictate__wear_install_title">Nainstalovat Dictate do hodinek</string>
-    <string name="dictate__wear_install_summary">Otevře Play Store — na spárovaných hodinkách Wear OS 3+ vyberte jako cíl své hodinky.</string>
-    <string name="dictate__wear_auto_rewording_title">Automaticky přeformulovat diktování z hodinek</string>
-    <string name="dictate__wear_auto_rewording_summary">Přeformulujte diktování z hodinek, jako v telefonu.</string>
     <string name="quick_action__system_prev_input_method">Přepnout klávesnici</string>
     <string name="quick_action__system_prev_input_method__tooltip">Přepnout zpět na předchozí klávesnici</string>
     <string name="quick_action__system_input_method_picker">Vybrat klávesnici</string>

@@ -17,10 +17,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
  * limitations under the License.
  */
 
-// Shared transcription/LLM core (issue #106): the OpenAI-compatible network provider, the provider
-// presets, the data models and the prompt defaults — everything the phone app AND the Wear OS app
-// need to talk to a transcription/chat endpoint. Deliberately free of any FlorisBoard IME, JetPref
-// or on-device sherpa-onnx coupling so it can be consumed by the lightweight :wear module.
+// Shared transcription/LLM core: OpenAI-compatible networking, provider models and prompt defaults.
+// Deliberately free of FlorisBoard IME, JetPref and on-device sherpa-onnx coupling.
 //
 // The Kotlin packages here intentionally keep the original `dev.patrickgold.florisboard.dictate.*`
 // names so moving these files out of :app needs zero import changes in the phone app.
@@ -73,8 +71,8 @@ configure<LibraryExtension> {
 }
 
 dependencies {
-    // Public API surface (OkHttp/serialization types appear in signatures) -> api, so :app and :wear
-    // see them transitively.
+    // Public API surface (OkHttp/serialization types appear in signatures) -> api, so :app sees
+    // them transitively.
     api(libs.okhttp)
     api(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines)

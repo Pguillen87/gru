@@ -32,7 +32,6 @@ import androidx.compose.material3.Slider
 import kotlin.math.roundToInt
 import dev.patrickgold.jetpref.material.ui.JetPrefAlertDialog
 import dev.patrickgold.florisboard.dictate.DictateLongformMode
-import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Bolt
@@ -241,13 +240,6 @@ fun DictateScreen() = FlorisScreen {
             },
         )
 
-        Preference(
-            icon = Icons.Default.Watch,
-            modifier = Modifier.settingsSearchAnchor("dictate__wear_title"),
-            title = stringRes(R.string.dictate__wear_title),
-            summary = stringRes(R.string.dictate__wear_summary),
-            onClick = { navController.navigate(Routes.Settings.DictateWear) },
-        )
     }
 }
 

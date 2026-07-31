@@ -1349,8 +1349,6 @@
     <string name="dictate__mappings_title">Власні правила заміни</string>
     <string name="dictate__mappings_wholeword_summary">Замінювати лише окремі слова, а не збіги всередині довших слів.</string>
     <string name="dictate__mappings_wholeword_title">Лише ціле слово</string>
-    <string name="dictate__wear_standalone_summary">Надішліть свій ключ API на годинник, щоб диктувати без телефона поруч.</string>
-    <string name="dictate__wear_standalone_title">Синхронізувати ключ із годинником</string>
     <string name="emoji__search__hint">Пошук емодзі</string>
     <string name="emoji__search__no_results">Немає відповідних емодзі</string>
     <string name="pref__suggestion__api30_inline_suggestions_enabled__label">Системні підказки автозаповнення</string>
@@ -1363,12 +1361,6 @@
     <string name="dictate__providers_single_call_summary">Одна модель із підтримкою аудіо транскрибує та форматує за один запит.</string>
     <string name="dictate__providers_single_call_pick_audio">Виберіть модель із підтримкою аудіо (позначена 🎤 у списку моделей).</string>
     <string name="dictate__providers_rewording_single_call_note">Зараз не використовується — ваш постачальник транскрипції виконує переформулювання у своєму єдиному запиті.</string>
-    <string name="dictate__wear_title">Wear OS</string>
-    <string name="dictate__wear_summary">Параметри диктування з парного годинника</string>
-    <string name="dictate__wear_install_title">Установіть Dictate на годинник</string>
-    <string name="dictate__wear_install_summary">Відкриває Play Store — на парному годиннику Wear OS 3+ виберіть годинник як ціль.</string>
-    <string name="dictate__wear_auto_rewording_title">Авто-переформулювання диктувань з годинника</string>
-    <string name="dictate__wear_auto_rewording_summary">Переформулюйте диктування з годинника, як на телефоні.</string>
     <string name="quick_action__system_prev_input_method">Змінити клавіатуру</string>
     <string name="quick_action__system_prev_input_method__tooltip">Повернутися до попередньої клавіатури</string>
     <string name="quick_action__system_input_method_picker">Вибрати клавіатуру</string>

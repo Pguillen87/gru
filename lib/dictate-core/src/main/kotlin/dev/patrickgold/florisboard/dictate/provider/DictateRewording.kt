@@ -13,12 +13,10 @@ package dev.patrickgold.florisboard.dictate.provider
 import dev.patrickgold.florisboard.dictate.data.prompts.DictatePromptDefaults
 
 /**
- * The post-transcription rewording chain, shared by the phone (`DictateController`, and the tethered
- * watch path `PhoneTranscriber`) and the Wear app (standalone path). Mirrors
+ * The post-transcription rewording chain used by the legacy phone flow. Mirrors
  * `DictateController.postProcessTranscript`: optional auto-formatting first, then the user's auto-apply
  * prompts in order. Each step is best-effort — a failing step keeps the text so far so a dictation is
- * never lost. Lives in `:lib:dictate-core` so the watch can run the exact same chain when it transcribes
- * standalone (issue #130 auto-rewording on the watch).
+ * never lost.
  */
 object DictateRewording {
 

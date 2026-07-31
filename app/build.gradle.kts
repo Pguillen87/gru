@@ -265,9 +265,6 @@ dependencies {
     implementation(projects.lib.dictateCore)
     implementation(projects.lib.compose)
 
-    // Wearable Data Layer: settings sync + tethered transcription with the Wear OS app (#106).
-    implementation(libs.play.services.wearable)
-    implementation(libs.kotlinx.coroutines.play.services)
     implementation(projects.lib.kotlin)
     implementation(projects.lib.snygg)
 

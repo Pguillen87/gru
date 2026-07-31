@@ -1401,8 +1401,6 @@ Deze toestemming kan op elk moment worden gewijzigd in de systeeminstellingen.  
     <string name="dictate__mappings_title">Aangepaste toewijzingen</string>
     <string name="dictate__mappings_wholeword_summary">Alleen losstaande woorden vervangen, niet binnen langere woorden.</string>
     <string name="dictate__mappings_wholeword_title">Alleen heel woord</string>
-    <string name="dictate__wear_standalone_summary">Stuur je API-sleutel naar het horloge zodat het zonder telefoon kan dicteren.</string>
-    <string name="dictate__wear_standalone_title">Sleutel synchroniseren met horloge</string>
     <string name="emoji__search__hint">Emoji zoeken</string>
     <string name="emoji__search__no_results">Geen overeenkomende emoji</string>
     <string name="pref__suggestion__api30_inline_suggestions_enabled__label">Suggesties voor automatisch invullen van systeem</string>
@@ -1415,12 +1413,6 @@ Deze toestemming kan op elk moment worden gewijzigd in de systeeminstellingen.  
     <string name="dictate__providers_single_call_summary">Eén audiogeschikt model transcribeert en formatteert in één verzoek.</string>
     <string name="dictate__providers_single_call_pick_audio">Kies een model met audio-invoer (gemarkeerd met 🎤 in de modellijst).</string>
     <string name="dictate__providers_rewording_single_call_note">Wordt nu niet gebruikt — je transcriptieprovider doet de herformulering in zijn enkele aanroep.</string>
-    <string name="dictate__wear_title">Wear OS</string>
-    <string name="dictate__wear_summary">Opties voor dicteren vanaf een gekoppeld horloge</string>
-    <string name="dictate__wear_install_title">Dictate op je horloge installeren</string>
-    <string name="dictate__wear_install_summary">Opent de Play Store — kies op een gekoppeld Wear OS 3+-horloge je horloge als doel.</string>
-    <string name="dictate__wear_auto_rewording_title">Horlogedictaten automatisch herformuleren</string>
-    <string name="dictate__wear_auto_rewording_summary">Herformuleer dictaten vanaf het horloge, net als op de telefoon.</string>
     <string name="quick_action__system_prev_input_method">Toetsenbord wisselen</string>
     <string name="quick_action__system_prev_input_method__tooltip">Terug naar je vorige toetsenbord</string>
     <string name="quick_action__system_input_method_picker">Toetsenbord kiezen</string>

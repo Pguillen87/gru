@@ -1312,8 +1312,6 @@
     <string name="dictate__mappings_title">Mapeamentos personalizados</string>
     <string name="dictate__mappings_wholeword_summary">Só substitui palavras isoladas, não correspondências dentro de palavras maiores.</string>
     <string name="dictate__mappings_wholeword_title">Somente palavra inteira</string>
-    <string name="dictate__wear_standalone_summary">Envie sua chave de API para o relógio para ditar sem o celular por perto.</string>
-    <string name="dictate__wear_standalone_title">Sincronizar chave com o relógio</string>
     <string name="emoji__search__hint">Pesquisar emoji</string>
     <string name="emoji__search__no_results">Nenhum emoji correspondente</string>
     <string name="pref__suggestion__api30_inline_suggestions_enabled__label">Sugestões de preenchimento automático do sistema</string>
@@ -1326,12 +1324,6 @@
     <string name="dictate__providers_single_call_summary">Um único modelo com áudio transcreve e formata em uma única requisição.</string>
     <string name="dictate__providers_single_call_pick_audio">Escolha um modelo com suporte a áudio (marcado com 🎤 na lista de modelos).</string>
     <string name="dictate__providers_rewording_single_call_note">Não está sendo usado no momento — seu provedor de transcrição faz a reformulação na chamada única dele.</string>
-    <string name="dictate__wear_title">Wear OS</string>
-    <string name="dictate__wear_summary">Opções para ditar de um relógio pareado</string>
-    <string name="dictate__wear_install_title">Instale o Dictate no seu relógio</string>
-    <string name="dictate__wear_install_summary">Abre a Play Store — em um relógio Wear OS 3+ pareado, escolha seu relógio como destino.</string>
-    <string name="dictate__wear_auto_rewording_title">Reformular automaticamente os ditados do relógio</string>
-    <string name="dictate__wear_auto_rewording_summary">Reformule os ditados feitos no relógio, como no celular.</string>
     <string name="quick_action__system_prev_input_method">Trocar teclado</string>
     <string name="quick_action__system_prev_input_method__tooltip">Voltar ao teclado anterior</string>
     <string name="quick_action__system_input_method_picker">Escolher teclado</string>

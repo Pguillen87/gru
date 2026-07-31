@@ -1481,8 +1481,6 @@
     <string name="dictate__mappings_title">Substituições personalizadas</string>
     <string name="dictate__mappings_wholeword_summary">Substituir apenas palavras isoladas, não correspondências dentro de palavras maiores.</string>
     <string name="dictate__mappings_wholeword_title">Apenas palavra inteira</string>
-    <string name="dictate__wear_standalone_summary">Envia a tua chave API para o relógio para ditar sem o telemóvel por perto.</string>
-    <string name="dictate__wear_standalone_title">Sincronizar chave com o relógio</string>
     <string name="emoji__search__hint">Pesquisar emoji</string>
     <string name="emoji__search__no_results">Nenhum emoji correspondente</string>
     <string name="pref__suggestion__api30_inline_suggestions_enabled__label">Sugestões de preenchimento automático do sistema</string>
@@ -1495,12 +1493,6 @@
     <string name="dictate__providers_single_call_summary">Um único modelo com áudio transcreve e formata num único pedido.</string>
     <string name="dictate__providers_single_call_pick_audio">Escolhe um modelo com suporte a áudio (marcado com 🎤 na lista de modelos).</string>
     <string name="dictate__providers_rewording_single_call_note">Não está a ser usado neste momento — o teu fornecedor de transcrição faz a reformulação na sua chamada única.</string>
-    <string name="dictate__wear_title">Wear OS</string>
-    <string name="dictate__wear_summary">Opções para ditar a partir de um relógio emparelhado</string>
-    <string name="dictate__wear_install_title">Instalar o Dictate no seu relógio</string>
-    <string name="dictate__wear_install_summary">Abre a Play Store — num relógio Wear OS 3+ emparelhado, escolha o seu relógio como destino.</string>
-    <string name="dictate__wear_auto_rewording_title">Reformular automaticamente os ditados do relógio</string>
-    <string name="dictate__wear_auto_rewording_summary">Reformula os ditados feitos no relógio, como no telemóvel.</string>
     <string name="quick_action__system_prev_input_method">Mudar teclado</string>
     <string name="quick_action__system_prev_input_method__tooltip">Voltar ao teclado anterior</string>
     <string name="quick_action__system_input_method_picker">Escolher teclado</string>
