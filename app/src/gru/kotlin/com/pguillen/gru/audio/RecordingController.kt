@@ -8,7 +8,7 @@
  *     http://www.apache.org/licenses/LICENSE-2.0
  */
 
-package dev.patrickgold.florisboard.dictate.audio
+package com.pguillen.gru.audio
 
 import android.annotation.SuppressLint
 import android.content.Context

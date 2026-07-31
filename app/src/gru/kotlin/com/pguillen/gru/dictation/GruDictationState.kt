@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  */
 
-package dev.patrickgold.florisboard.gru.dictation
+package com.pguillen.gru.dictation
 
 sealed interface GruDictationState {
     data object Idle : GruDictationState

@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  */
 
-package dev.patrickgold.florisboard.gru.dictation
+package com.pguillen.gru.dictation
 
 import java.io.File
 import kotlinx.coroutines.CompletableDeferred

@@ -5,13 +5,13 @@
  * you may not use this file except in compliance with the License.
  */
 
-package dev.patrickgold.florisboard.gru.dictation
+package com.pguillen.gru.dictation
 
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
-import dev.patrickgold.florisboard.dictate.overlay.DictateAccessibilityService
+import com.pguillen.gru.overlay.DictateAccessibilityService
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

@@ -1,4 +1,4 @@
-package dev.patrickgold.florisboard.dictate.overlay
+package com.pguillen.gru.overlay
 
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue

@@ -5,10 +5,10 @@
  * you may not use this file except in compliance with the License.
  */
 
-package dev.patrickgold.florisboard.gru.dictation
+package com.pguillen.gru.dictation
 
 import android.content.Context
-import dev.patrickgold.florisboard.dictate.audio.RecordingController
+import com.pguillen.gru.audio.RecordingController
 import java.io.File
 
 interface GruAudioCapture {

@@ -20,7 +20,7 @@
         tools:targetApi="tiramisu">
 
         <activity
-            android:name="dev.patrickgold.florisboard.gru.GruActivity"
+            android:name="com.pguillen.gru.GruActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:theme="@style/GruTheme.Splash">
@@ -31,7 +31,7 @@
         </activity>
 
         <service
-            android:name="dev.patrickgold.florisboard.dictate.overlay.DictateAccessibilityService"
+            android:name="com.pguillen.gru.overlay.DictateAccessibilityService"
             android:label="@string/gru__accessibility_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:foregroundServiceType="microphone"

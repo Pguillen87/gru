@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  */
 
-package dev.patrickgold.florisboard.gru
+package com.pguillen.gru
 
 enum class GruPet {
     LUME,

@@ -6,7 +6,7 @@
  * you may not use this file except in compliance with the License.
  */
 
-package dev.patrickgold.florisboard.dictate.overlay
+package com.pguillen.gru.overlay
 
 import android.accessibilityservice.AccessibilityService
 import android.app.Notification
@@ -25,7 +25,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import dev.patrickgold.florisboard.R
+import com.pguillen.gru.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

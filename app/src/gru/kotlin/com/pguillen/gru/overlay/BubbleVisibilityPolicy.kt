@@ -4,7 +4,7 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  */
 
-package dev.patrickgold.florisboard.dictate.overlay
+package com.pguillen.gru.overlay
 
 internal object BubbleVisibilityPolicy {
     fun shouldShow(

@@ -5,9 +5,9 @@
  * you may not use this file except in compliance with the License.
  */
 
-package dev.patrickgold.florisboard.gru.dictation
+package com.pguillen.gru.dictation
 
-import dev.patrickgold.florisboard.gru.GruPreferences
+import com.pguillen.gru.GruPreferences
 import android.content.Context
 import java.io.File
 import java.io.IOException

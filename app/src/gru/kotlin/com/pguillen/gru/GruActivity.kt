@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  */
 
-package dev.patrickgold.florisboard.gru
+package com.pguillen.gru
 
 import android.Manifest
 import android.content.ComponentName
@@ -77,8 +77,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
-import dev.patrickgold.florisboard.R
-import dev.patrickgold.florisboard.dictate.overlay.DictateAccessibilityService
+import com.pguillen.gru.R
+import com.pguillen.gru.overlay.DictateAccessibilityService
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff

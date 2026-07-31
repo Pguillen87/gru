@@ -6,7 +6,7 @@
  * you may not use this file except in compliance with the License.
  */
 
-package dev.patrickgold.florisboard.dictate.overlay
+package com.pguillen.gru.overlay
 
 import android.animation.ValueAnimator
 import android.content.Context
@@ -26,13 +26,13 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
-import dev.patrickgold.florisboard.R
-import dev.patrickgold.florisboard.gru.GruPet
-import dev.patrickgold.florisboard.gru.GruPetSize
-import dev.patrickgold.florisboard.gru.GruPreferences
-import dev.patrickgold.florisboard.gru.dictation.GruDictation
-import dev.patrickgold.florisboard.gru.dictation.GruDictationFailure
-import dev.patrickgold.florisboard.gru.dictation.GruDictationState
+import com.pguillen.gru.R
+import com.pguillen.gru.GruPet
+import com.pguillen.gru.GruPetSize
+import com.pguillen.gru.GruPreferences
+import com.pguillen.gru.dictation.GruDictation
+import com.pguillen.gru.dictation.GruDictationFailure
+import com.pguillen.gru.dictation.GruDictationState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
