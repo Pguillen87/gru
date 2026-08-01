@@ -11,6 +11,7 @@ import android.os.Debug
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.pguillen.gru.local.GruWhisperModel
 import com.pguillen.gru.local.WhisperModelManager
 import com.pguillen.gru.local.WhisperModelState
 import com.pguillen.gru.local.WhisperRuntime
@@ -30,11 +31,17 @@ class WhisperBenchmarkInstrumentedTest {
     fun benchmarkInstalledModelWithPreparedAudio() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val audio = File(context.filesDir, BENCHMARK_AUDIO)
+        val preparedModel = File(
+            context.filesDir,
+            "whisper-models/${GruWhisperModel.LARGE_V3_TURBO_Q5_0.fileName}",
+        )
+        assumeTrue("Install the offline model before benchmarking", preparedModel.exists())
+        assumeTrue("Push a 16 kHz mono PCM16 WAV to app files before benchmarking", audio.exists())
+
         val installed = withTimeout(120_000L) {
             WhisperModelManager.get(context).state.filterIsInstance<WhisperModelState.Installed>().first()
         }
         val model = installed.file
-        assumeTrue("Push a 16 kHz mono PCM16 WAV to app files before benchmarking", audio.exists())
 
         val pssBefore = Debug.getPss()
         val runtime = WhisperRuntime()
