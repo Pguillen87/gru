@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -77,6 +78,7 @@ class GruSessionCoordinator(
 
     fun stopAndTranscribe() {
         if (mutableState.value !is GruDictationState.Recording) return
+        mutableState.value = GruDictationState.Transcribing
         transcriptionJob = scope.launch {
             levelJob?.cancelAndJoin()
             levelJob = null
@@ -118,6 +120,8 @@ class GruSessionCoordinator(
             mutableState.value = GruDictationState.Success
             delay(SUCCESS_HOLD_MILLIS)
             mutableState.value = GruDictationState.Idle
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: GruTranscriptionException) {
             mutableState.value = GruDictationState.Error(error.failure)
         } catch (_: Throwable) {
@@ -144,7 +148,7 @@ object GruDictation {
     fun onPetTapped(context: Context) {
         when (instance(context).state.value) {
             is GruDictationState.Recording -> instance().stopAndTranscribe()
-            is GruDictationState.Transcribing -> Unit
+            is GruDictationState.Transcribing -> instance().cancel()
             else -> {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
                     PackageManager.PERMISSION_GRANTED

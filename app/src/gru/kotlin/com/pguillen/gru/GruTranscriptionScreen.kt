@@ -49,6 +49,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import com.pguillen.gru.dictation.GruDictation
 import com.pguillen.gru.dictation.TranscriptionEngine
 import com.pguillen.gru.dictation.TranscriptionSelectionPolicy
@@ -211,7 +214,10 @@ private fun LocalModelSettings(
     onActivate: () -> Unit,
     onRemove: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         SectionTitle(R.string.gru__offline_model)
         Text(stringResource(R.string.gru__model_name), fontWeight = FontWeight.Medium)
         Text(stringResource(R.string.gru__model_size), color = MaterialTheme.colorScheme.onSurfaceVariant)

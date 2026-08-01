@@ -133,6 +133,28 @@ class GruSessionCoordinatorTest {
     }
 
     @Test
+    fun `ignores repeated stops and cancels active transcription`() = runTest {
+        val audio = temporaryAudio()
+        val response = CompletableDeferred<String>()
+        var providerCalls = 0
+        val coordinator = coordinator(
+            capture = FakeCapture(GruRecording(audio, 800L, 1_500)),
+            transcription = GruTranscriptionGateway { providerCalls++; response.await() },
+        )
+
+        coordinator.startRecording()
+        coordinator.stopAndTranscribe()
+        coordinator.stopAndTranscribe()
+        runCurrent()
+
+        assertEquals(1, providerCalls)
+        coordinator.cancel()
+        runCurrent()
+        assertIs<GruDictationState.Idle>(coordinator.state.value)
+        assertFalse(audio.exists())
+    }
+
+    @Test
     fun `preserves expected transcription failures`() = runTest {
         val failures = listOf(
             GruDictationFailure.EMPTY_RESPONSE,
