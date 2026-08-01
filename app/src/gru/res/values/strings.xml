@@ -106,7 +106,7 @@
   <string name="gru__activate_private">Use Private mode</string>
   <string name="gru__remove_model">Remove offline model</string>
   <string name="gru__try_download_again">Try download again</string>
-  <string name="gru__model_source">Fixed model revision: %1$s</string>
+  <string name="gru__model_source">Verified, fixed model version.</string>
   <string name="gru__model_error_space">Not enough free space. Free at least 700 MiB and try again.</string>
   <string name="gru__model_error_network">The download stopped. Check your connection and try again.</string>
   <string name="gru__model_error_corrupt">The downloaded file failed verification and was removed. Try again.</string>

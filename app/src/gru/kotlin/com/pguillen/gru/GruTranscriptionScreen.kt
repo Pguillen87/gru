@@ -52,7 +52,6 @@ import androidx.compose.ui.unit.dp
 import com.pguillen.gru.dictation.GruDictation
 import com.pguillen.gru.dictation.TranscriptionEngine
 import com.pguillen.gru.dictation.TranscriptionSelectionPolicy
-import com.pguillen.gru.local.GruWhisperModel
 import com.pguillen.gru.local.WhisperModelError
 import com.pguillen.gru.local.WhisperModelManager
 import com.pguillen.gru.local.WhisperModelState
@@ -212,7 +211,6 @@ private fun LocalModelSettings(
     onActivate: () -> Unit,
     onRemove: () -> Unit,
 ) {
-    val spec = GruWhisperModel.LARGE_V3_TURBO_Q5_0
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionTitle(R.string.gru__offline_model)
         Text(stringResource(R.string.gru__model_name), fontWeight = FontWeight.Medium)
@@ -246,7 +244,7 @@ private fun LocalModelSettings(
                 Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__try_download_again)) }
             }
         }
-        Text(stringResource(R.string.gru__model_source, spec.version), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(R.string.gru__model_source), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
