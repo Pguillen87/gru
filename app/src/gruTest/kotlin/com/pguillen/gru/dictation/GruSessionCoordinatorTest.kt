@@ -97,6 +97,61 @@ class GruSessionCoordinatorTest {
     }
 
     @Test
+    fun `cancels active capture and returns to idle`() = runTest {
+        val capture = FakeCapture(GruRecording(temporaryAudio(), 800L, 1_500))
+        val coordinator = coordinator(capture = capture)
+
+        coordinator.startRecording()
+        coordinator.cancel()
+
+        assertTrue(capture.canceled)
+        assertIs<GruDictationState.Idle>(coordinator.state.value)
+    }
+
+    @Test
+    fun `ignores repeated starts while a session is active`() = runTest {
+        var capturesCreated = 0
+        val capture = FakeCapture(GruRecording(temporaryAudio(), 800L, 1_500))
+        val coordinator = GruSessionCoordinator(
+            scope = this,
+            captureFactory = { capturesCreated++; capture },
+            transcription = GruTranscriptionGateway { "texto" },
+            textTarget = GruTextTarget { true },
+            nowMillis = { testScheduler.currentTime },
+        )
+
+        coordinator.startRecording()
+        coordinator.startRecording()
+
+        assertEquals(1, capturesCreated)
+        assertIs<GruDictationState.Recording>(coordinator.state.value)
+        coordinator.cancel()
+    }
+
+    @Test
+    fun `preserves expected transcription failures`() = runTest {
+        val failures = listOf(
+            GruDictationFailure.EMPTY_RESPONSE,
+            GruDictationFailure.NETWORK,
+            GruDictationFailure.PROVIDER,
+        )
+
+        failures.forEach { failure ->
+            val audio = temporaryAudio()
+            val coordinator = coordinator(
+                capture = FakeCapture(GruRecording(audio, 800L, 1_500)),
+                transcription = GruTranscriptionGateway { throw GruTranscriptionException(failure) },
+            )
+            coordinator.startRecording()
+            coordinator.stopAndTranscribe()
+            runCurrent()
+
+            assertEquals(failure, assertIs<GruDictationState.Error>(coordinator.state.value).reason)
+            assertFalse(audio.exists())
+        }
+    }
+
+    @Test
     fun `recording speech threshold requires duration level and audio data`() {
         val valid = temporaryAudio()
         assertTrue(GruRecording(valid, 350L, 120).hasSpeech)
@@ -109,10 +164,26 @@ class GruSessionCoordinatorTest {
         writeBytes(ByteArray(128))
     }
 
+    private fun kotlinx.coroutines.test.TestScope.coordinator(
+        capture: FakeCapture,
+        transcription: GruTranscriptionGateway = GruTranscriptionGateway { "texto" },
+    ) = GruSessionCoordinator(
+        scope = this,
+        captureFactory = { capture },
+        transcription = transcription,
+        textTarget = GruTextTarget { true },
+        nowMillis = { testScheduler.currentTime },
+    )
+
     private class FakeCapture(private val recording: GruRecording) : GruAudioCapture {
+        var canceled = false
+
         override fun start() = Unit
         override fun level(): Float = 0.5f
         override fun stop(): GruRecording = recording
-        override fun cancel() = Unit
+        override fun cancel() {
+            canceled = true
+            recording.file.delete()
+        }
     }
 }
