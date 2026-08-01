@@ -66,6 +66,11 @@ configure<ApplicationExtension> {
         kotlin.setSrcDirs(listOf("src/gruTest/kotlin"))
     }
 
+    sourceSets.named("androidTest") {
+        java.setSrcDirs(listOf("src/gruAndroidTest/kotlin"))
+        kotlin.setSrcDirs(listOf("src/gruAndroidTest/kotlin"))
+    }
+
     val keystorePropsFile = rootProject.file("keystore.properties")
     val keystoreProps = if (keystorePropsFile.exists()) {
         Properties().apply { keystorePropsFile.inputStream().use { load(it) } }
@@ -90,14 +95,6 @@ configure<ApplicationExtension> {
             versionNameSuffix = "-debug+gru"
         }
 
-        create("beta") {
-            applicationIdSuffix = ".beta"
-            versionNameSuffix = projectVersionNameSuffix
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            isMinifyEnabled = true
-            isShrinkResources = true
-        }
-
         named("release") {
             versionNameSuffix = projectVersionNameSuffix
             if (keystoreProps != null) {
@@ -107,10 +104,6 @@ configure<ApplicationExtension> {
             isMinifyEnabled = true
             isShrinkResources = true
         }
-    }
-
-    lint {
-        baseline = file("lint.xml")
     }
 
     testOptions {
