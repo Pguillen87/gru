@@ -2,6 +2,9 @@
 <resources>
   <string name="gru__accessibility_service_label">Gru floating pet</string>
   <string name="gru__error_no_api_key">Add your Groq API key in Gru settings.</string>
+  <string name="gru__error_engine_not_selected">Choose Online or Private transcription in Gru settings.</string>
+  <string name="gru__error_local_model_missing">Install the offline model in Gru settings.</string>
+  <string name="gru__error_local_runtime">Local transcription failed. Your audio was not sent online.</string>
   <string name="gru__error_microphone_permission">Allow microphone access in Gru settings.</string>
   <string name="gru__error_microphone_unavailable">The microphone is busy. Close the other recording app and try again.</string>
   <string name="gru__error_network">No connection. Check your internet and try again.</string>

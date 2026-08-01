@@ -2,6 +2,9 @@
 <resources>
   <string name="gru__accessibility_service_label">Pet flutuante do Gru</string>
   <string name="gru__error_no_api_key">Adicione sua chave da Groq nas configurações do Gru.</string>
+  <string name="gru__error_engine_not_selected">Escolha a transcrição Online ou Privada nas configurações do Gru.</string>
+  <string name="gru__error_local_model_missing">Instale o modelo offline nas configurações do Gru.</string>
+  <string name="gru__error_local_runtime">A transcrição local falhou. Seu áudio não foi enviado pela internet.</string>
   <string name="gru__error_microphone_permission">Permita o microfone nas configurações do Gru.</string>
   <string name="gru__error_microphone_unavailable">O microfone está ocupado. Feche o outro app de gravação e tente novamente.</string>
   <string name="gru__error_network">Sem conexão. Verifique a internet e tente novamente.</string>

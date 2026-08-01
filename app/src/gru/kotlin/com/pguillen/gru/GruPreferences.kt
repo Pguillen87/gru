@@ -9,12 +9,15 @@ package com.pguillen.gru
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.pguillen.gru.dictation.TranscriptionEngine
+import com.pguillen.gru.security.GroqApiKeyStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class GruPreferences private constructor(context: Context) {
     private val store = context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
+    private val apiKeyStore = GroqApiKeyStore(context)
 
     private val mutableEnabled = MutableStateFlow(store.getBoolean(KEY_ENABLED, false))
     val enabled: StateFlow<Boolean> = mutableEnabled.asStateFlow()
@@ -28,15 +31,17 @@ class GruPreferences private constructor(context: Context) {
     private val mutableOpacity = MutableStateFlow(store.getInt(KEY_OPACITY, 100).coerceIn(40, 100))
     val opacity: StateFlow<Int> = mutableOpacity.asStateFlow()
 
-    private val mutableGroqApiKey = MutableStateFlow(store.getString(KEY_GROQ_API_KEY, "").orEmpty())
+    private val mutableEngine = MutableStateFlow(store.nullableEnumValue<TranscriptionEngine>(KEY_ENGINE))
+    val engine: StateFlow<TranscriptionEngine?> = mutableEngine.asStateFlow()
+
+    private val mutableGroqApiKey = MutableStateFlow(migrateLegacyApiKey())
     val groqApiKeyState: StateFlow<String> = mutableGroqApiKey.asStateFlow()
 
     var groqApiKey: String
         get() = mutableGroqApiKey.value
         set(value) {
             val normalized = value.trim()
-            mutableGroqApiKey.value = normalized
-            store.edit().putString(KEY_GROQ_API_KEY, normalized).apply()
+            if (apiKeyStore.write(normalized)) mutableGroqApiKey.value = normalized
         }
 
     var groqModel: String
@@ -64,8 +69,35 @@ class GruPreferences private constructor(context: Context) {
         store.edit().putInt(KEY_OPACITY, normalized).apply()
     }
 
+    fun setEngine(value: TranscriptionEngine?) {
+        mutableEngine.value = value
+        val edit = store.edit()
+        if (value == null) edit.remove(KEY_ENGINE) else edit.putString(KEY_ENGINE, value.name)
+        edit.apply()
+    }
+
+    fun removeGroqApiKey() {
+        if (apiKeyStore.clear()) mutableGroqApiKey.value = ""
+    }
+
+    private fun migrateLegacyApiKey(): String {
+        val encrypted = apiKeyStore.read()
+        if (encrypted.isNotBlank()) {
+            store.edit().remove(KEY_GROQ_API_KEY).apply()
+            return encrypted
+        }
+        val legacy = store.getString(KEY_GROQ_API_KEY, "").orEmpty().trim()
+        if (legacy.isNotEmpty() && apiKeyStore.write(legacy) && apiKeyStore.read() == legacy) {
+            store.edit().remove(KEY_GROQ_API_KEY).commit()
+        }
+        return apiKeyStore.read().ifBlank { legacy }
+    }
+
     private inline fun <reified T : Enum<T>> SharedPreferences.enumValue(key: String, fallback: T): T =
         getString(key, null)?.let { stored -> enumValues<T>().firstOrNull { it.name == stored } } ?: fallback
+
+    private inline fun <reified T : Enum<T>> SharedPreferences.nullableEnumValue(key: String): T? =
+        getString(key, null)?.let { stored -> enumValues<T>().firstOrNull { it.name == stored } }
 
     companion object {
         const val DEFAULT_GROQ_MODEL = "whisper-large-v3-turbo"
@@ -77,6 +109,7 @@ class GruPreferences private constructor(context: Context) {
         private const val KEY_OPACITY = "pet_opacity"
         private const val KEY_GROQ_API_KEY = "groq_api_key"
         private const val KEY_GROQ_MODEL = "groq_model"
+        private const val KEY_ENGINE = "transcription_engine"
 
         @Volatile private var instance: GruPreferences? = null
 

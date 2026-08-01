@@ -31,7 +31,7 @@ fun interface GruTextTarget {
 class GruSessionCoordinator(
     private val scope: CoroutineScope,
     private val captureFactory: () -> GruAudioCapture,
-    private val transcription: GruTranscriptionGateway,
+    private val transcriptionFactory: GruTranscriptionGatewayFactory,
     private val textTarget: GruTextTarget,
     private val nowMillis: () -> Long,
 ) {
@@ -41,6 +41,7 @@ class GruSessionCoordinator(
     private var capture: GruAudioCapture? = null
     private var levelJob: Job? = null
     private var transcriptionJob: Job? = null
+    private var sessionTranscription: GruTranscriptionGateway? = null
 
     fun startRecording() {
         if (mutableState.value !is GruDictationState.Idle &&
@@ -58,6 +59,7 @@ class GruSessionCoordinator(
             return
         }
         capture = nextCapture
+        sessionTranscription = transcriptionFactory.create()
         val startedAt = nowMillis()
         mutableState.value = GruDictationState.Recording(startedAtMillis = startedAt)
         levelJob = scope.launch {
@@ -96,6 +98,7 @@ class GruSessionCoordinator(
         transcriptionJob = null
         capture?.cancel()
         capture = null
+        sessionTranscription = null
         mutableState.value = GruDictationState.Idle
     }
 
@@ -107,7 +110,7 @@ class GruSessionCoordinator(
     private suspend fun transcribeAndInsert(audioFile: File) {
         mutableState.value = GruDictationState.Transcribing
         try {
-            val text = transcription.transcribe(audioFile)
+            val text = requireNotNull(sessionTranscription).transcribe(audioFile)
             if (!textTarget.insert(text)) {
                 mutableState.value = GruDictationState.Error(GruDictationFailure.INSERTION_REJECTED)
                 return
@@ -120,6 +123,7 @@ class GruSessionCoordinator(
         } catch (_: Throwable) {
             mutableState.value = GruDictationState.Error(GruDictationFailure.UNKNOWN)
         } finally {
+            sessionTranscription = null
             audioFile.delete()
         }
     }
@@ -160,7 +164,15 @@ object GruDictation {
             coordinator = GruSessionCoordinator(
                 scope = scope,
                 captureFactory = { AndroidGruAudioCapture(appContext) },
-                transcription = GroqTranscriptionGateway(StoredGroqSettings(appContext)),
+                transcriptionFactory = TranscriptionEngineRouter(
+                    selectedEngine = { com.pguillen.gru.GruPreferences.get(appContext).engine.value },
+                    groqGateway = { GroqTranscriptionGateway(StoredGroqSettings(appContext)) },
+                    localGateway = {
+                        GruTranscriptionGateway {
+                            throw GruTranscriptionException(GruDictationFailure.LOCAL_MODEL_MISSING)
+                        }
+                    },
+                ),
                 textTarget = GruTextTarget(GruAccessibilityService::injectText),
                 nowMillis = android.os.SystemClock::elapsedRealtime,
             )

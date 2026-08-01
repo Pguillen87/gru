@@ -282,7 +282,10 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     }
 
     private fun errorMessage(reason: GruDictationFailure): String = when (reason) {
+        GruDictationFailure.ENGINE_NOT_SELECTED -> context.getString(R.string.gru__error_engine_not_selected)
         GruDictationFailure.MISSING_API_KEY -> context.getString(R.string.gru__error_no_api_key)
+        GruDictationFailure.LOCAL_MODEL_MISSING -> context.getString(R.string.gru__error_local_model_missing)
+        GruDictationFailure.LOCAL_RUNTIME -> context.getString(R.string.gru__error_local_runtime)
         GruDictationFailure.NO_SPEECH -> context.getString(R.string.gru__no_speech_detected)
         GruDictationFailure.MICROPHONE_PERMISSION -> context.getString(R.string.gru__error_microphone_permission)
         GruDictationFailure.MICROPHONE_UNAVAILABLE -> context.getString(R.string.gru__error_microphone_unavailable)

@@ -30,7 +30,9 @@ class GruSessionCoordinatorTest {
         val coordinator = GruSessionCoordinator(
             scope = this,
             captureFactory = { capture },
-            transcription = GruTranscriptionGateway { response.await() },
+            transcriptionFactory = GruTranscriptionGatewayFactory {
+                GruTranscriptionGateway { response.await() }
+            },
             textTarget = GruTextTarget { text -> inserted = text; true },
             nowMillis = { testScheduler.currentTime },
         )
@@ -60,7 +62,9 @@ class GruSessionCoordinatorTest {
         val coordinator = GruSessionCoordinator(
             scope = this,
             captureFactory = { FakeCapture(GruRecording(audio, 1_000L, 10)) },
-            transcription = GruTranscriptionGateway { providerCalled = true; "unexpected" },
+            transcriptionFactory = GruTranscriptionGatewayFactory {
+                GruTranscriptionGateway { providerCalled = true; "unexpected" }
+            },
             textTarget = GruTextTarget { true },
             nowMillis = { testScheduler.currentTime },
         )
@@ -80,7 +84,7 @@ class GruSessionCoordinatorTest {
         val coordinator = GruSessionCoordinator(
             scope = this,
             captureFactory = { FakeCapture(GruRecording(audio, 800L, 1_500)) },
-            transcription = GruTranscriptionGateway { "texto" },
+            transcriptionFactory = GruTranscriptionGatewayFactory { GruTranscriptionGateway { "texto" } },
             textTarget = GruTextTarget { false },
             nowMillis = { testScheduler.currentTime },
         )
@@ -115,7 +119,7 @@ class GruSessionCoordinatorTest {
         val coordinator = GruSessionCoordinator(
             scope = this,
             captureFactory = { capturesCreated++; capture },
-            transcription = GruTranscriptionGateway { "texto" },
+            transcriptionFactory = GruTranscriptionGatewayFactory { GruTranscriptionGateway { "texto" } },
             textTarget = GruTextTarget { true },
             nowMillis = { testScheduler.currentTime },
         )
@@ -170,7 +174,7 @@ class GruSessionCoordinatorTest {
     ) = GruSessionCoordinator(
         scope = this,
         captureFactory = { capture },
-        transcription = transcription,
+        transcriptionFactory = GruTranscriptionGatewayFactory { transcription },
         textTarget = GruTextTarget { true },
         nowMillis = { testScheduler.currentTime },
     )
