@@ -341,7 +341,6 @@ class GruActivity : ComponentActivity() {
                     R.string.gru__setup_pending
                 },
             )
-            TranscriptionSection(apiKey)
             PermissionRow(R.string.gru__accessibility_title, R.string.gru__accessibility_summary, accessibilityReady) { showDisclosure = true }
             HorizontalDivider()
             PermissionRow(R.string.gru__microphone_title, R.string.gru__microphone_summary, microphoneReady) {
@@ -353,6 +352,7 @@ class GruActivity : ComponentActivity() {
                     notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
+            TranscriptionSection(apiKey)
         }
         if (showDisclosure) AccessibilityDisclosure(
             onDismiss = { showDisclosure = false },

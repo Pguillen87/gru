@@ -172,7 +172,7 @@ class AndroidAudioRecorder(private val context: Context) {
         if (!stopped) runCatching { rec?.release() }
         runCatching { thread?.join() }
         thread = null
-        if (stopped) runCatching { rec?.release() }
+        if (stopped) runCatching { rec.release() }
         return synchronized(fileLock) {
             val out = raf ?: return@synchronized null
             raf = null

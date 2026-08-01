@@ -14,7 +14,6 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
-import android.os.Build
 import android.os.SystemClock
 import android.view.View
 import android.view.animation.LinearInterpolator
@@ -205,7 +204,7 @@ internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
     }
 
     private fun createAnimator(): ValueAnimator? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ValueAnimator.areAnimatorsEnabled()) return null
+        if (!ValueAnimator.areAnimatorsEnabled()) return null
         return ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 1_000L
             repeatCount = ValueAnimator.INFINITE
@@ -328,7 +327,7 @@ internal class PetSignalView(
     }
 
     private fun createAnimator(): ValueAnimator? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ValueAnimator.areAnimatorsEnabled()) return null
+        if (!ValueAnimator.areAnimatorsEnabled()) return null
         return ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 1_000L
             repeatCount = ValueAnimator.INFINITE

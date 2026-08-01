@@ -188,7 +188,11 @@ class GruAccessibilityService : AccessibilityService() {
         val inserted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
         mainHandler.postDelayed({
             runCatching {
-                if (previous != null) clipboard.setPrimaryClip(previous) else clipboard.clearPrimaryClip()
+                when {
+                    previous != null -> clipboard.setPrimaryClip(previous)
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> clipboard.clearPrimaryClip()
+                    else -> clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
+                }
             }
         }, CLIPBOARD_RESTORE_MILLIS)
         return inserted
@@ -210,24 +214,28 @@ class GruAccessibilityService : AccessibilityService() {
             .setContentText(getString(R.string.gru__overlay_notification_recording))
             .setOngoing(true)
             .build()
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val foregroundResult = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
-            foreground = true
         }
+        if (foregroundResult.isFailure) {
+            Log.w(TAG, "Foreground promotion unavailable: ${foregroundResult.exceptionOrNull()?.javaClass?.simpleName}")
+            getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification)
+        }
+        foreground = true
     }
 
     fun stopMicForeground() {
         if (!foreground) return
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
         foreground = false
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(NOTIFICATION_CHANNEL) != null) return
         manager.createNotificationChannel(

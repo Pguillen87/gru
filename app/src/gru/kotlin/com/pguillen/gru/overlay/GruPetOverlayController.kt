@@ -14,7 +14,6 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -239,6 +238,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             addView(signal, FrameLayout.LayoutParams(petSize, petSize, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
             addView(pet, FrameLayout.LayoutParams(petSize, petSize, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
             addView(status, FrameLayout.LayoutParams(scaledDp(90), scaledDp(21), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+            setOnClickListener { onTap() }
             setOnTouchListener(createTouchListener())
         }
     }
@@ -303,9 +303,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
 
     private fun manageForeground(state: GruDictationState) {
         when (state) {
-            is GruDictationState.Recording,
-            GruDictationState.Transcribing,
-            -> Unit
+            is GruDictationState.Recording -> Unit
             else -> service.stopMicForeground()
         }
     }
@@ -349,7 +347,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (dragging) snapToEdge() else onTap()
+                    if (dragging) snapToEdge() else rootView?.performClick()
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> true
@@ -463,8 +461,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private fun minY(): Int = EDGE_MARGIN
     private fun maxY(): Int = (service.editorAreaBottom() - rootHeight() - EDGE_MARGIN).coerceAtLeast(minY())
 
-    private fun animationsEnabled(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.O || ValueAnimator.areAnimatorsEnabled()
+    private fun animationsEnabled(): Boolean = ValueAnimator.areAnimatorsEnabled()
 
     private fun ValueAnimator.addListener(onEnd: () -> Unit) {
         addListener(object : android.animation.AnimatorListenerAdapter() {
