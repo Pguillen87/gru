@@ -24,7 +24,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
-class WhisperModelManager private constructor(context: Context) {
+fun interface WhisperModelProvider {
+    fun installedModel(): File?
+}
+
+class WhisperModelManager private constructor(context: Context) : WhisperModelProvider {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val spec = GruWhisperModel.LARGE_V3_TURBO_Q5_0
@@ -89,7 +93,7 @@ class WhisperModelManager private constructor(context: Context) {
         }
     }
 
-    fun installedModel(): File? = (state.value as? WhisperModelState.Installed)?.file
+    override fun installedModel(): File? = (state.value as? WhisperModelState.Installed)?.file
 
     fun refresh() {
         scope.launch {

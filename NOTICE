@@ -36,3 +36,15 @@ specific language governing permissions and limitations under the License.
 
 The full license text is available in the LICENSE file accompanying this
 distribution.
+
+================================================================================
+whisper.cpp
+================================================================================
+
+Gru includes a CPU-only subset of whisper.cpp v1.8.6.
+
+    Copyright (c) 2023-2026 The ggml authors
+    https://github.com/ggml-org/whisper.cpp
+
+whisper.cpp is licensed under the MIT License. Its complete license text is
+available at app/src/gru/cpp/third_party/whisper.cpp/LICENSE.

@@ -137,6 +137,7 @@ class GruSessionCoordinator(
 object GruDictation {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var coordinator: GruSessionCoordinator
+    private val localRuntime = com.pguillen.gru.local.WhisperRuntime()
 
     fun state(context: Context): StateFlow<GruDictationState> = instance(context).state
 
@@ -168,9 +169,10 @@ object GruDictation {
                     selectedEngine = { com.pguillen.gru.GruPreferences.get(appContext).engine.value },
                     groqGateway = { GroqTranscriptionGateway(StoredGroqSettings(appContext)) },
                     localGateway = {
-                        GruTranscriptionGateway {
-                            throw GruTranscriptionException(GruDictationFailure.LOCAL_MODEL_MISSING)
-                        }
+                        LocalWhisperTranscriptionGateway(
+                            modelManager = com.pguillen.gru.local.WhisperModelManager.get(appContext),
+                            runtime = localRuntime,
+                        )
                     },
                 ),
                 textTarget = GruTextTarget(GruAccessibilityService::injectText),

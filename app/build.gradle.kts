@@ -35,6 +35,7 @@ configure<ApplicationExtension> {
     namespace = "com.pguillen.gru"
     compileSdk = projectCompileSdk.toInt()
     buildToolsVersion = tools.versions.buildTools.get()
+    ndkVersion = "25.2.9519653"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -48,10 +49,27 @@ configure<ApplicationExtension> {
         versionCode = projectVersionCode.toInt()
         versionName = projectVersionName.substringBefore("-")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DANDROID_STL=c++_shared")
+            }
+        }
     }
 
     buildFeatures {
         compose = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/gru/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     sourceSets.named("main") {
