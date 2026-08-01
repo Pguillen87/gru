@@ -18,6 +18,15 @@ internal fun interface LocalWhisperTranscriber {
     suspend fun transcribe(model: File, audio: File): String
 }
 
+internal data class WhisperRuntimeMetrics(
+    val modelLoadMillis: Long,
+    val inferenceMillis: Long,
+    val audioDurationMillis: Long,
+) {
+    val realTimeFactor: Double
+        get() = inferenceMillis.toDouble() / audioDurationMillis.coerceAtLeast(1L)
+}
+
 internal class WhisperRuntime(
     private val native: WhisperNative = JniWhisperNative,
     private val wavReader: WavPcmReader = WavPcmReader(),
@@ -28,6 +37,8 @@ internal class WhisperRuntime(
     private val activeHandle = AtomicLong(NO_HANDLE)
     private var loadedPath: String? = null
     private var handle: Long = NO_HANDLE
+    @Volatile var lastMetrics: WhisperRuntimeMetrics? = null
+        private set
 
     override suspend fun transcribe(model: File, audio: File): String = suspendCancellableCoroutine { continuation ->
         continuation.invokeOnCancellation {
@@ -35,10 +46,19 @@ internal class WhisperRuntime(
         }
         executor.execute {
             try {
+                val loadStarted = System.nanoTime()
+                val alreadyLoaded = handle != NO_HANDLE && loadedPath == model.absolutePath
                 val currentHandle = load(model)
+                val loadMillis = if (alreadyLoaded) 0L else elapsedMillis(loadStarted)
                 activeHandle.set(currentHandle)
                 val samples = wavReader.read(audio)
+                val inferenceStarted = System.nanoTime()
                 val result = native.transcribe(currentHandle, samples, LANGUAGE_PORTUGUESE, threadCount())
+                lastMetrics = WhisperRuntimeMetrics(
+                    modelLoadMillis = loadMillis,
+                    inferenceMillis = elapsedMillis(inferenceStarted),
+                    audioDurationMillis = samples.size * 1_000L / SAMPLE_RATE,
+                )
                 if (continuation.isActive) continuation.resume(result.trim())
             } catch (error: Throwable) {
                 if (continuation.isActive) continuation.resumeWithException(error)
@@ -48,12 +68,17 @@ internal class WhisperRuntime(
         }
     }
 
-    fun release() {
+    suspend fun release() = suspendCancellableCoroutine { continuation ->
         activeHandle.get().takeIf { it != NO_HANDLE }?.let(native::cancel)
         executor.execute {
-            if (handle != NO_HANDLE) native.destroy(handle)
-            handle = NO_HANDLE
-            loadedPath = null
+            try {
+                if (handle != NO_HANDLE) native.destroy(handle)
+                handle = NO_HANDLE
+                loadedPath = null
+                if (continuation.isActive) continuation.resume(Unit)
+            } catch (error: Throwable) {
+                if (continuation.isActive) continuation.resumeWithException(error)
+            }
         }
     }
 
@@ -68,10 +93,13 @@ internal class WhisperRuntime(
 
     private fun threadCount(): Int = Runtime.getRuntime().availableProcessors().coerceIn(1, MAX_THREADS)
 
+    private fun elapsedMillis(startedNanos: Long): Long = (System.nanoTime() - startedNanos) / 1_000_000L
+
     private companion object {
         const val NO_HANDLE = 0L
         const val MAX_THREADS = 4
         const val LANGUAGE_PORTUGUESE = "pt"
+        const val SAMPLE_RATE = 16_000
     }
 }
 

@@ -49,6 +49,7 @@ class WhisperModelManager private constructor(context: Context) : WhisperModelPr
         if (downloadJob?.isActive == true || state.value is WhisperModelState.Installed) return
         downloadJob = scope.launch {
             mutableState.value = WhisperModelState.Preparing
+            discardInvalidPartial()
             if (!hasSpaceForDownload()) {
                 mutableState.value = WhisperModelState.Error(WhisperModelError.INSUFFICIENT_SPACE)
                 return@launch
@@ -70,7 +71,6 @@ class WhisperModelManager private constructor(context: Context) : WhisperModelPr
                 partialFile.delete()
                 mutableState.value = WhisperModelState.NotInstalled
             } catch (_: IOException) {
-                partialFile.delete()
                 mutableState.value = WhisperModelState.Error(WhisperModelError.NETWORK)
             } catch (_: Throwable) {
                 partialFile.delete()
@@ -83,7 +83,7 @@ class WhisperModelManager private constructor(context: Context) : WhisperModelPr
         downloadJob?.cancel()
     }
 
-    fun removeModel(onRemoved: (() -> Unit)? = null) {
+    fun removeModel(onRemoved: (suspend () -> Unit)? = null) {
         downloadJob?.cancel()
         scope.launch {
             onRemoved?.invoke()
@@ -115,8 +115,15 @@ class WhisperModelManager private constructor(context: Context) : WhisperModelPr
 
     private fun hasSpaceForDownload(): Boolean {
         modelDir.mkdirs()
-        val remaining = (spec.expectedBytes - partialFile.length()).coerceAtLeast(0L)
+        val resumableBytes = partialFile.length().takeIf { it in 1 until spec.expectedBytes } ?: 0L
+        val remaining = spec.expectedBytes - resumableBytes
         return StatFs(modelDir.absolutePath).availableBytes >= remaining + FREE_SPACE_MARGIN_BYTES
+    }
+
+    private fun discardInvalidPartial() {
+        if (partialFile.exists() && partialFile.length() !in 1 until spec.expectedBytes) {
+            partialFile.delete()
+        }
     }
 
     private fun promoteVerifiedModel() {

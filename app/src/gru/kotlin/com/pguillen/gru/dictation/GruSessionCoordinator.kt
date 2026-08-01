@@ -159,7 +159,7 @@ object GruDictation {
 
     fun cancel() = instance().cancel()
 
-    fun releaseLocalModel() = localRuntime.release()
+    suspend fun releaseLocalModel() = localRuntime.release()
 
     private fun instance(context: Context? = null): GruSessionCoordinator {
         if (!::coordinator.isInitialized) {
