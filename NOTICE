@@ -1,4 +1,13 @@
+Gru
+Modifications copyright 2026 Gru Contributors
+
+Gru is an independent derivative of Dictate Keyboard, based on the declared
+source commit 7047202ecf0aaee0393f93c1d7c98eddf1631c7a.
+
+================================================================================
 Dictate Keyboard
+================================================================================
+
 Copyright 2024-2026 DevEmperor
 
 This product includes software developed by The FlorisBoard Contributors.
@@ -7,7 +16,8 @@ This product includes software developed by The FlorisBoard Contributors.
 FlorisBoard
 ================================================================================
 
-Dictate Keyboard is a fork of FlorisBoard, an open-source keyboard.
+The original Dictate Keyboard project is a fork of FlorisBoard, an open-source
+keyboard. Gru preserves this attribution for code derived from those projects.
 
     Copyright 2020-2024 The FlorisBoard Contributors
     Original author: Patrick Goldinger

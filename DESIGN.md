@@ -2,46 +2,68 @@
 
 ## Direction
 
-Gru é uma ferramenta Android em modo Operate: quase toda a interface desaparece depois da configuração. O pet flutuante é o foco visual e comunica estado por pose, movimento, contorno e descrição acessível.
+Gru é uma ferramenta Android cuja interface principal desaparece depois da configuração. O pet flutuante é acionador e indicador de estado; movimento, contorno, texto e descrição acessível comunicam o que está acontecendo.
 
 ## Visual System
 
-- Material 3 e Dynamic Color estruturam a tela de configuração em temas claro e escuro.
-- Superfícies são planas e silenciosas; não há cartões aninhados, decoração ou navegação persistente.
-- A cor do sistema orienta ações e foco. Cores dos pets pertencem aos personagens, não viram decoração de página.
-- Tipografia usa a escala Material e a fonte do sistema.
+- Material 3 e Dynamic Color estruturam a tela em temas claro e escuro.
+- A tela usa áreas abertas, sem cartões aninhados ou decoração sem função.
+- A hierarquia é: estado atual, ação pendente, prévia do pet e personalização.
+- Tipografia e espaçamento seguem os tokens Material e a escala de fonte do sistema.
+- Cores semânticas distinguem gravação, sucesso e erro; nenhum estado depende apenas de cor.
+
+## Components
+
+- `SetupStatus`: mostra o estado geral e a próxima ação necessária.
+- `PermissionRow`: explica e abre Acessibilidade, microfone ou notificação.
+- `PetPreview`: apresenta o pet e sua descrição acessível.
+- `PetSelector`: escolhe Lume, Faísca, Bip, Pingo ou Pudim.
+- `PetSignalView`: desenha aura e sinal de estado sem provocar relayout.
+- `LivingPetView`: anima pose, respiração, inclinação e resposta ao áudio.
 
 ## Pet Language
 
-- Lume: pequena coruja azul, calma e atenta.
-- Faisca: pequena raposa coral, rápida e expressiva.
-- Bip: pequeno robô verde-água, preciso e amigável.
-- Pingo: pequena criatura violeta arredondada, curiosa e suave.
-- O asset visual ocupa aproximadamente 40 dp dentro de uma área tocável mínima de 56 dp.
-- Cada pet usa um atlas de 16 expressões dentro de um motor contínuo de movimento: respiração, peso, inclinação, salto e pouso são interpolados a cada quadro.
-- O pet não usa selo de microfone, botão de fechar ou outro controle acoplado. Durante a gravação, aura coral, ondas responsivas e a faixa `OUVINDO 00:00` tornam o estado inequívoco.
-- Quando o sistema remove animações, as transições são instantâneas e o estado permanece legível pela pose e pela descrição acessível.
+- Lume: coruja azul, calma e atenta.
+- Faísca: raposa coral, rápida e expressiva.
+- Bip: robô verde-água, preciso e amigável.
+- Pingo: criatura violeta, curiosa e suave.
+- Pudim: cão branco e caramelo, alegre e atento.
+
+Cada pet usa um atlas de poses com movimento interpolado. Não há selo de microfone nem botão de fechar. Durante a gravação, aura coral, resposta ao volume e a faixa `● OUVINDO 00:00` tornam o estado inequívoco.
 
 ## Interaction
 
-- O pet aparece somente quando há, simultaneamente, um campo editável focado e o teclado visível.
-- Toque inicia a gravação; o segundo toque no próprio pet encerra e transcreve; arraste reposiciona.
-- O pet encaixa na borda mais próxima sem invadir barras do sistema ou o teclado.
-- A personalização ocorre no aplicativo, não em menus sobrepostos.
+- O pet aparece somente com campo editável focado e teclado visível.
+- Campos de senha nunca mostram o pet.
+- Um toque inicia a gravação; o segundo encerra e inicia a transcrição.
+- Arrastar reposiciona; soltar encaixa na borda sem invadir teclado ou barras do sistema.
+- A personalização acontece apenas no aplicativo de configuração.
 
-## States
+## Motion States
 
-- Inativo: pet respirando, piscando e executando ações espontâneas.
-- Ouvindo: inclinação atenta, aura coral pulsante e ondas corporais responsivas ao volume.
-- Processando: órbita contínua do corpo e arcos de progresso.
-- Sucesso: salto, pouso e comemoração.
-- Erro: expressão alegre, pequeno salto de incentivo e mensagem acionável; o pet nunca demonstra tristeza ou choro.
-- Sem foco: pet oculto.
+- `Idle`: respiração e piscada discretas.
+- `Recording`: reação imediata, aura e intensidade ligadas ao nível do áudio.
+- `Transcribing`: movimento contínuo e controlado.
+- `Success`: confirmação curta e alegre.
+- `Error`: indicação clara e amigável, sem tristeza.
+- Entrada e saída: escala e opacidade rápidas, sem alterar layout.
+
+Quando animações do sistema estão desativadas, as transições são instantâneas e o estado continua legível por texto, pose e descrição acessível.
+
+## Tokens
+
+- Tamanhos do pet: pequeno, médio e grande.
+- Transparência: 40% a 100%.
+- Alvo mínimo: 48 dp.
+- Entrada: 150 ms.
+- Saída: 110 ms.
+- Confirmação de sucesso: 1.200 ms.
+- Easing: desaceleração suave, sem elasticidade excessiva.
 
 ## Hardening Rules
 
-- Eventos de acessibilidade excluem mudanças de conteúdo por caractere para não degradar a digitação.
-- Ações concorrentes são bloqueadas enquanto uma transcrição está ativa.
-- Falhas preservam a gravação quando o motor permitir reenvio; nenhuma falha apaga o texto existente.
-- Campos de senha nunca mostram o pet.
-- Textos e controles acomodam traduções maiores, RTL e escala de fonte de 200%.
+- Eventos de acessibilidade são limitados aos necessários para foco, seleção e janelas.
+- Uma sessão bloqueia novos toques enquanto transcreve.
+- Fechar o teclado ou perder o campo cancela uma gravação ativa.
+- Nenhuma falha altera o texto já presente no campo.
+- Textos e controles acomodam RTL, telas pequenas e escala de fonte de 200%.

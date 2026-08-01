@@ -8,45 +8,42 @@ android
 
 ## Users
 
-Pessoas que preferem manter seu teclado Android habitual, especialmente o Samsung Keyboard, e querem ditar texto rapidamente em qualquer aplicativo sem trocar de teclado.
+Pessoas que querem ditar texto sem trocar o teclado Android que já utilizam, incluindo Samsung Keyboard e Gboard.
 
 ## Product Purpose
 
-Gru oferece uma única ação: tocar em um pet flutuante, falar e inserir a transcrição no campo de texto atualmente focado. Sucesso significa que o fluxo funciona com um toque, sem atrasar a digitação normal.
-
-## Positioning
-
-O pet é simultaneamente o acionador, o indicador de gravação e o feedback da transcrição. O aplicativo não tenta substituir o teclado nem expor a complexidade do motor de voz.
+Gru oferece uma única ação: tocar em um pet flutuante, falar e inserir a transcrição no campo editável focado. O aplicativo não substitui o teclado e não mantém histórico de ditados.
 
 ## Operating Context
 
-O Gru funciona sobre aplicativos como mensageiros e navegadores enquanto outro teclado permanece ativo. Após uma configuração inicial de microfone e acessibilidade, o usuário interage principalmente com o pet sobreposto.
+Após configurar Acessibilidade, microfone, notificação e uma chave da Groq, o usuário interage com o pet sobre outros aplicativos. O pet aparece somente quando há um campo editável focado e o teclado está visível. Campos de senha são excluídos.
 
 ## Capabilities and Constraints
 
-- Detectar apenas campos de texto focados por meio de um serviço de acessibilidade opcional.
-- Gravar, detectar silêncio, transcrever e inserir o resultado na posição do cursor.
-- Oferecer quatro pets, três tamanhos, transparência, arraste e encaixe na borda.
-- Conservar o motor de transcrição do Dictate Keyboard e remover as superfícies de teclado, dicionário, temas, extensões, mídia e Wear OS.
-- Manter a licença Apache 2.0 e as atribuições do código original.
-- Não registrar texto ditado, conteúdo da tela, áudio ou chaves de provedor em logs.
+- Detectar campo editável focado e teclado visível pelo serviço de Acessibilidade.
+- Gravar áudio WAV temporário, detectar fala, transcrever pela Groq e inserir no cursor ou substituir a seleção.
+- Oferecer cinco pets, três tamanhos, transparência, arraste e encaixe na borda.
+- Comunicar os estados inativo, ouvindo, processando, sucesso e erro.
+- Usar somente o provedor Groq com chave fornecida pelo usuário.
+- Não oferecer teclado, dicionário, autocorreção, histórico, prompts, reescrita, mídia, extensões ou Wear OS.
+- Não registrar em logs áudio, texto ditado, conteúdo da tela ou chave do provedor.
 
 ## Brand Commitments
 
-O nome visível é Gru. A personalidade vem de pets originais, animados e discretos; eles podem ser expressivos, mas nunca devem competir com o campo de texto.
+O nome visível é Gru. Lume, Faísca, Bip, Pingo e Pudim são pets animados, discretos e sempre amigáveis. O estado de erro não usa tristeza ou punição.
 
-## Evidence on Hand
+## Provenance
 
-A base técnica é o commit 7047202 do repositório DevEmperor/DictateKeyboard. Não há mascotes anteriores a preservar; os quatro pets do Gru serão assets originais.
+A referência histórica é o commit `7047202ecf0aaee0393f93c1d7c98eddf1631c7a` do projeto Dictate Keyboard. A licença Apache 2.0 e as atribuições do código original permanecem em `LICENSE` e `NOTICE`.
 
 ## Product Principles
 
 - Uma ação principal, sem navegação desnecessária.
-- O teclado escolhido pelo usuário permanece intacto e responsivo.
-- Feedback visual imediato em todas as etapas do ditado.
-- Privacidade e permissões explicadas antes da ativação.
-- Recuperação clara quando microfone, rede, provedor ou campo falharem.
+- O teclado escolhido pelo usuário permanece intacto.
+- Feedback imediato e inequívoco durante a gravação.
+- Permissões explicadas antes da ativação.
+- Falhas curtas, diretas e recuperáveis.
 
 ## Accessibility & Inclusion
 
-Alvos de toque têm no mínimo 48 dp, textos respeitam escala do sistema, estados não dependem apenas de cor, animações respeitam a configuração de remoção de animações e todos os pets possuem descrições para leitor de tela.
+Alvos de toque têm no mínimo 48 dp, textos respeitam a escala do sistema, estados não dependem apenas de cor, animações respeitam a configuração de remoção de animações e os estados do pet possuem descrições para leitor de tela.
