@@ -159,6 +159,8 @@ object GruDictation {
 
     fun cancel() = instance().cancel()
 
+    fun releaseLocalModel() = localRuntime.release()
+
     private fun instance(context: Context? = null): GruSessionCoordinator {
         if (!::coordinator.isInitialized) {
             val appContext = requireNotNull(context).applicationContext

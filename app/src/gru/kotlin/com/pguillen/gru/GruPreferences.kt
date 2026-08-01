@@ -34,6 +34,11 @@ class GruPreferences private constructor(context: Context) {
     private val mutableEngine = MutableStateFlow(store.nullableEnumValue<TranscriptionEngine>(KEY_ENGINE))
     val engine: StateFlow<TranscriptionEngine?> = mutableEngine.asStateFlow()
 
+    private val mutableRequestedEngine = MutableStateFlow(
+        store.nullableEnumValue<TranscriptionEngine>(KEY_REQUESTED_ENGINE) ?: mutableEngine.value,
+    )
+    val requestedEngine: StateFlow<TranscriptionEngine?> = mutableRequestedEngine.asStateFlow()
+
     private val mutableGroqApiKey = MutableStateFlow(migrateLegacyApiKey())
     val groqApiKeyState: StateFlow<String> = mutableGroqApiKey.asStateFlow()
 
@@ -76,6 +81,11 @@ class GruPreferences private constructor(context: Context) {
         edit.apply()
     }
 
+    fun requestEngine(value: TranscriptionEngine) {
+        mutableRequestedEngine.value = value
+        store.edit().putString(KEY_REQUESTED_ENGINE, value.name).apply()
+    }
+
     fun removeGroqApiKey() {
         if (apiKeyStore.clear()) mutableGroqApiKey.value = ""
     }
@@ -110,6 +120,7 @@ class GruPreferences private constructor(context: Context) {
         private const val KEY_GROQ_API_KEY = "groq_api_key"
         private const val KEY_GROQ_MODEL = "groq_model"
         private const val KEY_ENGINE = "transcription_engine"
+        private const val KEY_REQUESTED_ENGINE = "requested_transcription_engine"
 
         @Volatile private var instance: GruPreferences? = null
 
