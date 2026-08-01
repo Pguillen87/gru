@@ -35,7 +35,7 @@ configure<ApplicationExtension> {
     namespace = "com.pguillen.gru"
     compileSdk = projectCompileSdk.toInt()
     buildToolsVersion = tools.versions.buildTools.get()
-    ndkVersion = "25.2.9519653"
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -56,7 +56,7 @@ configure<ApplicationExtension> {
 
         externalNativeBuild {
             cmake {
-                arguments += listOf("-DANDROID_STL=c++_shared")
+                arguments += listOf("-DANDROID_STL=c++_static")
             }
         }
     }
