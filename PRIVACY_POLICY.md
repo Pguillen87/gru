@@ -1,68 +1,57 @@
 # Política de Privacidade do Gru
 
-**Vigência e última atualização:** 31 de julho de 2026
+**Vigência e última atualização:** 1º de agosto de 2026
 
-Esta política descreve o comportamento do aplicativo Android **Gru**, identificador `com.pguillen.gru`, mantido neste [repositório](https://github.com/Pguillen87/gru).
+Esta política descreve o aplicativo Android **Gru**, identificador `com.pguillen.gru`, mantido neste [repositório](https://github.com/Pguillen87/gru).
 
 ## Resumo
 
-- O Gru não opera servidor próprio, não exibe anúncios e não contém telemetria ou rastreamento.
-- O áudio gravado é enviado diretamente do aparelho para a Groq usando a chave do próprio usuário.
-- Áudio e transcrição não são mantidos em histórico pelo Gru.
-- Preferências e chave da Groq ficam no armazenamento privado do aplicativo.
-- O serviço de Acessibilidade não registra o que o usuário digita.
+- O Gru não opera servidor próprio, não exibe anúncios e não contém telemetria.
+- No modo **Online**, o áudio é enviado diretamente à Groq.
+- No modo **Privado**, áudio e transcrição permanecem no aparelho e nunca há fallback automático para Groq.
+- Áudio e transcrição não são mantidos em histórico.
+- A chave Groq é criptografada com uma chave do Android Keystore.
 
-## Dados processados
+## Áudio e transcrição
 
-### Áudio
+O Gru grava somente após um toque no pet. A captura é escrita como WAV no cache privado. Depois da transcrição, falha ou cancelamento, o arquivo temporário é apagado. O texto resultante é inserido no campo focado e não é salvo em banco de dados.
 
-O Gru grava somente após um toque no pet. A captura é escrita como `gru_audio.wav` no cache privado do aplicativo. Quando a gravação termina, o arquivo é enviado por HTTPS para a API de transcrição da Groq e apagado após sucesso ou falha. Cancelar a sessão também remove a captura temporária.
+### Online — Groq
 
-### Transcrição
+O WAV temporário é enviado por HTTPS à API da Groq usando a chave do usuário. O tratamento pela Groq segue seus [termos e política de privacidade](https://groq.com/privacy-policy/). O mantenedor do Gru não recebe a solicitação.
 
-O texto retornado pela Groq é inserido no campo editável que estiver focado. O Gru não cria banco de dados nem histórico para esse texto.
+### Privado — Whisper local
 
-### Chave e preferências
+O WAV é processado pelo `whisper.cpp` dentro do aparelho. O Gru não envia áudio ou texto à Groq e não realiza fallback online quando a inferência local falha. Mudar para Online exige ação explícita.
 
-A chave de API da Groq, pet, tamanho, transparência e estado de ativação são armazenados em `SharedPreferences` privadas. O backup Android está desativado. A chave é enviada somente à Groq no cabeçalho de autenticação da solicitação feita pelo usuário.
+## Modelo offline
 
-## Provedor externo
+O modelo não faz parte do APK ou AAB. Quando o usuário solicita o download, o Gru acessa uma revisão fixa do repositório oficial `ggerganov/whisper.cpp` no Hugging Face. O arquivo possui `574.041.195` bytes e checksum SHA-256 fixado.
 
-O único provedor integrado é a **Groq**. Áudio e dados associados à solicitação são tratados de acordo com os termos e a [política de privacidade da Groq](https://groq.com/privacy-policy/). O mantenedor do Gru não recebe essas solicitações. O usuário deve avaliar os termos da Groq antes de usar o serviço.
+O download usa um arquivo `.part` controlado pelo aplicativo, pode ser retomado após interrupção de rede e só é promovido após validação. O modelo final fica em `filesDir/whisper-models`, armazenamento privado removido automaticamente na desinstalação. O usuário também pode removê-lo pela tela `Transcrição`.
+
+## Chave e preferências
+
+A chave Groq é cifrada com AES-GCM. A chave criptográfica não é exportável e fica no Android Keystore; apenas o texto cifrado fica em `SharedPreferences` privadas. Instalações antigas com chave em texto simples são migradas e a cópia antiga é removida após confirmação. Pet, tamanho, transparência e escolha do motor permanecem em preferências privadas. O backup Android está desativado.
 
 ## Acessibilidade
 
-O serviço de Acessibilidade é necessário para:
+O serviço de Acessibilidade verifica campo focado e teclado visível, posiciona o pet e insere a transcrição. O pet é ocultado em senhas. O Gru não possui teclado próprio, não registra teclas e não transmite o texto já existente no campo.
 
-- verificar se há um campo editável focado;
-- verificar se o teclado está visível;
-- posicionar o pet fora da área do teclado;
-- inserir a transcrição no cursor ou substituir a seleção.
-
-O pet é ocultado em campos de senha. O Gru não possui teclado próprio, não registra teclas e não transmite o texto já existente no campo para a Groq.
-
-## Permissões
+## Permissões e rede
 
 | Permissão ou acesso | Finalidade |
 | --- | --- |
-| Microfone | Capturar a fala somente durante uma sessão iniciada pelo usuário. |
-| Internet | Enviar o WAV temporário à Groq e receber a transcrição. |
-| Notificações | Informar claramente quando a gravação está ativa. |
-| Serviço em primeiro plano de microfone | Manter a gravação iniciada pelo usuário compatível com as regras recentes do Android. |
-| Acessibilidade | Detectar o destino e inserir o texto, conforme descrito acima. |
+| Microfone | Capturar fala durante sessão iniciada pelo usuário. |
+| Internet | Usar Groq no Online ou baixar o modelo após solicitação no Privado. |
+| Notificações | Informar quando a gravação está ativa. |
+| Serviço em primeiro plano | Manter a gravação compatível com as regras do Android. |
+| Acessibilidade | Detectar o destino e inserir o texto. |
 
-## Retenção e exclusão
+## Segurança e retenção
 
-O arquivo de áudio temporário é apagado ao final ou cancelamento da sessão. Preferências e chave permanecem até serem substituídas, limpas pelos ajustes do Android ou removidas com a desinstalação. Eventual retenção pela Groq segue a política e os termos da conta do usuário.
-
-## Segurança
-
-As solicitações usam HTTPS e tráfego sem criptografia está desativado no Manifest. O aplicativo não registra chaves, áudio, transcrições ou conteúdo de tela em logs. Nenhum método de armazenamento ou transmissão elimina todos os riscos; o Gru reduz a exposição ao não operar backend próprio nem manter histórico.
-
-## Crianças e transferências internacionais
-
-O Gru não é direcionado a crianças. A Groq pode impor requisitos de idade e processar dados em outros países conforme seus próprios termos.
+Tráfego sem criptografia está desativado. O Gru não registra chaves, áudio, transcrições ou conteúdo de tela. WAV e arquivos de download inválidos são removidos; uma parte interrompida por rede permanece somente para retomada controlada. Preferências, chave cifrada e modelo permanecem até remoção pelo usuário, limpeza dos dados ou desinstalação.
 
 ## Alterações e contato
 
-Mudanças materiais serão publicadas neste arquivo com uma nova data. Dúvidas e solicitações devem ser abertas na seção [Issues do repositório](https://github.com/Pguillen87/gru/issues).
+Mudanças materiais serão publicadas neste arquivo. Dúvidas e solicitações podem ser abertas nas [Issues do repositório](https://github.com/Pguillen87/gru/issues).

@@ -12,38 +12,43 @@ Pessoas que querem ditar texto sem trocar o teclado Android que já utilizam, in
 
 ## Product Purpose
 
-Gru oferece uma única ação: tocar em um pet flutuante, falar e inserir a transcrição no campo editável focado. O aplicativo não substitui o teclado e não mantém histórico de ditados.
+Gru oferece uma ação: tocar em um pet flutuante, falar e inserir a transcrição no campo editável focado. O aplicativo não substitui o teclado, não mantém histórico e permite escolher entre Groq Online e Whisper Privado no aparelho.
 
 ## Operating Context
 
-Após configurar Acessibilidade, microfone, notificação e uma chave da Groq, o usuário interage com o pet sobre outros aplicativos. O pet aparece somente quando há um campo editável focado e o teclado está visível. Campos de senha são excluídos.
+O pet aparece somente quando há um campo editável focado e o teclado está visível. Campos de senha são excluídos. O primeiro uso começa pela escolha do motor e segue para as permissões necessárias.
+
+## Transcription Modes
+
+- `ONLINE_GROQ`: exige internet e chave; envia o áudio temporário à Groq.
+- `PRIVATE_LOCAL`: exige modelo verificado; processa offline e proíbe fallback automático para Groq.
+- A escolha fica centralizada no `TranscriptionEngineRouter` e é capturada no início de cada sessão.
+- Uma única máquina de estados atende aos dois motores.
 
 ## Capabilities and Constraints
 
-- Detectar campo editável focado e teclado visível pelo serviço de Acessibilidade.
-- Gravar áudio WAV temporário, detectar fala, transcrever pela Groq e inserir no cursor ou substituir a seleção.
+- Detectar campo editável focado e teclado visível pela Acessibilidade.
+- Gravar WAV temporário, detectar fala, transcrever e inserir no cursor ou na seleção.
+- Baixar o modelo local somente após ação explícita, validar tamanho e SHA-256 e armazená-lo em área privada.
 - Oferecer cinco pets, três tamanhos, transparência, arraste e encaixe na borda.
 - Comunicar os estados inativo, ouvindo, processando, sucesso e erro.
-- Usar somente o provedor Groq com chave fornecida pelo usuário.
 - Não oferecer teclado, dicionário, autocorreção, histórico, prompts, reescrita, mídia, extensões ou Wear OS.
-- Não registrar em logs áudio, texto ditado, conteúdo da tela ou chave do provedor.
-
-## Brand Commitments
-
-O nome visível é Gru. Lume, Faísca, Bip, Pingo e Pudim são pets animados, discretos e sempre amigáveis. O estado de erro não usa tristeza ou punição.
-
-## Provenance
-
-A referência histórica é o commit `7047202ecf0aaee0393f93c1d7c98eddf1631c7a` do projeto Dictate Keyboard. A licença Apache 2.0 e as atribuições do código original permanecem em `LICENSE` e `NOTICE`.
+- Não registrar áudio, texto ditado, conteúdo da tela ou chave.
+- O Large V3 Turbo Q5 é experimental no Android e foi medido como inviável para ditado interativo no Samsung A55.
 
 ## Product Principles
 
-- Uma ação principal, sem navegação desnecessária.
+- A privacidade escolhida é literal: no Privado, o áudio não sai do aparelho.
+- Sem fallback silencioso entre motores.
+- Download grande sempre consciente, verificável e cancelável.
 - O teclado escolhido pelo usuário permanece intacto.
-- Feedback imediato e inequívoco durante a gravação.
-- Permissões explicadas antes da ativação.
+- Feedback imediato durante gravação e processamento.
 - Falhas curtas, diretas e recuperáveis.
 
 ## Accessibility & Inclusion
 
-Alvos de toque têm no mínimo 48 dp, textos respeitam a escala do sistema, estados não dependem apenas de cor, animações respeitam a configuração de remoção de animações e os estados do pet possuem descrições para leitor de tela.
+Alvos de toque têm no mínimo 48 dp, textos respeitam a escala do sistema, estados não dependem apenas de cor e controles possuem nomes acessíveis. Material 3 e Dynamic Color atendem aos temas claro e escuro.
+
+## Provenance
+
+A referência histórica é o commit `7047202ecf0aaee0393f93c1d7c98eddf1631c7a` do Dictate Keyboard. O runtime local usa `whisper.cpp` v1.8.6 sob licença MIT. Atribuições permanecem em `NOTICE`, `LICENSE` e no diretório vendorizado.

@@ -8,7 +8,9 @@ Gru é uma ferramenta Android cuja interface principal desaparece depois da conf
 
 - Material 3 e Dynamic Color estruturam a tela em temas claro e escuro.
 - A tela usa áreas abertas, sem cartões aninhados ou decoração sem função.
-- A hierarquia é: estado atual, ação pendente, prévia do pet e personalização.
+- A navegação possui somente duas abas: `Geral` e `Transcrição`.
+- Em Geral, a hierarquia é: estado atual, ação pendente, prévia do pet e personalização.
+- Em Transcrição, a hierarquia é: motor atual, escolha Online/Privado e configuração necessária.
 - Tipografia e espaçamento seguem os tokens Material e a escala de fonte do sistema.
 - Cores semânticas distinguem gravação, sucesso e erro; nenhum estado depende apenas de cor.
 
@@ -20,6 +22,19 @@ Gru é uma ferramenta Android cuja interface principal desaparece depois da conf
 - `PetSelector`: escolhe Lume, Faísca, Bip, Pingo ou Pudim.
 - `PetSignalView`: desenha aura e sinal de estado sem provocar relayout.
 - `LivingPetView`: anima pose, respiração, inclinação e resposta ao áudio.
+- `EngineChoice`: compara Online e Privado sem esconder internet, privacidade, armazenamento ou bateria.
+- `LocalModelSettings`: comunica não instalado, preparando, baixando, verificando, instalado e erro.
+- `GroqKeyDialog`: salva a chave somente após confirmação e não mantém entrada parcial.
+
+## Transcription Experience
+
+- O primeiro uso abre diretamente em `Transcrição` quando nenhum motor está ativo.
+- Online usa o ícone de nuvem e a promessa “Mais rápido e leve”.
+- Privado usa o ícone de cadeado e a promessa “Seu áudio não sai do celular”.
+- Solicitar Privado não o ativa antes de existir um modelo válido.
+- Solicitar Online não o ativa antes de existir uma chave salva.
+- Progresso de download é determinado por bytes reais; não há progresso inventado.
+- Movimento é reservado ao progresso indeterminado, progresso determinado e mudança de estado.
 
 ## Pet Language
 
@@ -36,6 +51,7 @@ Cada pet usa um atlas de poses com movimento interpolado. Não há selo de micro
 - O pet aparece somente com campo editável focado e teclado visível.
 - Campos de senha nunca mostram o pet.
 - Um toque inicia a gravação; o segundo encerra e inicia a transcrição.
+- Durante o processamento, um toque cancela a transcrição e remove o WAV temporário.
 - Arrastar reposiciona; soltar encaixa na borda sem invadir teclado ou barras do sistema.
 - A personalização acontece apenas no aplicativo de configuração.
 
