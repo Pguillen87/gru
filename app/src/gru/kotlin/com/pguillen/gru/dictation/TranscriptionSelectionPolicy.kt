@@ -8,6 +8,11 @@
 package com.pguillen.gru.dictation
 
 object TranscriptionSelectionPolicy {
+    fun engineAfterRequest(
+        current: TranscriptionEngine?,
+        requested: TranscriptionEngine,
+    ): TranscriptionEngine? = current?.takeIf { it == requested }
+
     fun canActivate(
         engine: TranscriptionEngine,
         hasGroqKey: Boolean,

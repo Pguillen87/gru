@@ -10,6 +10,7 @@ package com.pguillen.gru
 import android.content.Context
 import android.content.SharedPreferences
 import com.pguillen.gru.dictation.TranscriptionEngine
+import com.pguillen.gru.dictation.TranscriptionSelectionPolicy
 import com.pguillen.gru.security.GroqApiKeyStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,16 +32,28 @@ class GruPreferences private constructor(context: Context) {
     private val mutableOpacity = MutableStateFlow(store.getInt(KEY_OPACITY, 100).coerceIn(40, 100))
     val opacity: StateFlow<Int> = mutableOpacity.asStateFlow()
 
-    private val mutableEngine = MutableStateFlow(store.nullableEnumValue<TranscriptionEngine>(KEY_ENGINE))
+    private val storedEngine = store.nullableEnumValue<TranscriptionEngine>(KEY_ENGINE)
+    private val storedRequestedEngine =
+        store.nullableEnumValue<TranscriptionEngine>(KEY_REQUESTED_ENGINE) ?: storedEngine
+    private val initialEngine = storedRequestedEngine?.let { requested ->
+        TranscriptionSelectionPolicy.engineAfterRequest(storedEngine, requested)
+    }
+
+    private val mutableEngine = MutableStateFlow(initialEngine)
     val engine: StateFlow<TranscriptionEngine?> = mutableEngine.asStateFlow()
 
-    private val mutableRequestedEngine = MutableStateFlow(
-        store.nullableEnumValue<TranscriptionEngine>(KEY_REQUESTED_ENGINE) ?: mutableEngine.value,
-    )
+    private val mutableRequestedEngine = MutableStateFlow(storedRequestedEngine)
     val requestedEngine: StateFlow<TranscriptionEngine?> = mutableRequestedEngine.asStateFlow()
 
     private val mutableGroqApiKey = MutableStateFlow(migrateLegacyApiKey())
     val groqApiKeyState: StateFlow<String> = mutableGroqApiKey.asStateFlow()
+
+    init {
+        if (storedEngine != initialEngine) {
+            mutableEnabled.value = false
+            store.edit().remove(KEY_ENGINE).putBoolean(KEY_ENABLED, false).apply()
+        }
+    }
 
     var groqApiKey: String
         get() = mutableGroqApiKey.value
@@ -82,8 +95,15 @@ class GruPreferences private constructor(context: Context) {
     }
 
     fun requestEngine(value: TranscriptionEngine) {
+        val retainedEngine = TranscriptionSelectionPolicy.engineAfterRequest(mutableEngine.value, value)
         mutableRequestedEngine.value = value
-        store.edit().putString(KEY_REQUESTED_ENGINE, value.name).apply()
+        mutableEngine.value = retainedEngine
+        store.edit().putString(KEY_REQUESTED_ENGINE, value.name).apply {
+            if (retainedEngine == null) {
+                mutableEnabled.value = false
+                remove(KEY_ENGINE).putBoolean(KEY_ENABLED, false)
+            }
+        }.apply()
     }
 
     fun removeGroqApiKey() {

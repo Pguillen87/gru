@@ -8,7 +8,9 @@
 package com.pguillen.gru.dictation
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TranscriptionSelectionPolicyTest {
@@ -22,5 +24,26 @@ class TranscriptionSelectionPolicyTest {
     fun `private requires only verified local model`() {
         assertFalse(TranscriptionSelectionPolicy.canActivate(TranscriptionEngine.PRIVATE_LOCAL, true, false))
         assertTrue(TranscriptionSelectionPolicy.canActivate(TranscriptionEngine.PRIVATE_LOCAL, false, true))
+    }
+
+    @Test
+    fun `requesting private never retains online as active`() {
+        assertNull(
+            TranscriptionSelectionPolicy.engineAfterRequest(
+                current = TranscriptionEngine.ONLINE_GROQ,
+                requested = TranscriptionEngine.PRIVATE_LOCAL,
+            ),
+        )
+    }
+
+    @Test
+    fun `requesting current engine keeps it active`() {
+        assertEquals(
+            TranscriptionEngine.ONLINE_GROQ,
+            TranscriptionSelectionPolicy.engineAfterRequest(
+                current = TranscriptionEngine.ONLINE_GROQ,
+                requested = TranscriptionEngine.ONLINE_GROQ,
+            ),
+        )
     }
 }
