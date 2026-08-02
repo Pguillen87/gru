@@ -28,7 +28,7 @@ internal enum class PetMotionMode { IDLE, LISTENING, PROCESSING, SUCCESS, ERROR 
  * moments; breathing, weight, tilt and jumps are interpolated every display frame.
  */
 internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
-    private val bitmap: Bitmap = BitmapFactory.decodeResource(resources, atlasRes)
+    private val bitmap: Bitmap = decodeAtlas(atlasRes)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val source = Rect()
     private val destination = RectF()
@@ -211,6 +211,23 @@ internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
             interpolator = LinearInterpolator()
             addUpdateListener { invalidate() }
         }
+    }
+
+    private fun decodeAtlas(atlasRes: Int): Bitmap {
+        val decoded = checkNotNull(
+            BitmapFactory.decodeResource(
+                resources,
+                atlasRes,
+                BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                    inScaled = false
+                },
+            ),
+        ) { "Unable to decode pet atlas" }
+        if (decoded.config != Bitmap.Config.HARDWARE) return decoded
+        return checkNotNull(decoded.copy(Bitmap.Config.ARGB_8888, false)) {
+            "Unable to prepare pet atlas"
+        }.also { decoded.recycle() }
     }
 
     private fun smoothStep(from: Float, to: Float, value: Float): Float {

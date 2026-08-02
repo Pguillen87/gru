@@ -23,9 +23,12 @@ import android.os.Looper
 import android.os.SystemClock
 import android.graphics.Rect
 import android.util.Log
+import android.view.WindowInsets
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import android.view.inputmethod.InputMethodManager
 import com.pguillen.gru.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,7 +46,7 @@ class GruAccessibilityService : AccessibilityService() {
         instance = this
         createNotificationChannel()
         bubble = GruPetOverlayController(this).also(GruPetOverlayController::start)
-        updateEditorState()
+        refreshEditorStateAfterImeSettles()
         Log.d(TAG, "Accessibility service connected")
     }
 
@@ -58,8 +61,7 @@ class GruAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             -> {
-                mainHandler.removeCallbacks(focusUpdate)
-                updateEditorState()
+                refreshEditorStateAfterImeSettles()
             }
         }
     }
@@ -82,20 +84,29 @@ class GruAccessibilityService : AccessibilityService() {
         currentAppPackage()?.takeIf { it != packageName }?.let { mutableForegroundPackage.value = it }
     }
 
-    private fun focusedEditableNode(): AccessibilityNodeInfo? {
-        val node = findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return null
-        if (node.isLikelyEditable()) return node
-        return findEditableDescendant(node, depth = 0)
+    private fun refreshEditorStateAfterImeSettles() {
+        mainHandler.removeCallbacks(focusUpdate)
+        updateEditorState()
+        mainHandler.postDelayed(focusUpdate, IME_SETTLE_MILLIS)
     }
 
-    private fun activeWindowEditable(): AccessibilityNodeInfo? {
-        val root = rootInActiveWindow ?: return null
-        root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { focused ->
-            if (focused.isLikelyEditable()) return focused
-            findEditableDescendant(focused, depth = 0)?.let { return it }
-        }
-        return root.takeIf { it.isFocused && it.isLikelyEditable() }
+    private fun focusedEditableNode(): AccessibilityNodeInfo? {
+        editableFrom(findFocus(AccessibilityNodeInfo.FOCUS_INPUT))?.let { return it }
+        return windows
+            .asSequence()
+            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .sortedByDescending { it.isFocused }
+            .mapNotNull { window -> editableFrom(window.root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)) }
+            .firstOrNull()
     }
+
+    private fun editableFrom(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? = when {
+        node == null -> null
+        node.isLikelyEditable() -> node
+        else -> findEditableDescendant(node, depth = 0)
+    }
+
+    private fun activeWindowEditable(): AccessibilityNodeInfo? = focusedEditableNode()
 
     private fun findEditableDescendant(node: AccessibilityNodeInfo, depth: Int): AccessibilityNodeInfo? {
         if (depth >= MAX_EDITABLE_SEARCH_DEPTH) return null
@@ -115,9 +126,23 @@ class GruAccessibilityService : AccessibilityService() {
             (isFocused || isFocusable)
     }
 
-    private fun isImeWindowShown(): Boolean = runCatching {
-        windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
-    }.getOrDefault(false)
+    private fun isImeWindowShown(): Boolean {
+        if (runCatching { windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } }.getOrDefault(false)) {
+            return true
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val insetsVisible = runCatching {
+                getSystemService(WindowManager::class.java)
+                    ?.currentWindowMetrics
+                    ?.windowInsets
+                    ?.isVisible(WindowInsets.Type.ime()) == true
+            }.getOrDefault(false)
+            if (insetsVisible) return true
+        }
+        return runCatching {
+            getSystemService(InputMethodManager::class.java)?.isAcceptingText == true
+        }.getOrDefault(false)
+    }
 
     internal fun editorAreaBottom(): Int = runCatching {
         val bounds = Rect()
@@ -269,6 +294,7 @@ class GruAccessibilityService : AccessibilityService() {
         private const val COMMIT_RETRY_MILLIS = 60L
         private const val FOCUS_SETTLE_MILLIS = 40L
         private const val FOCUS_UPDATE_DEBOUNCE_MILLIS = 150L
+        private const val IME_SETTLE_MILLIS = 500L
         private const val CLIPBOARD_RESTORE_MILLIS = 400L
 
         @Volatile private var instance: GruAccessibilityService? = null

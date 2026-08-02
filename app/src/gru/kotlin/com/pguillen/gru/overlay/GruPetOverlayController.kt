@@ -14,6 +14,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -164,6 +165,8 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
                 view.scaleY = 0.88f
                 view.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(150L).start()
             }
+        }.onFailure { error ->
+            Log.w(TAG, "Unable to add pet overlay: ${error.javaClass.simpleName}")
         }
     }
 
@@ -388,7 +391,9 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -473,6 +478,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     }
 
     private companion object {
+        const val TAG = "GruPetOverlay"
         const val EDGE_MARGIN = 12
     }
 }
