@@ -69,6 +69,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private var currentOpacity = 100
     private var previousState: GruDictationState = GruDictationState.Idle
     private var currentPackage: String? = null
+    private var previousVisibility: VisibilitySnapshot? = null
     private val positions = mutableMapOf<String, Pair<Int, Int>>()
     private var snapAnimator: ValueAnimator? = null
 
@@ -81,6 +82,14 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private data class TargetState(
         val editableFocused: Boolean,
         val imeVisible: Boolean,
+    )
+
+    private data class VisibilitySnapshot(
+        val enabled: Boolean,
+        val engineReady: Boolean,
+        val editableFocused: Boolean,
+        val imeVisible: Boolean,
+        val shouldShow: Boolean,
     )
 
     fun start() {
@@ -152,6 +161,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             editableFocused = target.editableFocused,
             imeVisible = target.imeVisible,
         )
+        reportVisibility(enabled, engineReady, target, shouldShow)
         if (shouldShow) {
             ensureShown()
             clampPosition()
@@ -312,6 +322,28 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private fun reportAttachment(reason: String) {
         GruOverlayHealth.overlayChanged(attachment.state, attachment.recoveryAttempts)
         Log.d(TAG, "state=${attachment.state} attempt=${attachment.recoveryAttempts} reason=$reason")
+    }
+
+    private fun reportVisibility(
+        enabled: Boolean,
+        engineReady: Boolean,
+        target: TargetState,
+        shouldShow: Boolean,
+    ) {
+        val current = VisibilitySnapshot(
+            enabled = enabled,
+            engineReady = engineReady,
+            editableFocused = target.editableFocused,
+            imeVisible = target.imeVisible,
+            shouldShow = shouldShow,
+        )
+        if (current == previousVisibility) return
+        previousVisibility = current
+        Log.d(
+            TAG,
+            "visibility enabled=$enabled engineReady=$engineReady " +
+                "editableFocused=${target.editableFocused} imeVisible=${target.imeVisible} shouldShow=$shouldShow",
+        )
     }
 
     private fun releasePet() {
