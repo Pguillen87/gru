@@ -20,12 +20,14 @@ class RuntimeLimits:
     daily_cost_cap_usd: float
     estimated_generation_cost_usd: float
     model_timeout_seconds: int
+    jobs_per_user_per_day: int
+    user_daily_cost_cap_usd: float
 
 
 LIMITS = {
-    Environment.DEVELOPMENT: RuntimeLimits(1, 1, 6, 5.0, 0.20, 600),
-    Environment.STAGING: RuntimeLimits(1, 1, 6, 10.0, 0.20, 600),
-    Environment.PRODUCTION: RuntimeLimits(2, 2, 6, 100.0, 0.20, 600),
+    Environment.DEVELOPMENT: RuntimeLimits(1, 1, 6, 5.0, 0.20, 600, 2, 0.40),
+    Environment.STAGING: RuntimeLimits(1, 1, 6, 10.0, 0.20, 600, 3, 0.60),
+    Environment.PRODUCTION: RuntimeLimits(2, 2, 6, 100.0, 0.20, 600, 5, 1.00),
 }
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
 import os
 import uuid
@@ -19,17 +20,19 @@ import modal
 
 from modal_service.catalog import MASTER_PROMPT_VERSION, POSE_PROMPT_VERSION, POSE_TEMPLATE_VERSION
 from modal_service.config import Environment, limits_for
-from modal_service.domain import DomainError, JobRecord, JobState
+from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState
 from modal_service.validation import ImageValidationError, validate_image
 
 APP_NAME = "gru-mascot"
+FIREBASE_PROJECT_ID = "gru-mascote"
+FIREBASE_PROJECT_NUMBER = "816774877835"
 ASSET_ROOT = "/gru-assets"
 MODEL_ROOT = "/gru-models"
 ENVIRONMENT = Environment(os.getenv("GRU_MASCOT_ENV", Environment.DEVELOPMENT))
 LIMITS = limits_for(ENVIRONMENT)
 
 api_image = modal.Image.debian_slim(python_version="3.12").pip_install(
-    "fastapi[standard]>=0.115,<1", "pillow>=11,<12", "httpx>=0.28,<1", "google-auth>=2.38,<3"
+    "fastapi[standard]>=0.115,<1", "pillow>=11,<12", "httpx>=0.28,<1", "google-auth>=2.38,<3", "firebase-admin>=6.6,<7"
 )
 gpu_image = api_image.pip_install(
     "torch>=2.6,<3", "diffusers>=0.35", "transformers>=4.51", "accelerate>=1.6", "safetensors>=0.5"
@@ -40,6 +43,7 @@ models = modal.Volume.from_name("gru-mascot-models", create_if_missing=True)
 jobs = modal.Dict.from_name("gru-mascot-jobs", create_if_missing=True)
 idempotency = modal.Dict.from_name("gru-mascot-idempotency", create_if_missing=True)
 usage = modal.Dict.from_name("gru-mascot-usage", create_if_missing=True)
+firebase_admin_secret = modal.Secret.from_name("gru-mascot-firebase-admin")
 
 
 def _record_key(user_id: str, idempotency_key: str) -> str:
@@ -72,7 +76,7 @@ def _get_job(job_id: str) -> JobRecord:
     try:
         return _deserialize(jobs[job_id])
     except KeyError as error:
-        raise DomainError("Job was not found.") from error
+        raise JobNotFound("Job was not found.") from error
 
 
 def _save_job(job: JobRecord) -> None:
@@ -81,14 +85,14 @@ def _save_job(job: JobRecord) -> None:
 
 def _ensure_owner(job: JobRecord, user_id: str) -> None:
     if job.user_id != user_id:
-        raise DomainError("Job was not found.")
+        raise JobNotFound("Job was not found.")
 
 
 def _api_error(error: Exception):
     from fastapi import HTTPException
 
     code = getattr(error, "code", "INVALID_REQUEST")
-    status = 400 if code in {"INVALID_IMAGE", "INVALID_REQUEST"} else 409
+    status = 429 if code == "RATE_LIMITED" else 404 if code == "JOB_NOT_FOUND" else 400 if code in {"INVALID_IMAGE", "INVALID_REQUEST"} else 409
     return HTTPException(status_code=status, detail={"code": code, "message": str(error)})
 
 
@@ -115,19 +119,28 @@ def _transition(job: JobRecord, state: JobState) -> None:
     _save_job(job)
 
 
-def _reserve_budget() -> None:
+def _reserve_budget(user_id: str) -> None:
     """Development guard; one API container serializes reservations in this phase."""
     day_key = utc_day_key()
-    try:
-        current = float(usage[day_key])
-    except KeyError:
-        current = 0.0
-    next_total = current + LIMITS.estimated_generation_cost_usd
-    if next_total > LIMITS.daily_cost_cap_usd:
-        from modal_service.costs import CostLimitExceeded
+    from modal_service.costs import require_job_quota, require_reservation
+    global_cost = float(_usage_value(f"global-cost:{day_key}", 0.0))
+    user_cost_key = f"user-cost:{day_key}:{user_id}"
+    user_jobs_key = f"user-jobs:{day_key}:{user_id}"
+    user_cost = float(_usage_value(user_cost_key, 0.0))
+    user_jobs = int(_usage_value(user_jobs_key, 0))
+    next_global = require_reservation(global_cost, LIMITS.estimated_generation_cost_usd, LIMITS.daily_cost_cap_usd)
+    next_user = require_reservation(user_cost, LIMITS.estimated_generation_cost_usd, LIMITS.user_daily_cost_cap_usd)
+    next_jobs = require_job_quota(user_jobs, LIMITS.jobs_per_user_per_day)
+    usage[f"global-cost:{day_key}"] = next_global
+    usage[user_cost_key] = next_user
+    usage[user_jobs_key] = next_jobs
 
-        raise CostLimitExceeded("Daily generation cost cap reached.")
-    usage[day_key] = round(next_total, 4)
+
+def _usage_value(key: str, fallback: float | int) -> float | int:
+    try:
+        return usage[key]
+    except KeyError:
+        return fallback
 
 
 def utc_day_key() -> str:
@@ -198,15 +211,22 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
     assets.commit()
 
 
-@app.function(image=api_image, volumes={ASSET_ROOT: assets}, max_containers=1)
+@app.function(image=api_image, volumes={ASSET_ROOT: assets}, secrets=[firebase_admin_secret], max_containers=1)
 @modal.asgi_app()
 def api():
     from fastapi import Depends, FastAPI, Header
+    import firebase_admin
+    from firebase_admin import app_check as firebase_app_check
+    from firebase_admin import credentials
     from google.auth.transport.requests import Request as GoogleRequest
     from google.oauth2 import id_token
     from pydantic import BaseModel, Field
 
     service = FastAPI(title="GRU Mascot API", docs_url=None, redoc_url=None)
+    credentials_json = os.environ.get("FIREBASE_ADMIN_CREDENTIALS_JSON")
+    if not credentials_json:
+        raise RuntimeError("Firebase Admin credentials are required for protected API startup.")
+    firebase_admin.initialize_app(credentials.Certificate(json.loads(credentials_json)))
 
     class CreateJobRequest(BaseModel):
         image_base64: str = Field(min_length=1, max_length=14_000_000)
@@ -232,8 +252,19 @@ def api():
             from fastapi import HTTPException
             raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": "A valid identity is required."}) from error
 
+    async def verified_app_check(x_firebase_appcheck: Annotated[str | None, Header()] = None) -> None:
+        if not x_firebase_appcheck:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail={"code": "APP_CHECK_REQUIRED", "message": "A valid app proof is required."})
+        try:
+            firebase_app_check.verify_token(x_firebase_appcheck)
+        except Exception as error:
+            logging.info("firebase_app_check_rejected type=%s", type(error).__name__)
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail={"code": "APP_CHECK_REQUIRED", "message": "A valid app proof is required."}) from error
+
     async def cost_context(
-        user_id: Annotated[str, Depends(verified_user)], x_idempotency_key: Annotated[str | None, Header()] = None,
+        user_id: Annotated[str, Depends(verified_user)], _: Annotated[None, Depends(verified_app_check)], x_idempotency_key: Annotated[str | None, Header()] = None,
     ) -> tuple[str, str]:
         return _request_context(user_id, x_idempotency_key or "")
 
@@ -252,7 +283,7 @@ def api():
             _, _, _ = validate_image(content, request.content_type)
             digest = hashlib.sha256(content).hexdigest()
             job = _new_job(user_id, key, f"original/{digest}")
-            _reserve_budget()
+            _reserve_budget(user_id)
             destination = _asset_path(job.job_id, "original", "source.bin")
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)

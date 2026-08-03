@@ -43,6 +43,10 @@ class DomainError(ValueError):
     """A safe error which may be shown to the integration client."""
 
 
+class JobNotFound(DomainError):
+    code = "JOB_NOT_FOUND"
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
