@@ -71,6 +71,22 @@ class MascotApiTest {
         } finally { server.shutdown() }
     }
 
+    @Test fun `starts a paused Master with proof and idempotency headers`() = runTest {
+        val server = MockWebServer().apply {
+            enqueue(MockResponse().setResponseCode(202).setBody("{\"job_id\":\"job_1\",\"state\":\"VALIDATING_INPUT\"}"))
+            start()
+        }
+        try {
+            val api = MascotApi(FakeAuth, FakeAppCheck, OkHttpClient(), server.url("/").toString())
+            assertEquals("VALIDATING_INPUT", api.startMasterGeneration("job_1", "generate-master:job_1").state)
+            val request = server.takeRequest()
+            assertEquals("/v1/mascot/jobs/job_1/generate-master", request.path)
+            assertEquals("generate-master:job_1", request.getHeader("X-Idempotency-Key"))
+            assertEquals("Bearer test-id-token", request.getHeader("Authorization"))
+            assertEquals("test-app-check", request.getHeader("X-Firebase-AppCheck"))
+        } finally { server.shutdown() }
+    }
+
     @Test fun `parses typed master references and downloads with proof headers`() = runTest {
         val body = """{"job_id":"job_1","state":"AWAITING_MASTER_APPROVAL","masters":[{"id":"master_1","download_path":"/v1/mascot/jobs/job_1/masters/master_1","sha256":"abc"}]}"""
         val server = MockWebServer().apply {

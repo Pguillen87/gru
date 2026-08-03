@@ -216,6 +216,12 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                     .onSuccess { job -> creation = job?.toCreationState() ?: MascotCreationState.Idle }
                     .onFailure { creation = it.toMascotFailure(jobId) }
             } },
+            onStartGeneration = { jobId -> scope.launch {
+                creation = MascotCreationState.Submitting
+                runCatching { repository.startMasterGeneration(jobId) }
+                    .onSuccess { creation = it.toCreationState() }
+                    .onFailure { creation = it.toMascotFailure(jobId) }
+            } },
             onRetryInstall = { jobId -> creation = MascotCreationState.InstallingMascot(jobId) },
             onCancelCreation = { scope.launch {
                 val jobId = prefs.pendingMascotJobId.value ?: return@launch
@@ -260,6 +266,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     photo: Uri?, state: MascotCreationState, onPick: () -> Unit, onDiscardPhoto: () -> Unit,
     onUsePhoto: (Uri) -> Unit, selectedMasterId: String?, masterPreviews: Map<String, ImageBitmap>,
     onSelectMaster: (String) -> Unit, onApprove: (String) -> Unit, onRetryTracking: () -> Unit,
+    onStartGeneration: (String) -> Unit,
     onRetryInstall: (String) -> Unit,
     onCancelCreation: () -> Unit,
 ) {
@@ -279,6 +286,9 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                 stringResource(R.string.gru__mascot_waiting_generation),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Button(onClick = { onStartGeneration(state.job.jobId) }, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.gru__continue_creation))
+            }
             OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
         }
         is MascotCreationState.AwaitingMasterApproval -> MasterChoices(state.job.masters, masterPreviews, selectedMasterId, onSelectMaster, onApprove)

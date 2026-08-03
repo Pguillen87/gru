@@ -128,6 +128,14 @@ class MascotRepositoryTest {
         assertEquals(MascotCreationState.GenerationPaused(job), job.toCreationState())
     }
 
+    @Test fun `starting a paused Master uses a stable idempotency key`() = runTest {
+        val remote = FakeRemote(jobResponse = MascotJobResponse("job-1", "VALIDATING_INPUT"))
+        val repository = MascotRepository(remote, FakePending("job-1"))
+        repository.startMasterGeneration("job-1")
+        repository.startMasterGeneration("job-1")
+        assertEquals(listOf("generate-master:job-1", "generate-master:job-1"), remote.generationKeys)
+    }
+
     @Test fun `completed package is verified promoted selected and clears pending`() = runTest {
         val root = Files.createTempDirectory("gru-install-test").toFile()
         try {
@@ -197,6 +205,7 @@ private class FakeRemote(
     var createCalls = 0
     var resultCalls = 0
     val approvalKeys = mutableListOf<String>()
+    val generationKeys = mutableListOf<String>()
     val cancelKeys = mutableListOf<String>()
     val recoveryKeys = mutableListOf<String>()
 
@@ -208,6 +217,10 @@ private class FakeRemote(
     override suspend fun recoverJob(idempotencyKey: String): MascotJobResponse {
         recoveryKeys += idempotencyKey
         return recoveryFailure?.let { throw it } ?: jobFailure?.let { throw it } ?: jobResponse
+    }
+    override suspend fun startMasterGeneration(jobId: String, key: String): MascotJobResponse {
+        generationKeys += key
+        return jobResponse
     }
     override suspend fun approveMaster(jobId: String, masterId: String, key: String): MascotJobResponse {
         approvalKeys += key

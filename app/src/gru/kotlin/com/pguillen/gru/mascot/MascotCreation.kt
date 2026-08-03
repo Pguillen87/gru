@@ -73,6 +73,9 @@ class MascotRepository(
     suspend fun approve(jobId: String, masterId: String): MascotJobResponse =
         api.approveMaster(jobId, masterId, "approve:$jobId:$masterId")
 
+    suspend fun startMasterGeneration(jobId: String): MascotJobResponse =
+        api.startMasterGeneration(jobId, "generate-master:$jobId")
+
     suspend fun downloadMaster(reference: MasterReference): ByteArray = api.download(reference.downloadPath).also { bytes ->
         reference.sha256?.let { expected -> require(bytes.matchesSha256(expected)) { "Master checksum does not match." } }
     }

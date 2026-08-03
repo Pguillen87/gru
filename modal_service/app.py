@@ -35,6 +35,12 @@ MODEL_ROOT = "/gru-models"
 ENVIRONMENT = Environment(os.getenv("GRU_MASCOT_ENV", Environment.DEVELOPMENT))
 LIMITS = limits_for(ENVIRONMENT)
 GPU_GENERATION_ENABLED = generation_enabled(ENVIRONMENT, os.getenv("GPU_GENERATION_ENABLED"))
+MASTER_GPU = "H100"
+QWEN_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
+QWEN_MODEL_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
+LIGHTNING_MODEL_ID = "lightx2v/Qwen-Image-Edit-2511-Lightning"
+LIGHTNING_MODEL_REVISION = "d74eba145674fd7e31b949324e148e21e7118abd"
+LIGHTNING_WEIGHT = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors"
 
 
 class CreateJobRequest(BaseModel):
@@ -251,9 +257,21 @@ def job_control(
         return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
 
 
+def _schedule_master(job_id: str, user_id: str) -> dict[str, object]:
+    authorization = job_control.remote(JobOperation.AUTHORIZE_GENERATION.value, job_id, user_id)
+    _raise_guard_error(authorization)
+    job_data = dict(authorization["job"])
+    if not may_schedule_gpu(GPU_GENERATION_ENABLED, bool(authorization["changed"])):
+        return job_data
+    function_call = generate_master.spawn(job_id)
+    recorded = job_control.remote(JobOperation.RECORD_GPU_CALL.value, job_id, call_id=function_call.object_id)
+    _raise_guard_error(recorded)
+    return dict(recorded["job"])
+
+
 @app.function(
     image=gpu_image,
-    gpu="L40S",
+    gpu=MASTER_GPU,
     timeout=LIMITS.model_timeout_seconds,
     min_containers=0,
     max_containers=LIMITS.max_containers,
@@ -283,24 +301,77 @@ def generate_master(job_id: str) -> None:
 
 
 def _generate_qwen_masters(job: JobRecord) -> list[bytes]:
-    """Load Qwen lazily; model bytes live on a persistent Modal Volume."""
+    """Generate exactly three Lightning Masters from the approved source."""
     from io import BytesIO
+    import math
 
     import torch
-    from diffusers import QwenImageEditPlusPipeline
+    from diffusers import FlowMatchEulerDiscreteScheduler, QwenImageEditPlusPipeline
+    from diffusers.models import QwenImageTransformer2DModel
+    from huggingface_hub import hf_hub_download
     from PIL import Image
 
     source = Image.open(_asset_path(job.job_id, "original", "source.bin")).convert("RGB")
+    source.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+    load_started = time.monotonic()
+    transformer = QwenImageTransformer2DModel.from_pretrained(
+        QWEN_MODEL_ID,
+        subfolder="transformer",
+        revision=QWEN_MODEL_REVISION,
+        torch_dtype=torch.bfloat16,
+        cache_dir=MODEL_ROOT,
+    )
+    scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+        {
+            "base_image_seq_len": 256,
+            "base_shift": math.log(3),
+            "invert_sigmas": False,
+            "max_image_seq_len": 8192,
+            "max_shift": math.log(3),
+            "num_train_timesteps": 1000,
+            "shift": 1.0,
+            "shift_terminal": None,
+            "stochastic_sampling": False,
+            "time_shift_type": "exponential",
+            "use_beta_sigmas": False,
+            "use_dynamic_shifting": True,
+            "use_exponential_sigmas": False,
+            "use_karras_sigmas": False,
+        }
+    )
     pipeline = QwenImageEditPlusPipeline.from_pretrained(
-        "Qwen/Qwen-Image-Edit-2511", torch_dtype=torch.bfloat16, cache_dir=MODEL_ROOT
-    ).to("cuda")
+        QWEN_MODEL_ID,
+        transformer=transformer,
+        scheduler=scheduler,
+        revision=QWEN_MODEL_REVISION,
+        torch_dtype=torch.bfloat16,
+        cache_dir=MODEL_ROOT,
+    )
+    lora_path = hf_hub_download(
+        LIGHTNING_MODEL_ID,
+        LIGHTNING_WEIGHT,
+        revision=LIGHTNING_MODEL_REVISION,
+        cache_dir=MODEL_ROOT,
+    )
+    pipeline.load_lora_weights(lora_path)
+    pipeline = pipeline.to("cuda")
     models.commit()
+    logging.info("event=model_loaded model=qwen-image-edit-2511-lightning duration_ms=%d", _elapsed_ms(load_started))
     outputs: list[bytes] = []
     for seed in range(3):
-        generated = pipeline(image=[source], prompt=_master_prompt(), generator=torch.Generator("cuda").manual_seed(seed), num_inference_steps=40).images[0]
+        inference_started = time.monotonic()
+        generated = pipeline(
+            image=[source],
+            prompt=_master_prompt(),
+            negative_prompt=" ",
+            true_cfg_scale=1.0,
+            generator=torch.Generator("cuda").manual_seed(seed),
+            num_inference_steps=4,
+        ).images[0]
         buffer = BytesIO()
         generated.save(buffer, format="PNG")
         outputs.append(buffer.getvalue())
+        logging.info("event=master_generated index=%d duration_ms=%d", seed + 1, _elapsed_ms(inference_started))
     return outputs
 
 
@@ -448,17 +519,7 @@ def api():
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(content)
                 assets.commit()
-            authorization = job_control.remote(JobOperation.AUTHORIZE_GENERATION.value, str(job_data["job_id"]), user_id)
-            _raise_guard_error(authorization)
-            if may_schedule_gpu(GPU_GENERATION_ENABLED, bool(authorization["changed"])):
-                function_call = generate_master.spawn(str(job_data["job_id"]))
-                recorded = job_control.remote(
-                    JobOperation.RECORD_GPU_CALL.value,
-                    str(job_data["job_id"]),
-                    call_id=function_call.object_id,
-                )
-                _raise_guard_error(recorded)
-                job_data = dict(recorded["job"])
+            job_data = _schedule_master(str(job_data["job_id"]), user_id)
             return job_data | {"idempotent_replay": not bool(registration["created"])}
         except (ImageValidationError, DomainError, CostLimitExceeded, RateLimitExceeded) as error:
             raise _api_error(error) from error
@@ -482,6 +543,22 @@ def api():
         except KeyError as error:
             raise _api_error(JobNotFound("Job was not found.")) from error
         except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.post("/v1/mascot/jobs/{job_id}/generate-master", status_code=202)
+    async def start_master_generation(job_id: str, context: tuple[str, str] = Depends(cost_context)):
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, context[0])
+            if not GPU_GENERATION_ENABLED:
+                raise GuardRejected("GENERATION_DISABLED", "GPU generation is disabled.")
+            operation_key = _operation_key(context[0], f"generate-master:{job_id}")
+            if operation_key in idempotency:
+                return _serialize(_get_job(job_id))
+            job_data = _schedule_master(job_id, context[0])
+            idempotency[operation_key] = job_id
+            return job_data
+        except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
             raise _api_error(error) from error
 
     @service.post("/v1/mascot/jobs/{job_id}/approve-master", status_code=202)

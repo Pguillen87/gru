@@ -85,6 +85,7 @@ interface MascotRemoteApi {
     suspend fun createJob(image: ByteArray, mimeType: String, key: String): MascotJobResponse
     suspend fun job(jobId: String): MascotJobResponse
     suspend fun recoverJob(idempotencyKey: String): MascotJobResponse
+    suspend fun startMasterGeneration(jobId: String, key: String): MascotJobResponse
     suspend fun approveMaster(jobId: String, masterId: String, key: String): MascotJobResponse
     suspend fun cancel(jobId: String, key: String): MascotJobResponse
     suspend fun result(jobId: String): MascotResultResponse
@@ -119,6 +120,10 @@ class MascotApi(
 
     override suspend fun recoverJob(idempotencyKey: String): MascotJobResponse = requestJob(
         "/v1/mascot/idempotency/${idempotencyKey.requireSafeIdentifier()}", "GET",
+    )
+
+    override suspend fun startMasterGeneration(jobId: String, key: String): MascotJobResponse = requestJob(
+        "/v1/mascot/jobs/$jobId/generate-master", "POST", key, buildJsonObject {},
     )
 
     override suspend fun approveMaster(jobId: String, masterId: String, key: String): MascotJobResponse = requestJob(
@@ -210,6 +215,7 @@ private fun operationName(path: String, method: String): String = when {
     path == "/v1/mascot/jobs" -> "create"
     "/idempotency/" in path -> "recover"
     path.endsWith("/approve-master") -> "approve"
+    path.endsWith("/generate-master") -> "generate_master"
     path.endsWith("/cancel") -> "cancel"
     path.endsWith("/result") -> "result"
     "/masters/" in path -> "download_master"

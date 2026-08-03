@@ -148,6 +148,7 @@
   <string name="gru__master_images_pending">As opções do seu mascote aparecerão aqui quando estiverem prontas.</string>
   <string name="gru__choose_this_mascot">Escolher este mascote</string>
   <string name="gru__mascot_waiting_generation">Sua solicitação está salva. A criação de mascotes está temporariamente pausada.</string>
+  <string name="gru__continue_creation">Continuar criação</string>
   <string name="gru__mascot_network_paused">Sem conexão. Vamos continuar acompanhando seu mascote quando a internet voltar.</string>
   <string name="gru__mascot_submission_uncertain">Não conseguimos confirmar a solicitação. Tente novamente para recuperar a mesma criação com segurança.</string>
   <string name="gru__cancel_creation">Cancelar criação</string>
