@@ -141,7 +141,7 @@ class GruSessionCoordinator(
 object GruDictation {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var coordinator: GruSessionCoordinator
-    private val localRuntime = com.pguillen.gru.local.WhisperRuntime()
+    private var localRuntime: com.pguillen.gru.local.WhisperRuntime? = null
 
     fun state(context: Context): StateFlow<GruDictationState> = instance(context).state
 
@@ -163,11 +163,16 @@ object GruDictation {
 
     fun cancel() = instance().cancel()
 
-    suspend fun releaseLocalModel() = localRuntime.release()
+    suspend fun releaseLocalModel() {
+        localRuntime?.release()
+    }
 
     private fun instance(context: Context? = null): GruSessionCoordinator {
         if (!::coordinator.isInitialized) {
             val appContext = requireNotNull(context).applicationContext
+            val runtime = localRuntime ?: com.pguillen.gru.local.WhisperRuntime(
+                nativeBackendDirectory = appContext.applicationInfo.nativeLibraryDir,
+            ).also { localRuntime = it }
             coordinator = GruSessionCoordinator(
                 scope = scope,
                 captureFactory = { AndroidGruAudioCapture(appContext) },
@@ -177,7 +182,7 @@ object GruDictation {
                     localGateway = {
                         LocalWhisperTranscriptionGateway(
                             modelManager = com.pguillen.gru.local.WhisperModelManager.get(appContext),
-                            runtime = localRuntime,
+                            runtime = runtime,
                         )
                     },
                 ),

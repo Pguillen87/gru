@@ -11,14 +11,9 @@ import android.os.Debug
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.pguillen.gru.local.GruWhisperModel
-import com.pguillen.gru.local.WhisperModelManager
-import com.pguillen.gru.local.WhisperModelState
 import com.pguillen.gru.local.WhisperRuntime
 import java.io.File
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -29,42 +24,43 @@ import org.junit.runner.RunWith
 class WhisperBenchmarkInstrumentedTest {
     @Test
     fun benchmarkInstalledModelWithPreparedAudio() = runBlocking {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val modelName = InstrumentationRegistry.getArguments().getString(ARG_MODEL_NAME)
+            ?.takeIf { it.matches(SAFE_FILE_NAME) }
+            ?: DEFAULT_MODEL_NAME
         val audio = File(context.filesDir, BENCHMARK_AUDIO)
-        val preparedModel = File(
-            context.filesDir,
-            "whisper-models/${GruWhisperModel.LARGE_V3_TURBO_Q5_0.fileName}",
-        )
-        assumeTrue("Install the offline model before benchmarking", preparedModel.exists())
+        val preparedModel = File(context.filesDir, "$BENCHMARK_MODEL_DIR/$modelName")
+        assumeTrue("Push the requested model before benchmarking", preparedModel.exists())
         assumeTrue("Push a 16 kHz mono PCM16 WAV to app files before benchmarking", audio.exists())
 
-        val installed = withTimeout(120_000L) {
-            WhisperModelManager.get(context).state.filterIsInstance<WhisperModelState.Installed>().first()
-        }
-        val model = installed.file
-
         val pssBefore = Debug.getPss()
-        val runtime = WhisperRuntime()
+        val runtime = WhisperRuntime(
+            nativeBackendDirectory = context.applicationInfo.nativeLibraryDir,
+        )
         try {
-            val coldTranscript = runtime.transcribe(model, audio)
+            val coldTranscript = withTimeout(BENCHMARK_TIMEOUT_MILLIS) {
+                runtime.transcribe(preparedModel, audio)
+            }
             val cold = requireNotNull(runtime.lastMetrics)
             val pssLoaded = Debug.getPss()
-            val warmTranscript = runtime.transcribe(model, audio)
-            val warm = requireNotNull(runtime.lastMetrics)
-            val pssWarm = Debug.getPss()
+            val loadedBackend = File("/proc/self/maps").useLines { lines ->
+                lines.firstOrNull { "libggml-cpu-" in it }
+                    ?.substringAfterLast('/')
+                    ?.substringBefore(' ')
+                    ?: "static"
+            }
 
             assertTrue(coldTranscript.isNotBlank())
-            assertTrue(warmTranscript.isNotBlank())
             Log.i(
                 TAG,
-                "loadMs=${cold.modelLoadMillis} coldInferenceMs=${cold.inferenceMillis} " +
-                    "warmInferenceMs=${warm.inferenceMillis} audioMs=${warm.audioDurationMillis} " +
-                    "warmRtf=${"%.3f".format(warm.realTimeFactor)} " +
-                    "pssBeforeKb=$pssBefore pssLoadedKb=$pssLoaded pssWarmKb=$pssWarm",
+                "model=$modelName loadMs=${cold.modelLoadMillis} inferenceMs=${cold.inferenceMillis} " +
+                    "audioMs=${cold.audioDurationMillis} rtf=${"%.3f".format(cold.realTimeFactor)} " +
+                    "pssBeforeKb=$pssBefore pssLoadedKb=$pssLoaded backend=$loadedBackend " +
+                    "transcript=${coldTranscript.replace('\n', ' ')}",
             )
         } finally {
             runtime.release()
-            audio.delete()
         }
         Unit
     }
@@ -72,5 +68,10 @@ class WhisperBenchmarkInstrumentedTest {
     private companion object {
         const val TAG = "GruWhisperBenchmark"
         const val BENCHMARK_AUDIO = "benchmark-pt.wav"
+        const val BENCHMARK_MODEL_DIR = "benchmark-models"
+        const val ARG_MODEL_NAME = "modelName"
+        const val DEFAULT_MODEL_NAME = "ggml-small-q5_1.bin"
+        const val BENCHMARK_TIMEOUT_MILLIS = 600_000L
+        val SAFE_FILE_NAME = Regex("[A-Za-z0-9._-]+")
     }
 }

@@ -16,6 +16,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempFile
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -26,7 +27,7 @@ class WhisperRuntimeTest {
     @Test
     fun `cancelling coroutine aborts native inference and releases model`() = runBlocking {
         val native = BlockingWhisperNative()
-        val runtime = WhisperRuntime(native)
+        val runtime = WhisperRuntime(native, nativeBackendDirectory = "/native/backends")
         val job = launch { runtime.transcribe(temporaryFile("model"), wavFile()) }
         yield()
         assertTrue(native.started.await(2, TimeUnit.SECONDS))
@@ -36,14 +37,19 @@ class WhisperRuntimeTest {
 
         assertTrue(native.cancelled)
         assertTrue(native.destroyed)
+        assertEquals("/native/backends", native.backendDirectory)
     }
 
     private class BlockingWhisperNative : WhisperNative {
         val started = CountDownLatch(1)
         @Volatile var cancelled = false
         @Volatile var destroyed = false
+        @Volatile var backendDirectory: String? = null
 
-        override fun create(modelPath: String): Long = 7L
+        override fun create(modelPath: String, backendDirectory: String?): Long {
+            this.backendDirectory = backendDirectory
+            return 7L
+        }
 
         override fun transcribe(handle: Long, samples: FloatArray, language: String, threadCount: Int): String {
             started.countDown()

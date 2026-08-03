@@ -6,6 +6,11 @@
 #include <string.h>
 
 #include "whisper.h"
+#ifdef GRU_DYNAMIC_CPU_BACKENDS
+#include <android/log.h>
+#include <pthread.h>
+#include "ggml-backend.h"
+#endif
 
 typedef struct {
     struct whisper_context * context;
@@ -30,12 +35,51 @@ static void quiet_log(enum ggml_log_level level, const char * text, void * user_
     (void) user_data;
 }
 
+#ifdef GRU_DYNAMIC_CPU_BACKENDS
+static pthread_mutex_t backend_mutex = PTHREAD_MUTEX_INITIALIZER;
+static bool cpu_backend_loaded = false;
+
+static bool load_cpu_backend(JNIEnv * env, jstring backend_directory) {
+    if (backend_directory == NULL) {
+        throw_illegal_state(env, "Native backend directory is required");
+        return false;
+    }
+    const char * directory = (*env)->GetStringUTFChars(env, backend_directory, NULL);
+    if (directory == NULL) return false;
+
+    pthread_mutex_lock(&backend_mutex);
+    if (!cpu_backend_loaded) {
+        ggml_backend_load_all_from_path(directory);
+        cpu_backend_loaded = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU) != NULL;
+        if (cpu_backend_loaded) {
+            ggml_backend_dev_t device = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+            ggml_backend_reg_t registry = ggml_backend_dev_backend_reg(device);
+            __android_log_print(
+                ANDROID_LOG_INFO,
+                "GruWhisper",
+                "CPU backend loaded: %s",
+                ggml_backend_reg_name(registry));
+        }
+    }
+    const bool loaded = cpu_backend_loaded;
+    pthread_mutex_unlock(&backend_mutex);
+    (*env)->ReleaseStringUTFChars(env, backend_directory, directory);
+
+    if (!loaded) throw_illegal_state(env, "Unable to load a compatible CPU backend");
+    return loaded;
+}
+#endif
+
 JNIEXPORT jlong JNICALL
 Java_com_pguillen_gru_local_WhisperNativeBridge_create(
         JNIEnv * env,
         jobject instance,
-        jstring model_path) {
+        jstring model_path,
+        jstring backend_directory) {
     (void) instance;
+#ifndef GRU_DYNAMIC_CPU_BACKENDS
+    (void) backend_directory;
+#endif
     if (model_path == NULL) {
         throw_illegal_state(env, "Model path is required");
         return 0;
@@ -45,6 +89,12 @@ Java_com_pguillen_gru_local_WhisperNativeBridge_create(
     if (path == NULL) return 0;
 
     whisper_log_set(quiet_log, NULL);
+#ifdef GRU_DYNAMIC_CPU_BACKENDS
+    if (!load_cpu_backend(env, backend_directory)) {
+        (*env)->ReleaseStringUTFChars(env, model_path, path);
+        return 0;
+    }
+#endif
     struct whisper_context_params params = whisper_context_default_params();
     params.use_gpu = false;
     struct whisper_context * context = whisper_init_from_file_with_params(path, params);

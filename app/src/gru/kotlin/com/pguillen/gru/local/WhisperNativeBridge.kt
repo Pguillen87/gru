@@ -12,7 +12,7 @@ internal object WhisperNativeBridge {
         System.loadLibrary("gru_whisper")
     }
 
-    external fun create(modelPath: String): Long
+    external fun create(modelPath: String, backendDirectory: String?): Long
     external fun transcribe(handle: Long, samples: FloatArray, language: String, threadCount: Int): String
     external fun cancel(handle: Long)
     external fun destroy(handle: Long)

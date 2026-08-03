@@ -65,6 +65,10 @@ configure<ApplicationExtension> {
         compose = true
     }
 
+    packaging {
+        jniLibs.useLegacyPackaging = true
+    }
+
     externalNativeBuild {
         cmake {
             path = file("src/gru/cpp/CMakeLists.txt")

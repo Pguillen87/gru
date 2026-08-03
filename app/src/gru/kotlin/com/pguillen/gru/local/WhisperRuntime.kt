@@ -30,6 +30,7 @@ internal data class WhisperRuntimeMetrics(
 internal class WhisperRuntime(
     private val native: WhisperNative = JniWhisperNative,
     private val wavReader: WavPcmReader = WavPcmReader(),
+    private val nativeBackendDirectory: String? = null,
 ) : LocalWhisperTranscriber {
     private val executor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "gru-whisper").apply { priority = Thread.NORM_PRIORITY - 1 }
@@ -85,7 +86,7 @@ internal class WhisperRuntime(
     private fun load(model: File): Long {
         if (handle != NO_HANDLE && loadedPath == model.absolutePath) return handle
         if (handle != NO_HANDLE) native.destroy(handle)
-        handle = native.create(model.absolutePath)
+        handle = native.create(model.absolutePath, nativeBackendDirectory)
         check(handle != NO_HANDLE) { "Whisper returned an invalid model handle" }
         loadedPath = model.absolutePath
         return handle
@@ -104,14 +105,15 @@ internal class WhisperRuntime(
 }
 
 internal interface WhisperNative {
-    fun create(modelPath: String): Long
+    fun create(modelPath: String, backendDirectory: String?): Long
     fun transcribe(handle: Long, samples: FloatArray, language: String, threadCount: Int): String
     fun cancel(handle: Long)
     fun destroy(handle: Long)
 }
 
 private object JniWhisperNative : WhisperNative {
-    override fun create(modelPath: String): Long = WhisperNativeBridge.create(modelPath)
+    override fun create(modelPath: String, backendDirectory: String?): Long =
+        WhisperNativeBridge.create(modelPath, backendDirectory)
     override fun transcribe(handle: Long, samples: FloatArray, language: String, threadCount: Int): String =
         WhisperNativeBridge.transcribe(handle, samples, language, threadCount)
     override fun cancel(handle: Long) = WhisperNativeBridge.cancel(handle)
