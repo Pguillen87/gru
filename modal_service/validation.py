@@ -22,17 +22,19 @@ def validate_image(content: bytes, declared_content_type: str | None = None) -> 
         raise ImageValidationError("Image size is invalid.")
     try:
         with Image.open(BytesIO(content)) as image:
+            actual_format = image.format or ""
+            width, height = image.size
+            if min(width, height) < MIN_SIDE or max(width, height) > MAX_SIDE:
+                raise ImageValidationError("Image dimensions are outside the supported range.")
             image.verify()
         with Image.open(BytesIO(content)) as image:
             image.load()
-            actual_format = image.format or ""
-            width, height = image.size
-    except (UnidentifiedImageError, OSError) as error:
+    except ImageValidationError:
+        raise
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as error:
         raise ImageValidationError("Image cannot be decoded.") from error
     if actual_format not in ALLOWED_FORMATS:
         raise ImageValidationError("Unsupported image format.")
-    if min(width, height) < MIN_SIDE or max(width, height) > MAX_SIDE:
-        raise ImageValidationError("Image dimensions are outside the supported range.")
     if declared_content_type and actual_format.lower() not in declared_content_type.lower():
         raise ImageValidationError("Declared MIME type does not match image content.")
     return actual_format, width, height
