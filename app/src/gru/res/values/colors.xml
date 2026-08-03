@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="gru_splash_background">#FFFFFF</color>
-    <color name="gru_splash_icon_background">#4F576D</color>
+    <color name="gru_brand_navy">#07101F</color>
+    <color name="gru_splash_background">#07101F</color>
+    <color name="gru_splash_icon_background">#07101F</color>
     <color name="colorError">#B00020</color>
     <color name="gru_pet_accent">#30B7E6</color>
     <color name="gru_pet_recording">#EC6A5E</color>

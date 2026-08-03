@@ -4,7 +4,7 @@
         <item name="postSplashScreenTheme">@style/GruTheme</item>
         <item name="windowSplashScreenBackground">@color/gru_splash_background</item>
         <item name="windowSplashScreenIconBackgroundColor">@color/gru_splash_icon_background</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/gru_pet_lume</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
         <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
     </style>
 

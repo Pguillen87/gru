@@ -22,6 +22,7 @@
   <string name="gru__api_key_label">Chave de API da Groq</string>
   <string name="gru__api_key_show">Mostrar chave de API</string>
   <string name="gru__app_name">Gru</string>
+  <string name="gru__brand_logo">Mascote do Gru</string>
   <string name="gru__appearance">Aparência</string>
   <string name="gru__choose_pet">Escolha seu pet</string>
   <string name="gru__granted">Permitido</string>

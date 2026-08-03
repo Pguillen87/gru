@@ -22,6 +22,7 @@
   <string name="gru__api_key_label">Groq API key</string>
   <string name="gru__api_key_show">Show API key</string>
   <string name="gru__app_name">Gru</string>
+  <string name="gru__brand_logo">Gru mascot</string>
   <string name="gru__appearance">Appearance</string>
   <string name="gru__choose_pet">Choose your pet</string>
   <string name="gru__granted">Allowed</string>

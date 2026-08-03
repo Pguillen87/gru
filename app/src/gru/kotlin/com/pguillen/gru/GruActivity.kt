@@ -17,8 +17,13 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
@@ -35,8 +40,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
@@ -89,7 +98,7 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
     }
     Scaffold(topBar = {
         Column {
-            TopAppBar(title = { Text(stringResource(R.string.gru__app_name)) })
+            TopAppBar(title = { GruBrandTitle() })
             if (engine != null) {
                 PrimaryTabRow(selectedTabIndex = destination) {
                     GruDestination.entries.forEachIndexed { index, item ->
@@ -122,6 +131,21 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
         }
+    }
+}
+
+@Composable
+private fun GruBrandTitle() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Image(
+            painter = painterResource(R.drawable.gru_brand_gro),
+            contentDescription = stringResource(R.string.gru__brand_logo),
+            modifier = Modifier.size(40.dp).clip(CircleShape),
+        )
+        Text(stringResource(R.string.gru__app_name))
     }
 }
 
