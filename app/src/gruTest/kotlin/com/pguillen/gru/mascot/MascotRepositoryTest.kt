@@ -123,6 +123,11 @@ class MascotRepositoryTest {
         )
     }
 
+    @Test fun `ready generation state is presented as paused instead of active tracking`() {
+        val job = MascotJobResponse("job-1", "READY_FOR_GENERATION")
+        assertEquals(MascotCreationState.GenerationPaused(job), job.toCreationState())
+    }
+
     @Test fun `completed package is verified promoted selected and clears pending`() = runTest {
         val root = Files.createTempDirectory("gru-install-test").toFile()
         try {

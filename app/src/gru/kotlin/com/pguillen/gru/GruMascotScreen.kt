@@ -271,7 +271,14 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         MascotCreationState.PhotoSelected -> Unit
         MascotCreationState.Submitting -> LoadingMessage(R.string.gru__mascot_submitting)
         is MascotCreationState.Tracking -> {
-            LoadingMessage(if (state.job.state == "READY_FOR_GENERATION") R.string.gru__mascot_waiting_generation else R.string.gru__mascot_tracking)
+            LoadingMessage(R.string.gru__mascot_tracking)
+            OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
+        }
+        is MascotCreationState.GenerationPaused -> {
+            Text(
+                stringResource(R.string.gru__mascot_waiting_generation),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
         }
         is MascotCreationState.AwaitingMasterApproval -> MasterChoices(state.job.masters, masterPreviews, selectedMasterId, onSelectMaster, onApprove)

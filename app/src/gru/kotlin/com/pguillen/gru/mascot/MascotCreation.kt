@@ -10,6 +10,7 @@ sealed interface MascotCreationState {
     data object PhotoSelected : MascotCreationState
     data object Submitting : MascotCreationState
     data class Tracking(val job: MascotJobResponse) : MascotCreationState
+    data class GenerationPaused(val job: MascotJobResponse) : MascotCreationState
     data class AwaitingMasterApproval(val job: MascotJobResponse) : MascotCreationState
     data class InstallingMascot(val jobId: String) : MascotCreationState
     data object Completed : MascotCreationState
@@ -127,6 +128,7 @@ private class GruMascotPendingState(private val preferences: GruPreferences) : M
 }
 
 fun MascotJobResponse.toCreationState(): MascotCreationState = when (state) {
+    "READY_FOR_GENERATION" -> MascotCreationState.GenerationPaused(this)
     "AWAITING_MASTER_APPROVAL" -> MascotCreationState.AwaitingMasterApproval(this)
     "COMPLETED" -> MascotCreationState.InstallingMascot(jobId)
     "FAILED" -> MascotCreationState.RemoteFailed(
