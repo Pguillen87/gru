@@ -17,8 +17,19 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class WhisperModelInfrastructureTest {
+    @Test
+    fun `pins the production Small Q5_1 model`() {
+        val model = GruWhisperModel.SMALL_Q5_1
+
+        assertEquals("ggml-small-q5_1.bin", model.fileName)
+        assertEquals(190_085_487L, model.expectedBytes)
+        assertEquals("ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb", model.sha256)
+        assertTrue(model.downloadUrl.contains(model.version.substringAfter('@')))
+    }
+
     @Test
     fun `accepts only expected model size and checksum`() {
         val bytes = "private whisper model".encodeToByteArray()
