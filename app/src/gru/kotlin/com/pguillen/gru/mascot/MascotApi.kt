@@ -2,6 +2,7 @@ package com.pguillen.gru.mascot
 
 import com.pguillen.gru.BuildConfig
 import java.util.Base64
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -93,7 +94,7 @@ interface MascotRemoteApi {
 class MascotApi(
     private val tokens: MascotAuthTokenProvider,
     private val appCheck: MascotAppCheckTokenProvider,
-    private val client: OkHttpClient = OkHttpClient(),
+    private val client: OkHttpClient = mascotHttpClient(),
     private val baseUrl: String = BuildConfig.MASCOT_API_BASE_URL,
 ) : MascotRemoteApi {
     override suspend fun createJob(image: ByteArray, mimeType: String, key: String): MascotJobResponse {
@@ -186,6 +187,13 @@ class MascotApi(
 
     private companion object { val JSON_MEDIA = "application/json; charset=utf-8".toMediaType() }
 }
+
+private fun mascotHttpClient(): OkHttpClient = OkHttpClient.Builder()
+    .connectTimeout(20, TimeUnit.SECONDS)
+    .writeTimeout(30, TimeUnit.SECONDS)
+    .readTimeout(60, TimeUnit.SECONDS)
+    .callTimeout(75, TimeUnit.SECONDS)
+    .build()
 
 class MascotApiException(
     val apiError: ApiError,
