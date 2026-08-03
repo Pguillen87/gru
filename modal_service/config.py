@@ -28,7 +28,7 @@ class RuntimeLimits:
 
 
 LIMITS = {
-    Environment.DEVELOPMENT: RuntimeLimits(1, 1, 6, 1.00, 1.00, 900, 5, 1, 10, 1.00, False),
+    Environment.DEVELOPMENT: RuntimeLimits(1, 1, 6, 30.00, 1.00, 900, 100, 30, 100, 30.00, False),
     Environment.STAGING: RuntimeLimits(1, 1, 6, 10.0, 0.20, 600, 10, 3, 50, 0.60, False),
     Environment.PRODUCTION: RuntimeLimits(2, 2, 6, 100.0, 0.20, 600, 20, 5, 1_000, 1.00, False),
 }

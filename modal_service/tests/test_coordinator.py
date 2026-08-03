@@ -70,6 +70,7 @@ def test_generation_quota_is_separate_from_free_validation_jobs():
         limits_for(Environment.DEVELOPMENT),
         daily_cost_cap_usd=10.0,
         user_daily_cost_cap_usd=10.0,
+        generations_per_user_per_day=1,
     )
     service, usage = coordinator(limits=limits)
     first, _ = service.register("uid-a", "key-a", "original/a")

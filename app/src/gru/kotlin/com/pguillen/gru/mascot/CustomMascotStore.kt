@@ -46,6 +46,7 @@ class CustomMascotStore internal constructor(private val root: File) {
                 preview.absolutePath,
                 manifest.poses.isNotEmpty(),
                 maxOf(folder.lastModified(), preview.lastModified()),
+                manifest.displayName,
             )
         }
         .sortedBy(CustomMascotEntry::updatedAtMillis)
@@ -60,6 +61,7 @@ class CustomMascotStore internal constructor(private val root: File) {
             selectedRecordingPoseId = json.string("recording").orEmpty(), selectedTranscribingPoseId = json.string("transcribing").orEmpty(),
             masterFileName = json.string("masterFileName")?.ifBlank { null },
             masterSha256 = json.string("masterSha256")?.ifBlank { null },
+            displayName = json.string("displayName")?.ifBlank { null },
         )
     }.getOrNull()
 
@@ -86,6 +88,18 @@ class CustomMascotStore internal constructor(private val root: File) {
         val files = manifest.poses.associate { pose -> pose.fileName to images.getValue(pose.poseId) }
         promoteFiles(manifest, files)
     }.getOrElse { false }
+
+    fun rename(poseSetId: String, name: String): Boolean {
+        val normalized = name.trim().replace(Regex("\\s+"), " ").take(32)
+        if (normalized.isBlank()) return false
+        val manifest = read(poseSetId) ?: return false
+        val folder = directory(poseSetId)
+        val files = buildMap {
+            manifest.masterFileName?.let { fileName -> put(fileName, File(folder, fileName).readBytes()) }
+            manifest.poses.forEach { pose -> put(pose.fileName, File(folder, pose.fileName).readBytes()) }
+        }
+        return promoteFiles(manifest.copy(displayName = normalized), files)
+    }
 
     private fun promoteFiles(manifest: CustomMascotManifest, files: Map<String, ByteArray>): Boolean = runCatching {
         require(manifest.isSafe())
@@ -125,6 +139,7 @@ class CustomMascotStore internal constructor(private val root: File) {
         put("modelVersion", JsonPrimitive(modelVersion ?: "")); put("idle", JsonPrimitive(selectedIdlePoseId))
         put("recording", JsonPrimitive(selectedRecordingPoseId)); put("transcribing", JsonPrimitive(selectedTranscribingPoseId))
         put("masterFileName", JsonPrimitive(masterFileName ?: "")); put("masterSha256", JsonPrimitive(masterSha256 ?: ""))
+        put("displayName", JsonPrimitive(displayName ?: ""))
         put("poses", buildJsonArray { poses.forEach { pose -> add(buildJsonObject {
             put("poseId", JsonPrimitive(pose.poseId)); put("name", JsonPrimitive(pose.name)); put("fileName", JsonPrimitive(pose.fileName))
             put("sha256", JsonPrimitive(pose.sha256)); put("downloadPath", JsonPrimitive(pose.downloadPath ?: ""))

@@ -1,6 +1,6 @@
 # Cost controls
 
-All environments default to `GPU_GENERATION_ENABLED=false`. Development permits one Modal container and has a global logical daily ceiling no greater than US$1.00; the first-smoke procedure further requires one job per UID per day.
+All environments default to `GPU_GENERATION_ENABLED=false`. The authorized development environment permits one Modal container and uses the available US$30.00 workspace credit as its logical daily ceiling. Idempotency and serialized scheduling remain mandatory, but validation jobs are not artificially restricted during product testing.
 
 Two ledgers are intentionally separate:
 

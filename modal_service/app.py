@@ -188,7 +188,17 @@ def _api_error(error: Exception):
 
     code = getattr(error, "code", "INVALID_REQUEST")
     status = 429 if code in {"RATE_LIMITED", "COST_LIMIT_REACHED"} else 404 if code == "JOB_NOT_FOUND" else 400 if code in {"INVALID_IMAGE", "INVALID_REQUEST"} else 409
-    return HTTPException(status_code=status, detail={"code": code, "message": str(error)})
+    detail: dict[str, object] = {"code": code, "message": str(error)}
+    if code in {"RATE_LIMITED", "COST_LIMIT_REACHED"}:
+        detail.update({"retry_at_utc": _next_utc_day(), "charge_incurred": False})
+    return HTTPException(status_code=status, detail=detail)
+
+
+def _next_utc_day() -> str:
+    from datetime import UTC, datetime, timedelta
+
+    tomorrow = datetime.now(UTC).date() + timedelta(days=1)
+    return datetime.combine(tomorrow, datetime.min.time(), tzinfo=UTC).isoformat().replace("+00:00", "Z")
 
 
 class GuardRejected(DomainError):

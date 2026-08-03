@@ -29,6 +29,7 @@ data class CustomMascotManifest(
     val selectedTranscribingPoseId: String,
     val masterFileName: String? = null,
     val masterSha256: String? = null,
+    val displayName: String? = null,
 )
 
 data class CustomMascotEntry(
@@ -37,6 +38,7 @@ data class CustomMascotEntry(
     val previewPath: String,
     val hasAuthoredPoses: Boolean,
     val updatedAtMillis: Long,
+    val displayName: String?,
 )
 
 sealed interface MascotVisual {

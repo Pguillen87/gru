@@ -11,10 +11,10 @@ def test_generation_requires_explicit_true_override():
     assert generation_enabled(Environment.DEVELOPMENT, "true")
 
 
-def test_first_smoke_guard_is_single_container_and_small_budget():
+def test_development_guard_is_single_container_with_workspace_credit_ceiling():
     limits = limits_for(Environment.DEVELOPMENT)
     assert limits.max_containers == 1
-    assert limits.daily_cost_cap_usd <= 1.0
-    assert limits.jobs_per_user_per_day == 5
-    assert limits.generations_per_user_per_day == 1
-    assert limits.global_jobs_per_day == 10
+    assert limits.daily_cost_cap_usd == 30.0
+    assert limits.jobs_per_user_per_day == 100
+    assert limits.generations_per_user_per_day == 30
+    assert limits.global_jobs_per_day == 100

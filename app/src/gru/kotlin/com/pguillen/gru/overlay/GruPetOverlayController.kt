@@ -376,6 +376,9 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         }
         petView?.setMode(mode)
         signalView?.setMode(mode)
+        if (state::class != previousState::class) {
+            Log.d(TAG, "motion_mode=$mode custom=${currentSource is MascotSource.Custom}")
+        }
         rootView?.contentDescription = context.getString(descriptionFor(state))
         if (state is GruDictationState.Recording) {
             petView?.setAudioLevel(state.audioLevel)

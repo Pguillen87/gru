@@ -137,6 +137,8 @@
   <string name="gru__custom_mascot">Your personalized mascot</string>
   <string name="gru__personalized_mascot_number">Personalized %1$d</string>
   <string name="gru__create_another_mascot">Create another mascot</string>
+  <string name="gru__mascot_name">Mascot name</string>
+  <string name="gru__save_mascot_name">Save name</string>
   <string name="gru__poses">Poses</string>
   <string name="gru__poses_summary">Choose the pose used while Gru is ready, listening, or transcribing.</string>
   <string name="gru__use_this_photo">Use this photo</string>

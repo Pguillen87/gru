@@ -2,6 +2,9 @@ package com.pguillen.gru.mascot
 
 import com.pguillen.gru.GruPreferences
 import java.io.IOException
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.UUID
 import kotlinx.coroutines.flow.StateFlow
 
@@ -27,7 +30,7 @@ sealed interface MascotCreationState {
     data object Canceled : MascotCreationState
 }
 
-enum class MascotFailureRecovery { RETRY, CHOOSE_PHOTO }
+enum class MascotFailureRecovery { RETRY, CHOOSE_PHOTO, WAIT }
 
 class MascotRepository(
     private val api: MascotRemoteApi,
@@ -175,10 +178,10 @@ fun Throwable.toMascotFailure(jobId: String?): MascotCreationState = if (isNetwo
     if (jobId == null) MascotCreationState.SubmissionUncertain else MascotCreationState.NetworkUnavailable(jobId)
 } else {
     val code = (this as? MascotApiException)?.apiError?.code
-    val recovery = if (this is MascotPhotoPreparationException || code in setOf("INVALID_IMAGE", "JOB_NOT_FOUND", "MASTER_GENERATION_FAILED")) {
-        MascotFailureRecovery.CHOOSE_PHOTO
-    } else {
-        MascotFailureRecovery.RETRY
+    val recovery = when {
+        code in setOf("RATE_LIMITED", "COST_LIMIT_REACHED") -> MascotFailureRecovery.WAIT
+        this is MascotPhotoPreparationException || code in setOf("INVALID_IMAGE", "JOB_NOT_FOUND", "MASTER_GENERATION_FAILED") -> MascotFailureRecovery.CHOOSE_PHOTO
+        else -> MascotFailureRecovery.RETRY
     }
     MascotCreationState.RemoteFailed(mascotErrorMessage(this), recovery)
 }
@@ -191,7 +194,8 @@ fun mascotErrorMessage(error: Throwable): String = when ((error as? MascotApiExc
     "UNAUTHENTICATED" -> "Não foi possível confirmar sua identidade. Tente novamente."
     "APP_CHECK_REQUIRED" -> "Não foi possível validar a segurança deste aplicativo. Tente novamente."
     "INVALID_IMAGE" -> "Essa foto não pode ser usada. Escolha outra foto do seu pet."
-    "COST_LIMIT_REACHED", "RATE_LIMITED" -> "A criação de mascotes está temporariamente indisponível. Tente mais tarde."
+    "RATE_LIMITED" -> quotaMessage(error, "Você atingiu o limite de criações de hoje.")
+    "COST_LIMIT_REACHED" -> quotaMessage(error, "O teto de gasto para criações de hoje foi atingido.")
     "GENERATION_DISABLED" -> "A criação está temporariamente pausada. Sua solicitação continua salva."
     "TEMPLATE_ASSETS_UNAVAILABLE" -> "As poses do mascote ainda estão sendo preparadas."
     "JOB_NOT_FOUND" -> "Não encontramos essa criação. Escolha a foto novamente."
@@ -205,3 +209,18 @@ fun mascotErrorMessage(error: Throwable): String = when ((error as? MascotApiExc
         else -> "Não foi possível concluir a solicitação. Tente novamente."
     }
 }
+
+private fun quotaMessage(error: Throwable, prefix: String): String {
+    val apiError = (error as? MascotApiException)?.apiError
+    val retry = apiError?.retryAtUtc?.let(::localRetryTime)
+    val timing = retry?.let { " Você poderá tentar novamente após $it." }.orEmpty()
+    val billing = if (apiError?.chargeIncurred == false) {
+        " Nenhuma geração foi iniciada e não houve cobrança."
+    } else ""
+    return prefix + timing + billing
+}
+
+private fun localRetryTime(value: String): String? = runCatching {
+    DateTimeFormatter.ofPattern("dd/MM 'às' HH:mm")
+        .format(Instant.parse(value).atZone(ZoneId.systemDefault()))
+}.getOrNull()

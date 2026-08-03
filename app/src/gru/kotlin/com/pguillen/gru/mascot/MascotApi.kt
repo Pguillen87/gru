@@ -74,11 +74,21 @@ data class MascotResultResponse(
     }
 }
 
-data class ApiError(val code: String, val message: String) {
+data class ApiError(
+    val code: String,
+    val message: String,
+    val retryAtUtc: String? = null,
+    val chargeIncurred: Boolean? = null,
+) {
     companion object {
         fun from(body: String): ApiError? = runCatching {
             val detail = Json.parseToJsonElement(body).jsonObject["detail"]?.jsonObject ?: return null
-            ApiError(detail.string("code") ?: "UNKNOWN", detail.string("message").orEmpty())
+            ApiError(
+                detail.string("code") ?: "UNKNOWN",
+                detail.string("message").orEmpty(),
+                detail.string("retry_at_utc"),
+                detail["charge_incurred"]?.jsonPrimitive?.content?.toBooleanStrictOrNull(),
+            )
         }.getOrNull()
     }
 }

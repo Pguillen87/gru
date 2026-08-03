@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -92,6 +94,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     var creation by remember { mutableStateOf<MascotCreationState>(MascotCreationState.Idle) }
     var selectedMasterId by remember { mutableStateOf<String?>(null) }
     var masterPreviews by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
+    var customMascotName by remember { mutableStateOf("") }
     val customStore = remember { CustomMascotStore(context) }
     var customMascots by remember { mutableStateOf(customStore.entries()) }
     val scope = rememberCoroutineScope()
@@ -99,6 +102,10 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) {
         photo = it
         creation = if (it == null) MascotCreationState.Idle else MascotCreationState.PhotoSelected
+    }
+    LaunchedEffect(source, customMascots) {
+        val selected = source as? MascotSource.Custom ?: return@LaunchedEffect
+        customMascotName = customMascots.firstOrNull { it.poseSetId == selected.poseSetId }?.displayName.orEmpty()
     }
     LaunchedEffect(Unit) {
         runCatching { repository.resume() }.onSuccess { job ->
@@ -160,12 +167,16 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                 },
             )
     }
+    val selectedCustom = source as? MascotSource.Custom
     Column(
         modifier.clipToBounds().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Text(stringResource(R.string.gru__my_mascot), style = MaterialTheme.typography.headlineSmall)
-        MascotPreview(source, opacity, customStore)
+        MascotPreview(
+            source, opacity, customStore,
+            customMascots.firstOrNull { it.poseSetId == selectedCustom?.poseSetId }?.displayName,
+        )
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.gru__pet_enabled), style = MaterialTheme.typography.titleMedium)
@@ -180,6 +191,22 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             selectBuiltIn = prefs::setPet,
             selectCustom = { entry -> prefs.selectCustomMascot(entry.poseSetId, entry.masterId) },
         )
+        if (selectedCustom != null) {
+            OutlinedTextField(
+                value = customMascotName,
+                onValueChange = { customMascotName = it.take(32) },
+                label = { Text(stringResource(R.string.gru__mascot_name)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = {
+                    if (customStore.rename(selectedCustom.poseSetId, customMascotName)) customMascots = customStore.entries()
+                },
+                enabled = customMascotName.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(stringResource(R.string.gru__save_mascot_name)) }
+        }
         Text(stringResource(R.string.gru__create_mascot), style = MaterialTheme.typography.titleLarge)
         Text(stringResource(R.string.gru__create_mascot_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
         MascotCreationPanel(
@@ -266,7 +293,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     }
 }
 
-@Composable private fun MascotPreview(source: MascotSource, opacity: Int, store: CustomMascotStore) {
+@Composable private fun MascotPreview(source: MascotSource, opacity: Int, store: CustomMascotStore, customName: String?) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         when (source) {
             is MascotSource.BuiltIn -> {
@@ -277,7 +304,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             is MascotSource.Custom -> {
                 val preview = rememberFileBitmap(store.previewFile(source.poseSetId)?.absolutePath)
                 if (preview != null) Image(preview, stringResource(R.string.gru__custom_mascot), contentScale = ContentScale.Fit, modifier = Modifier.size(144.dp).alpha(opacity / 100f))
-                Text(stringResource(R.string.gru__custom_mascot), style = MaterialTheme.typography.titleMedium)
+                Text(customName ?: stringResource(R.string.gru__custom_mascot), style = MaterialTheme.typography.titleMedium)
             }
         }
     }
@@ -307,10 +334,15 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                         onClick = { selectCustom(card.entry) },
                         image = {
                             rememberFileBitmap(card.entry.previewPath)?.let {
-                                Image(it, null, modifier = Modifier.size(64.dp), contentScale = ContentScale.Fit)
+                                Image(
+                                    it, null,
+                                    modifier = Modifier.size(72.dp).clip(RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop,
+                                    alignment = Alignment.TopCenter,
+                                )
                             }
                         },
-                        label = stringResource(R.string.gru__personalized_mascot_number, card.number),
+                        label = card.entry.displayName ?: stringResource(R.string.gru__personalized_mascot_number, card.number),
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -405,7 +437,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                 Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.gru__try_another_photo))
                 }
-            } else {
+            } else if (state.recovery == MascotFailureRecovery.RETRY) {
                 Button(onClick = retrySubmissionOrTracking, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.gru__try_again))
                 }
