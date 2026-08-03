@@ -401,6 +401,8 @@ def _master_prompt() -> str:
 
 
 def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
+    from modal_service.image_processing import remove_connected_flat_background
+
     if not outputs:
         raise DomainError("Master generation returned no images.")
     staging = Path(ASSET_ROOT, "temporary", job.job_id, "masters")
@@ -409,11 +411,30 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
     staging.mkdir(parents=True, exist_ok=True)
     for index, content in enumerate(outputs, start=1):
         destination = staging / f"master_{index}.png"
-        destination.write_bytes(content)
+        destination.write_bytes(remove_connected_flat_background(content))
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     staging.replace(target)
     assets.commit()
+
+
+@app.function(image=api_image, volumes={ASSET_ROOT: assets}, max_containers=1)
+def normalize_master_assets(job_id: str) -> dict[str, object]:
+    """Administrative CPU-only migration for Masters created before alpha cleanup."""
+    from modal_service.image_processing import remove_connected_flat_background, transparency_ratio
+
+    if not job_id.startswith("job_") or not job_id[4:].isalnum() or len(job_id) > 96:
+        raise ValueError("Invalid job identifier.")
+    target = Path(ASSET_ROOT, "masters", job_id)
+    updated: list[dict[str, object]] = []
+    for path in sorted(target.glob("master_[1-4].png")):
+        normalized = remove_connected_flat_background(path.read_bytes())
+        path.write_bytes(normalized)
+        updated.append({"master_id": path.stem, "transparency_ratio": round(transparency_ratio(normalized), 4)})
+    if not updated:
+        raise ValueError("No Master assets found.")
+    assets.commit()
+    return {"job_id": job_id, "masters": updated}
 
 
 @app.function(image=api_image, volumes={ASSET_ROOT: assets}, secrets=[firebase_admin_secret], max_containers=1)

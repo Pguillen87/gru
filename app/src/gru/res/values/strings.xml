@@ -135,6 +135,8 @@
   <string name="gru__photo_preview">Selected pet photo</string>
   <string name="gru__photo_tip">Choose a photo where your pet appears clearly.</string>
   <string name="gru__custom_mascot">Your personalized mascot</string>
+  <string name="gru__personalized_mascot_number">Personalized %1$d</string>
+  <string name="gru__create_another_mascot">Create another mascot</string>
   <string name="gru__poses">Poses</string>
   <string name="gru__poses_summary">Choose the pose used while Gru is ready, listening, or transcribing.</string>
   <string name="gru__use_this_photo">Use this photo</string>
@@ -159,6 +161,6 @@
   <string name="gru__master_preview_number">Mascot option %1$d</string>
   <string name="gru__approved_master">Mascot selected</string>
   <string name="gru__approved_master_preview">Selected mascot preview</string>
-  <string name="gru__pose_package_pending">Your selection is saved. Its poses are not available yet, so this mascot cannot be activated yet.</string>
+  <string name="gru__pose_package_pending">Your mascot is already in the gallery and can be used. It uses Gru\'s subtle motion while its own poses are being prepared.</string>
   <string name="gru__master_preview_unavailable">Preview unavailable</string>
 </resources>

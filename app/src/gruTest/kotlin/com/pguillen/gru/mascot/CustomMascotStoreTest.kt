@@ -8,6 +8,33 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class CustomMascotStoreTest {
+    @Test fun `approved Master becomes a selectable animated fallback before poses exist`() {
+        val root = Files.createTempDirectory("gru-master-test").toFile()
+        try {
+            val store = CustomMascotStore(root)
+            val image = "approved-master".encodeToByteArray()
+            assertTrue(store.promoteMaster("job-1", "master_2", image))
+
+            val entry = store.entries().single()
+            assertEquals("job-1", entry.poseSetId)
+            assertEquals("master_2", entry.masterId)
+            assertFalse(entry.hasAuthoredPoses)
+            MascotRuntimeState.entries.forEach { state ->
+                assertEquals("approved-master", store.poseFile("job-1", state)?.readText())
+            }
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun `multiple approved Masters remain in the custom gallery`() {
+        val root = Files.createTempDirectory("gru-library-test").toFile()
+        try {
+            val store = CustomMascotStore(root)
+            assertTrue(store.promoteMaster("job-1", "master_1", byteArrayOf(1)))
+            assertTrue(store.promoteMaster("job-2", "master_3", byteArrayOf(2)))
+            assertEquals(setOf("job-1", "job-2"), store.entries().map { it.poseSetId }.toSet())
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun `valid package is promoted and resolves every runtime state`() {
         val root = Files.createTempDirectory("gru-mascot-test").toFile()
         try {

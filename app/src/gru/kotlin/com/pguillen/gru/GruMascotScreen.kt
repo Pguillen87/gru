@@ -69,6 +69,7 @@ import com.pguillen.gru.mascot.toCreationState
 import com.pguillen.gru.mascot.toMascotFailure
 import com.pguillen.gru.mascot.MasterReference
 import com.pguillen.gru.mascot.CustomMascotStore
+import com.pguillen.gru.mascot.CustomMascotEntry
 import com.pguillen.gru.mascot.MascotTelemetry
 import com.pguillen.gru.mascot.prepareMascotPhoto
 
@@ -91,14 +92,17 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     var creation by remember { mutableStateOf<MascotCreationState>(MascotCreationState.Idle) }
     var selectedMasterId by remember { mutableStateOf<String?>(null) }
     var masterPreviews by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
+    val customStore = remember { CustomMascotStore(context) }
+    var customMascots by remember { mutableStateOf(customStore.entries()) }
     val scope = rememberCoroutineScope()
-    val repository = remember { MascotRepository(MascotApi(FirebaseMascotAuthTokenProvider(), FirebaseMascotAppCheckTokenProvider()), prefs, CustomMascotStore(context)) }
+    val repository = remember { MascotRepository(MascotApi(FirebaseMascotAuthTokenProvider(), FirebaseMascotAppCheckTokenProvider()), prefs, customStore) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) {
         photo = it
         creation = if (it == null) MascotCreationState.Idle else MascotCreationState.PhotoSelected
     }
     LaunchedEffect(Unit) {
         runCatching { repository.resume() }.onSuccess { job ->
+            customMascots = repository.customMascots()
             if (job != null) {
                 creation = job.toCreationState()
                 if (job.state in setOf("FAILED", "CANCELED")) repository.clearPending()
@@ -161,7 +165,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Text(stringResource(R.string.gru__my_mascot), style = MaterialTheme.typography.headlineSmall)
-        MascotPreview(source, opacity)
+        MascotPreview(source, opacity, customStore)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.gru__pet_enabled), style = MaterialTheme.typography.titleMedium)
@@ -170,7 +174,12 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             Switch(enabled, prefs::setEnabled, enabled = ready)
         }
         Text(stringResource(R.string.gru__gru_mascots), style = MaterialTheme.typography.titleLarge)
-        BuiltInPicker(source, prefs::setPet)
+        MascotGallery(
+            selected = source,
+            customMascots = customMascots,
+            selectBuiltIn = prefs::setPet,
+            selectCustom = { entry -> prefs.selectCustomMascot(entry.poseSetId, entry.masterId) },
+        )
         Text(stringResource(R.string.gru__create_mascot), style = MaterialTheme.typography.titleLarge)
         Text(stringResource(R.string.gru__create_mascot_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
         MascotCreationPanel(
@@ -210,7 +219,10 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                 val awaiting = creation as? MascotCreationState.AwaitingMasterApproval ?: return@launch
                 creation = MascotCreationState.Submitting
                 runCatching { repository.approve(awaiting.job.jobId, masterId) }
-                    .onSuccess { creation = it.toCreationState() }
+                    .onSuccess {
+                        customMascots = repository.customMascots()
+                        creation = it.toCreationState()
+                    }
                     .onFailure { creation = it.toMascotFailure(awaiting.job.jobId) }
             } },
             onRetryTracking = { scope.launch {
@@ -226,6 +238,12 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                     .onFailure { creation = it.toMascotFailure(jobId) }
             } },
             onRetryInstall = { jobId -> creation = MascotCreationState.InstallingMascot(jobId) },
+            onCreateAnother = {
+                repository.clearPending()
+                photo = null
+                creation = MascotCreationState.Idle
+                picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
             onCancelCreation = { scope.launch {
                 val jobId = prefs.pendingMascotJobId.value ?: return@launch
                 creation = MascotCreationState.Canceling
@@ -248,21 +266,80 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     }
 }
 
-@Composable private fun MascotPreview(source: MascotSource, opacity: Int) {
-    val pet = (source as? MascotSource.BuiltIn)?.pet ?: GruPet.FAISCA
-    val option = petOption(pet)
+@Composable private fun MascotPreview(source: MascotSource, opacity: Int, store: CustomMascotStore) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Image(painterResource(option.drawable), stringResource(R.string.gru__preview_description, stringResource(option.name)), contentScale = ContentScale.Fit, modifier = Modifier.size(144.dp).alpha(opacity / 100f))
-        Text(stringResource(if (source is MascotSource.Custom) R.string.gru__custom_mascot else option.name), style = MaterialTheme.typography.titleMedium)
+        when (source) {
+            is MascotSource.BuiltIn -> {
+                val option = petOption(source.pet)
+                Image(painterResource(option.drawable), stringResource(R.string.gru__preview_description, stringResource(option.name)), contentScale = ContentScale.Fit, modifier = Modifier.size(144.dp).alpha(opacity / 100f))
+                Text(stringResource(option.name), style = MaterialTheme.typography.titleMedium)
+            }
+            is MascotSource.Custom -> {
+                val preview = rememberFileBitmap(store.previewFile(source.poseSetId)?.absolutePath)
+                if (preview != null) Image(preview, stringResource(R.string.gru__custom_mascot), contentScale = ContentScale.Fit, modifier = Modifier.size(144.dp).alpha(opacity / 100f))
+                Text(stringResource(R.string.gru__custom_mascot), style = MaterialTheme.typography.titleMedium)
+            }
+        }
     }
 }
 
-@Composable private fun BuiltInPicker(selected: MascotSource, select: (GruPet) -> Unit) {
-    PET_OPTIONS.chunked(3).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        row.forEach { option -> Column(Modifier.weight(1f).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp)).clickable { select(option.pet) }.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(painterResource(option.drawable), null, modifier = Modifier.size(48.dp)); Text(stringResource(option.name))
-        } }
-    } }
+@Composable private fun MascotGallery(
+    selected: MascotSource,
+    customMascots: List<CustomMascotEntry>,
+    selectBuiltIn: (GruPet) -> Unit,
+    selectCustom: (CustomMascotEntry) -> Unit,
+) {
+    val cards = PET_OPTIONS.map { MascotGalleryItem.BuiltIn(it) } +
+        customMascots.mapIndexed { index, entry -> MascotGalleryItem.Custom(entry, index + 1) }
+    cards.chunked(3).forEach { row ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            row.forEach { card ->
+                when (card) {
+                    is MascotGalleryItem.BuiltIn -> MascotGalleryCard(
+                        selected = selected == MascotSource.BuiltIn(card.option.pet),
+                        onClick = { selectBuiltIn(card.option.pet) },
+                        image = { Image(painterResource(card.option.drawable), null, modifier = Modifier.size(64.dp)) },
+                        label = stringResource(card.option.name),
+                        modifier = Modifier.weight(1f),
+                    )
+                    is MascotGalleryItem.Custom -> MascotGalleryCard(
+                        selected = selected == MascotSource.Custom(card.entry.poseSetId, card.entry.masterId),
+                        onClick = { selectCustom(card.entry) },
+                        image = {
+                            rememberFileBitmap(card.entry.previewPath)?.let {
+                                Image(it, null, modifier = Modifier.size(64.dp), contentScale = ContentScale.Fit)
+                            }
+                        },
+                        label = stringResource(R.string.gru__personalized_mascot_number, card.number),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+        }
+    }
+}
+
+@Composable private fun MascotGalleryCard(
+    selected: Boolean,
+    onClick: () -> Unit,
+    image: @Composable () -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier.semantics { this.selected = selected; role = Role.RadioButton }
+            .border(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick).padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        image()
+        Text(label, maxLines = 2, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable private fun rememberFileBitmap(path: String?): ImageBitmap? = remember(path) {
+    path?.let(BitmapFactory::decodeFile)?.asImageBitmap()
 }
 
 @Composable private fun MascotCreationPanel(
@@ -271,6 +348,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     onSelectMaster: (String) -> Unit, onApprove: (String) -> Unit, onRetryTracking: () -> Unit,
     onStartGeneration: (String) -> Unit,
     onRetryInstall: (String) -> Unit,
+    onCreateAnother: () -> Unit,
     onCancelCreation: () -> Unit,
 ) {
     val retrySubmissionOrTracking = {
@@ -297,8 +375,8 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         is MascotCreationState.AwaitingMasterApproval -> MasterChoices(state.job.masters, masterPreviews, selectedMasterId, onSelectMaster, onApprove)
         is MascotCreationState.PosePreparationPending -> {
             ApprovedMasterPending(state.job, masterPreviews)
-            OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.gru__cancel_creation))
+            OutlinedButton(onClick = onCreateAnother, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.gru__create_another_mascot))
             }
         }
         is MascotCreationState.InstallingMascot -> LoadingMessage(R.string.gru__mascot_installing)
@@ -424,6 +502,10 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
 }
 
 private data class BuiltInOption(val pet: GruPet, val drawable: Int, val name: Int)
+private sealed interface MascotGalleryItem {
+    data class BuiltIn(val option: BuiltInOption) : MascotGalleryItem
+    data class Custom(val entry: CustomMascotEntry, val number: Int) : MascotGalleryItem
+}
 private fun petOption(pet: GruPet) = PET_OPTIONS.first { it.pet == pet }
 private fun sizeLabel(size: GruPetSize) = when (size) { GruPetSize.SMALL -> R.string.gru__size_small; GruPetSize.MEDIUM -> R.string.gru__size_medium; GruPetSize.LARGE -> R.string.gru__size_large }
 private val PET_OPTIONS = listOf(

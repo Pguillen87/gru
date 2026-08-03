@@ -54,7 +54,7 @@ class MascotRepository(
     suspend fun resume(): MascotJobResponse? {
         val jobId = pending.jobId.value ?: return recoverUnacknowledgedCreate()
         if (pending.cancelPending.value) return cancel(jobId)
-        return api.job(jobId)
+        return ensureApprovedMaster(api.job(jobId))
     }
 
     private suspend fun recoverUnacknowledgedCreate(): MascotJobResponse? {
@@ -72,7 +72,7 @@ class MascotRepository(
     }
 
     suspend fun approve(jobId: String, masterId: String): MascotJobResponse =
-        api.approveMaster(jobId, masterId, "approve:$jobId:$masterId")
+        ensureApprovedMaster(api.approveMaster(jobId, masterId, "approve:$jobId:$masterId"))
 
     suspend fun startMasterGeneration(jobId: String): MascotJobResponse =
         api.startMasterGeneration(jobId, "generate-master:$jobId")
@@ -99,15 +99,42 @@ class MascotRepository(
             defaults[0], defaults[1], defaults[2],
         )
         if (!store.promote(manifest, images)) return false
+        if (result.poseSetId != jobId) store.remove(jobId)
         pending.selectCustomMascot(result.poseSetId, result.masterId)
         clearPending()
         return true
+    }
+
+    fun customMascots(): List<CustomMascotEntry> = customStore?.entries().orEmpty()
+
+    private suspend fun ensureApprovedMaster(job: MascotJobResponse): MascotJobResponse {
+        if (job.state !in APPROVED_MASTER_STATES) return job
+        val masterId = job.masterId ?: return job
+        val store = customStore ?: return job
+        val reference = job.masters.firstOrNull { it.id == masterId } ?: return job
+        val localManifest = store.read(job.jobId)
+        val localIsCurrent = store.previewFile(job.jobId) != null &&
+            (reference.sha256 == null || localManifest?.masterSha256.equals(reference.sha256, ignoreCase = true))
+        if (!localIsCurrent) {
+            check(store.promoteMaster(job.jobId, masterId, downloadMaster(reference))) {
+                "Unable to save the approved mascot."
+            }
+        }
+        pending.selectCustomMascot(job.jobId, masterId)
+        return job
     }
 
     fun clearPending() {
         pending.setJobId(null)
         pending.setRequestId(null)
         pending.setCancelPending(false)
+    }
+
+    private companion object {
+        val APPROVED_MASTER_STATES = setOf(
+            "CONSISTENCY_TEST", "CONSISTENCY_FAILED", "READY_FOR_POSES",
+            "GENERATING_POSES", "COMPLETED",
+        )
     }
 }
 

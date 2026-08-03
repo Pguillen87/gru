@@ -67,6 +67,28 @@ class MascotRepositoryTest {
         assertEquals(listOf("approve:job-1:master_2", "approve:job-1:master_2"), remote.approvalKeys)
     }
 
+    @Test fun `approved Master is downloaded promoted selected and remains pending for poses`() = runTest {
+        val root = Files.createTempDirectory("gru-approved-master-test").toFile()
+        try {
+            val bytes = "transparent-master".encodeToByteArray()
+            val checksum = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            val job = MascotJobResponse(
+                "job-1", "CONSISTENCY_TEST",
+                masters = listOf(MasterReference("master_2", "/masters/master_2", checksum)),
+                masterId = "master_2",
+            )
+            val pending = FakePending("job-1")
+            val repository = MascotRepository(FakeRemote(jobResponse = job, downloadBytes = bytes), pending, CustomMascotStore(root))
+
+            val response = repository.approve("job-1", "master_2")
+
+            assertEquals(job, response)
+            assertEquals("job-1" to "master_2", pending.selectedMascot)
+            assertEquals("job-1", pending.jobId.value)
+            assertEquals("transparent-master", CustomMascotStore(root).previewFile("job-1")?.readText())
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun `lost create response is recovered by persisted idempotency key`() = runTest {
         val remote = FakeRemote(jobResponse = MascotJobResponse("job-recovered", "READY_FOR_GENERATION"))
         val pending = FakePending().apply { requestId.value = "request-stable" }

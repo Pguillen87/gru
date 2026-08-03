@@ -27,6 +27,16 @@ data class CustomMascotManifest(
     val selectedIdlePoseId: String,
     val selectedRecordingPoseId: String,
     val selectedTranscribingPoseId: String,
+    val masterFileName: String? = null,
+    val masterSha256: String? = null,
+)
+
+data class CustomMascotEntry(
+    val poseSetId: String,
+    val masterId: String,
+    val previewPath: String,
+    val hasAuthoredPoses: Boolean,
+    val updatedAtMillis: Long,
 )
 
 sealed interface MascotVisual {
