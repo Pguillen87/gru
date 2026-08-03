@@ -25,13 +25,15 @@ class MascotApiTest {
 
     @Test fun `maps structured API failure`() = runTest {
         val server = MockWebServer().apply {
-            enqueue(MockResponse().setResponseCode(429).setHeader("X-Request-ID", "trace-123").setBody("{\"detail\":{\"code\":\"RATE_LIMITED\",\"message\":\"later\"}}"))
+            enqueue(MockResponse().setResponseCode(429).setHeader("X-Request-ID", "trace-123").setBody("{\"detail\":{\"code\":\"RATE_LIMITED\",\"message\":\"later\",\"retry_at_utc\":\"2026-08-04T00:00:00Z\",\"charge_incurred\":false}}"))
             start()
         }
         try {
             val api = MascotApi(FakeAuth, FakeAppCheck, OkHttpClient(), server.url("/").toString())
             val error = assertFailsWith<MascotApiException> { api.job("job_1") }
             assertEquals("RATE_LIMITED", error.apiError.code)
+            assertEquals("2026-08-04T00:00:00Z", error.apiError.retryAtUtc)
+            assertEquals(false, error.apiError.chargeIncurred)
             assertEquals("trace-123", error.requestId)
         } finally { server.shutdown() }
     }

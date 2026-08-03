@@ -35,6 +35,18 @@ class CustomMascotStoreTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun `custom mascot name is persisted without changing its artwork`() {
+        val root = Files.createTempDirectory("gru-name-test").toFile()
+        try {
+            val store = CustomMascotStore(root)
+            assertTrue(store.promoteMaster("job-1", "master_1", "image".encodeToByteArray()))
+            assertTrue(store.rename("job-1", "  Luna   Azul  "))
+
+            assertEquals("Luna Azul", store.entries().single().displayName)
+            assertEquals("image", store.previewFile("job-1")?.readText())
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun `valid package is promoted and resolves every runtime state`() {
         val root = Files.createTempDirectory("gru-mascot-test").toFile()
         try {

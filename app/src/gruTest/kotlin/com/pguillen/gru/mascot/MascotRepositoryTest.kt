@@ -52,6 +52,19 @@ class MascotRepositoryTest {
         assertEquals(MascotFailureRecovery.CHOOSE_PHOTO, state.recovery)
     }
 
+    @Test fun `daily limit explains timing and billing without offering an immediate retry`() {
+        val error = MascotApiException(
+            ApiError("RATE_LIMITED", "", "2026-08-04T00:00:00Z", chargeIncurred = false),
+            429,
+        )
+        val state = error.toMascotFailure(null)
+
+        assertTrue(state is MascotCreationState.RemoteFailed)
+        assertEquals(MascotFailureRecovery.WAIT, state.recovery)
+        assertTrue(state.message.contains("não houve cobrança"))
+        assertTrue(state.message.contains("Você poderá tentar novamente"))
+    }
+
     @Test fun `local photo preparation failure offers choosing another photo`() {
         val state = MascotPhotoPreparationException(IllegalArgumentException()).toMascotFailure(null)
         assertTrue(state is MascotCreationState.RemoteFailed)
