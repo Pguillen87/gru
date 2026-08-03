@@ -27,7 +27,11 @@ internal enum class PetMotionMode { IDLE, LISTENING, PROCESSING, SUCCESS, ERROR 
  * Renders the pet as one continuously moving body. Atlas poses only change expression at authored
  * moments; breathing, weight, tilt and jumps are interpolated every display frame.
  */
-internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
+internal class LivingPetView(
+    context: Context,
+    atlasRes: Int,
+    private val onFirstFrame: () -> Unit = {},
+) : View(context) {
     private val bitmap: Bitmap = decodeAtlas(atlasRes)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val source = Rect()
@@ -38,6 +42,7 @@ internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
     private var targetLevel = 0f
     private var renderedLevel = 0f
     private var animator: ValueAnimator? = null
+    private var firstFrameReported = false
 
     fun setMode(value: PetMotionMode) {
         if (mode == value) return
@@ -58,6 +63,7 @@ internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        firstFrameReported = false
         animator = createAnimator()?.also(ValueAnimator::start)
     }
 
@@ -79,6 +85,10 @@ internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
         canvas.translate(-width / 2f, -height / 2f)
         drawBlend(canvas, motion.fromFrame, motion.toFrame, motion.blend)
         canvas.restore()
+        if (!firstFrameReported) {
+            firstFrameReported = true
+            post(onFirstFrame)
+        }
     }
 
     private fun motionAt(seconds: Float): PetMotion = when (mode) {
@@ -184,8 +194,8 @@ internal class LivingPetView(context: Context, atlasRes: Int) : View(context) {
 
     private fun drawBlend(canvas: Canvas, from: Int, to: Int, blend: Float) {
         val amount = blend.coerceIn(0f, 1f)
-        drawFrame(canvas, from, ((1f - amount) * 255).toInt())
-        if (amount > 0.01f && to != from) drawFrame(canvas, to, (amount * 255).toInt())
+        val frame = if (amount < 0.5f || to == from) from else to
+        drawFrame(canvas, frame, 255)
         paint.alpha = 255
     }
 

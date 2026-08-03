@@ -10,8 +10,10 @@ package com.pguillen.gru.overlay
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.util.Log
@@ -35,8 +37,10 @@ import com.pguillen.gru.dictation.GruDictationFailure
 import com.pguillen.gru.dictation.GruDictationState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlin.math.hypot
@@ -55,6 +59,10 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private var params: WindowManager.LayoutParams? = null
     private var added = false
     private var desiredVisible = false
+    private val attachment = OverlayAttachmentTracker()
+    private var attachWatchdog: Job? = null
+    private var recoveryJob: Job? = null
+    private var viewGeneration = 0
 
     private var currentDesign = GruPet.FAISCA
     private var currentSize = GruPetSize.MEDIUM
@@ -102,12 +110,21 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     }
 
     fun destroy() {
+        attachWatchdog?.cancel()
+        recoveryJob?.cancel()
         scope.cancel()
         snapAnimator?.cancel()
         GruDictation.cancel()
         removeImmediately()
         releasePet()
         service.stopMicForeground()
+    }
+
+    fun retry() {
+        recoveryJob?.cancel()
+        attachment.detach()
+        reportAttachment("manual retry")
+        rebuildView()
     }
 
     private fun update(
@@ -156,47 +173,43 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             view.alpha = 1f
             view.scaleX = 1f
             view.scaleY = 1f
+            if (attachment.state == OverlayAttachmentState.Failed) scheduleRecovery()
             return
         }
         val layout = params ?: createParams().also { params = it }
+        view.animate().cancel()
+        view.alpha = 1f
+        view.scaleX = 1f
+        view.scaleY = 1f
+        attachment.beginAttach()
+        reportAttachment("add requested")
         runCatching {
             windowManager.addView(view, layout)
             added = true
-            if (animationsEnabled()) {
-                view.alpha = 0f
-                view.scaleX = 0.88f
-                view.scaleY = 0.88f
-                view.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(150L).start()
-            }
+            scheduleFirstFrameWatchdog()
         }.onFailure { error ->
-            Log.w(TAG, "Unable to add pet overlay: ${error.javaClass.simpleName}")
+            markAttachmentFailed("add failed", error)
         }
     }
 
     private fun hide() {
         desiredVisible = false
-        val view = rootView ?: return
-        if (!added) return
-        if (!animationsEnabled()) {
-            removeImmediately()
-            return
-        }
-        view.animate().cancel()
-        view.animate()
-            .alpha(0f)
-            .scaleX(0.88f)
-            .scaleY(0.88f)
-            .setDuration(110L)
-            .withEndAction {
-                if (!desiredVisible) removeImmediately()
-            }
-            .start()
+        recoveryJob?.cancel()
+        recoveryJob = null
+        removeImmediately()
     }
 
-    private fun removeImmediately() {
+    private fun removeImmediately(resetAttempts: Boolean = true) {
+        attachWatchdog?.cancel()
+        attachWatchdog = null
         rootView?.animate()?.cancel()
         if (added) rootView?.let { runCatching { windowManager.removeView(it) } }
         added = false
+        rootView?.alpha = 1f
+        rootView?.scaleX = 1f
+        rootView?.scaleY = 1f
+        attachment.detach(resetAttempts)
+        reportAttachment("removed")
     }
 
     private fun rebuildView() {
@@ -218,7 +231,10 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             successColor = ContextCompat.getColor(context, R.color.gru_pet_success),
             errorColor = ContextCompat.getColor(context, R.color.colorError),
         ).also { signalView = it }
-        val pet = LivingPetView(context, petAtlas(currentDesign)).apply {
+        val generation = ++viewGeneration
+        val pet = LivingPetView(context, petAtlas(currentDesign)) {
+            onFirstFrame(generation)
+        }.apply {
             alpha = currentOpacity / 100f
         }.also { petView = it }
         val status = TextView(context).apply {
@@ -236,7 +252,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             visibility = View.GONE
         }.also { recordingStatus = it }
 
-        return FrameLayout(context).apply {
+        return PetOverlayLayout(context).apply {
             minimumWidth = viewSize
             minimumHeight = viewSize
             isClickable = true
@@ -247,6 +263,55 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             setOnClickListener { onTap() }
             setOnTouchListener(createTouchListener())
         }
+    }
+
+    private fun onFirstFrame(generation: Int) {
+        if (generation != viewGeneration || !desiredVisible || !added) return
+        attachWatchdog?.cancel()
+        attachWatchdog = null
+        attachment.markVisible()
+        reportAttachment("first frame")
+    }
+
+    private fun scheduleFirstFrameWatchdog() {
+        attachWatchdog?.cancel()
+        attachWatchdog = scope.launch {
+            delay(FIRST_FRAME_TIMEOUT_MILLIS)
+            if (desiredVisible && added && attachment.state == OverlayAttachmentState.Attaching) {
+                markAttachmentFailed("first frame timeout")
+            }
+        }
+    }
+
+    private fun markAttachmentFailed(reason: String, error: Throwable? = null) {
+        attachWatchdog?.cancel()
+        attachWatchdog = null
+        attachment.markFailed()
+        reportAttachment(reason)
+        if (error != null) Log.w(TAG, "$reason: ${error.javaClass.simpleName}")
+        scheduleRecovery()
+    }
+
+    private fun scheduleRecovery() {
+        if (!desiredVisible || recoveryJob?.isActive == true) return
+        if (!attachment.reserveRecovery()) {
+            reportAttachment("recovery exhausted")
+            return
+        }
+        reportAttachment("recovery scheduled")
+        recoveryJob = scope.launch {
+            delay(RECOVERY_DELAY_MILLIS)
+            if (!desiredVisible) return@launch
+            removeImmediately(resetAttempts = false)
+            releasePet()
+            rootView = null
+            ensureShown()
+        }
+    }
+
+    private fun reportAttachment(reason: String) {
+        GruOverlayHealth.overlayChanged(attachment.state, attachment.recoveryAttempts)
+        Log.d(TAG, "state=${attachment.state} attempt=${attachment.recoveryAttempts} reason=$reason")
     }
 
     private fun releasePet() {
@@ -483,5 +548,14 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private companion object {
         const val TAG = "GruPetOverlay"
         const val EDGE_MARGIN = 12
+        const val FIRST_FRAME_TIMEOUT_MILLIS = 750L
+        const val RECOVERY_DELAY_MILLIS = 120L
+    }
+
+    private class PetOverlayLayout(context: Context) : FrameLayout(context) {
+        override fun dispatchDraw(canvas: Canvas) {
+            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            super.dispatchDraw(canvas)
+        }
     }
 }
