@@ -70,6 +70,32 @@ class MascotRepositoryTest {
         assertEquals(null, pending.requestId.value)
     }
 
+    @Test fun `confirmed missing create clears orphaned request`() = runTest {
+        val pending = FakePending().apply { requestId.value = "request-orphaned" }
+        val remote = FakeRemote(
+            recoveryFailure = MascotApiException(ApiError("JOB_NOT_FOUND", ""), 404),
+        )
+
+        assertEquals(null, MascotRepository(remote, pending).resume())
+        assertEquals(null, pending.requestId.value)
+        assertEquals(0, remote.createCalls)
+    }
+
+    @Test fun `retry after confirmed missing create submits exactly once`() = runTest {
+        val pending = FakePending().apply { requestId.value = "request-orphaned" }
+        val remote = FakeRemote(
+            jobResponse = MascotJobResponse("job-new", "READY_FOR_GENERATION"),
+            recoveryFailure = MascotApiException(ApiError("JOB_NOT_FOUND", ""), 404),
+        )
+
+        val job = MascotRepository(remote, pending).create(byteArrayOf(1), "image/png")
+
+        assertEquals("job-new", job.jobId)
+        assertEquals("job-new", pending.jobId.value)
+        assertEquals(null, pending.requestId.value)
+        assertEquals(1, remote.createCalls)
+    }
+
     @Test fun `cancel stays pending until remote confirms canceled`() = runTest {
         val pending = FakePending("job-1")
         val remote = FakeRemote(jobResponse = MascotJobResponse("job-1", "READY_FOR_GENERATION"))
@@ -152,6 +178,7 @@ private class FakePending(initialJobId: String? = null) : MascotPendingState {
 private class FakeRemote(
     var jobResponse: MascotJobResponse = MascotJobResponse("job-default", "READY_FOR_GENERATION"),
     var jobFailure: Throwable? = null,
+    var recoveryFailure: Throwable? = null,
     var resultResponse: MascotResultResponse? = null,
     var downloadBytes: ByteArray? = null,
 ) : MascotRemoteApi {
@@ -168,7 +195,7 @@ private class FakeRemote(
     override suspend fun job(jobId: String): MascotJobResponse = jobFailure?.let { throw it } ?: jobResponse
     override suspend fun recoverJob(idempotencyKey: String): MascotJobResponse {
         recoveryKeys += idempotencyKey
-        return jobFailure?.let { throw it } ?: jobResponse
+        return recoveryFailure?.let { throw it } ?: jobFailure?.let { throw it } ?: jobResponse
     }
     override suspend fun approveMaster(jobId: String, masterId: String, key: String): MascotJobResponse {
         approvalKeys += key

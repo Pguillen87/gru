@@ -63,7 +63,9 @@ class MascotRepository(
                 pending.setRequestId(null)
             }
         } catch (error: MascotApiException) {
-            if (error.apiError.code == "JOB_NOT_FOUND") throw MascotRecoveryPendingException() else throw error
+            if (error.apiError.code != "JOB_NOT_FOUND") throw error
+            pending.setRequestId(null)
+            null
         }
     }
 
@@ -148,8 +150,6 @@ fun Throwable.toMascotFailure(jobId: String?): MascotCreationState = if (isNetwo
 }
 
 fun Throwable.isNetworkFailure(): Boolean = this is IOException || cause is IOException
-
-private class MascotRecoveryPendingException : IOException("Mascot create acknowledgement is pending.")
 
 fun MascotJobResponse.isTerminal(): Boolean = state in setOf("COMPLETED", "FAILED", "CANCELED")
 

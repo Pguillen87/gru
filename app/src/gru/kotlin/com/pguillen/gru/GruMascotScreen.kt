@@ -244,6 +244,9 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     onRetryInstall: (String) -> Unit,
     onCancelCreation: () -> Unit,
 ) {
+    val retrySubmissionOrTracking = {
+        if (photo != null) onUsePhoto(photo) else onRetryTracking()
+    }
     when (state) {
         MascotCreationState.Idle -> Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__choose_photo)) }
         MascotCreationState.PhotoSelected -> Unit
@@ -271,7 +274,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         }
         MascotCreationState.SubmissionUncertain -> {
             Text(stringResource(R.string.gru__mascot_submission_uncertain), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = onRetryTracking, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__try_again)) }
+            Button(onClick = retrySubmissionOrTracking, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__try_again)) }
         }
         is MascotCreationState.RemoteFailed -> {
             Text(state.message, color = MaterialTheme.colorScheme.error)
@@ -280,7 +283,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                     Text(stringResource(R.string.gru__try_another_photo))
                 }
             } else {
-                Button(onClick = onRetryTracking, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = retrySubmissionOrTracking, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.gru__try_again))
                 }
             }
