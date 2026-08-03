@@ -17,6 +17,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 import modal
+from pydantic import BaseModel, Field
 
 from modal_service.catalog import POSE_PROMPT_VERSION
 from modal_service.config import Environment, generation_enabled, limits_for
@@ -34,6 +35,19 @@ MODEL_ROOT = "/gru-models"
 ENVIRONMENT = Environment(os.getenv("GRU_MASCOT_ENV", Environment.DEVELOPMENT))
 LIMITS = limits_for(ENVIRONMENT)
 GPU_GENERATION_ENABLED = generation_enabled(ENVIRONMENT, os.getenv("GPU_GENERATION_ENABLED"))
+
+
+class CreateJobRequest(BaseModel):
+    image_base64: str = Field(min_length=1, max_length=14_000_000)
+    content_type: str | None = None
+
+
+class ApproveMasterRequest(BaseModel):
+    master_id: str = Field(pattern=r"^master_[1-4]$")
+
+
+class PoseRequest(BaseModel):
+    pose_id: str = Field(pattern=r"^pose_[0-9]{2}$")
 
 api_image = modal.Image.debian_slim(python_version="3.12").pip_install(
     "fastapi[standard]>=0.115,<1", "pillow>=11,<12", "httpx>=0.28,<1", "google-auth>=2.38,<3", "firebase-admin>=6.6,<7"
@@ -316,12 +330,13 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
 @modal.asgi_app()
 def api():
     from fastapi import Depends, FastAPI, Header
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
     import firebase_admin
     from firebase_admin import app_check as firebase_app_check
     from firebase_admin import credentials
     from google.auth.transport.requests import Request as GoogleRequest
     from google.oauth2 import id_token
-    from pydantic import BaseModel, Field
 
     service = FastAPI(title="GRU Mascot API", docs_url=None, redoc_url=None)
     credentials_json = os.environ.get("FIREBASE_ADMIN_CREDENTIALS_JSON")
@@ -352,15 +367,17 @@ def api():
         )
         return response
 
-    class CreateJobRequest(BaseModel):
-        image_base64: str = Field(min_length=1, max_length=14_000_000)
-        content_type: str | None = None
-
-    class ApproveMasterRequest(BaseModel):
-        master_id: str = Field(pattern=r"^master_[1-4]$")
-
-    class PoseRequest(BaseModel):
-        pose_id: str = Field(pattern=r"^pose_[0-9]{2}$")
+    @service.exception_handler(RequestValidationError)
+    async def request_validation_error(_request, error: RequestValidationError):
+        failures = ",".join(
+            f"{'.'.join(str(item) for item in issue.get('loc', ()))}:{issue.get('type', 'invalid')}"
+            for issue in error.errors()[:5]
+        )
+        logging.info("event=request_validation outcome=rejected failures=%s", failures[:300])
+        return JSONResponse(
+            status_code=422,
+            content={"detail": {"code": "INVALID_REQUEST", "message": "The request format is invalid."}},
+        )
 
     # These dependencies live inside the ASGI factory. Keep FastAPI markers in
     # defaults so postponed annotations cannot turn them into public query args.

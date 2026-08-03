@@ -52,6 +52,13 @@ class MascotRepositoryTest {
         assertEquals(MascotFailureRecovery.CHOOSE_PHOTO, state.recovery)
     }
 
+    @Test fun `local photo preparation failure offers choosing another photo`() {
+        val state = MascotPhotoPreparationException(IllegalArgumentException()).toMascotFailure(null)
+        assertTrue(state is MascotCreationState.RemoteFailed)
+        assertTrue(state.message.contains("foto"))
+        assertEquals(MascotFailureRecovery.CHOOSE_PHOTO, state.recovery)
+    }
+
     @Test fun `approval retries use the same deterministic operation key`() = runTest {
         val remote = FakeRemote(jobResponse = MascotJobResponse("job-1", "CONSISTENCY_TEST"))
         val repository = MascotRepository(remote, FakePending("job-1"))

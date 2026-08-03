@@ -42,6 +42,12 @@ class MascotApiTest {
         assertTrue(MascotTelemetry.correlation("request-1") != MascotTelemetry.correlation("request-2"))
     }
 
+    @Test fun `photo dimensions preserve aspect ratio within server limit`() {
+        assertEquals(4096 to 2048, scaledSize(8000, 4000))
+        assertEquals(2048 to 4096, scaledSize(3000, 6000))
+        assertEquals(1200 to 900, scaledSize(1200, 900))
+    }
+
     @Test fun `maps backend failure separately from network failure`() = runTest {
         val server = MockWebServer().apply { enqueue(MockResponse().setResponseCode(503).setBody("unavailable")); start() }
         try {

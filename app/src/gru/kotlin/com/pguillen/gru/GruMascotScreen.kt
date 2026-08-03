@@ -54,8 +54,6 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
 import com.pguillen.gru.dictation.TranscriptionEngine
 import com.pguillen.gru.local.WhisperModelManager
 import com.pguillen.gru.local.WhisperModelState
@@ -72,6 +70,7 @@ import com.pguillen.gru.mascot.toMascotFailure
 import com.pguillen.gru.mascot.MasterReference
 import com.pguillen.gru.mascot.CustomMascotStore
 import com.pguillen.gru.mascot.MascotTelemetry
+import com.pguillen.gru.mascot.prepareMascotPhoto
 
 @Composable
 internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modifier: Modifier = Modifier) {
@@ -180,9 +179,20 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                 creation = MascotCreationState.Submitting
                 val started = MascotTelemetry.mark()
                 runCatching {
-                    val image = context.readMascotPhoto(selected)
-                    MascotTelemetry.info("photo_read", started, mapOf("outcome" to "success", "image_bytes" to image.size))
-                    repository.create(image, context.contentResolver.getType(selected) ?: "image/jpeg")
+                    val originalContentType = context.contentResolver.getType(selected) ?: "unknown"
+                    val photo = context.prepareMascotPhoto(selected)
+                    MascotTelemetry.info(
+                        "photo_prepare", started,
+                        mapOf(
+                            "outcome" to "success",
+                            "original_content_type" to originalContentType,
+                            "upload_content_type" to photo.contentType,
+                            "image_bytes" to photo.bytes.size,
+                            "width" to photo.width,
+                            "height" to photo.height,
+                        ),
+                    )
+                    repository.create(photo.bytes, photo.contentType)
                 }
                     .onSuccess { creation = it.toCreationState() }
                     .onFailure {
@@ -362,11 +372,6 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         Button(onClick = onChange, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__choose_another_photo)) }
         Button(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text(stringResource(android.R.string.cancel)) }
     }
-}
-
-private suspend fun Context.readMascotPhoto(uri: Uri): ByteArray = withContext(Dispatchers.IO) {
-    contentResolver.openInputStream(uri)?.use { input -> input.readBytes().also { require(it.size in 1..10_000_000) } }
-        ?: throw IllegalArgumentException("Selected photo cannot be read.")
 }
 
 private data class BuiltInOption(val pet: GruPet, val drawable: Int, val name: Int)

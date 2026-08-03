@@ -141,7 +141,7 @@ fun Throwable.toMascotFailure(jobId: String?): MascotCreationState = if (isNetwo
     if (jobId == null) MascotCreationState.SubmissionUncertain else MascotCreationState.NetworkUnavailable(jobId)
 } else {
     val code = (this as? MascotApiException)?.apiError?.code
-    val recovery = if (code in setOf("INVALID_IMAGE", "JOB_NOT_FOUND", "MASTER_GENERATION_FAILED")) {
+    val recovery = if (this is MascotPhotoPreparationException || code in setOf("INVALID_IMAGE", "JOB_NOT_FOUND", "MASTER_GENERATION_FAILED")) {
         MascotFailureRecovery.CHOOSE_PHOTO
     } else {
         MascotFailureRecovery.RETRY
@@ -164,6 +164,7 @@ fun mascotErrorMessage(error: Throwable): String = when ((error as? MascotApiExc
     "MASTER_GENERATION_FAILED" -> "Não foi possível preparar as opções do mascote. Tente novamente."
     "SERVICE_UNAVAILABLE" -> "O serviço de mascotes está temporariamente indisponível. Tente novamente mais tarde."
     else -> when (error) {
+        is MascotPhotoPreparationException -> "Essa foto não pode ser usada. Escolha outra foto do seu pet."
         is MascotFirebaseConfigurationException -> "A criação de mascotes ainda não está configurada neste aplicativo."
         is MascotAppCheckException -> "Não foi possível validar a segurança deste aplicativo. Tente novamente."
         is MascotAuthException -> "Não foi possível confirmar sua identidade. Tente novamente."
