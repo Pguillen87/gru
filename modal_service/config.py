@@ -21,15 +21,16 @@ class RuntimeLimits:
     estimated_generation_cost_usd: float
     model_timeout_seconds: int
     jobs_per_user_per_day: int
+    generations_per_user_per_day: int
     global_jobs_per_day: int
     user_daily_cost_cap_usd: float
     generation_enabled: bool = False
 
 
 LIMITS = {
-    Environment.DEVELOPMENT: RuntimeLimits(1, 1, 6, 0.25, 0.20, 600, 1, 10, 0.25, False),
-    Environment.STAGING: RuntimeLimits(1, 1, 6, 10.0, 0.20, 600, 3, 50, 0.60, False),
-    Environment.PRODUCTION: RuntimeLimits(2, 2, 6, 100.0, 0.20, 600, 5, 1_000, 1.00, False),
+    Environment.DEVELOPMENT: RuntimeLimits(1, 1, 6, 0.25, 0.20, 600, 5, 1, 10, 0.25, False),
+    Environment.STAGING: RuntimeLimits(1, 1, 6, 10.0, 0.20, 600, 10, 3, 50, 0.60, False),
+    Environment.PRODUCTION: RuntimeLimits(2, 2, 6, 100.0, 0.20, 600, 20, 5, 1_000, 1.00, False),
 }
 
 

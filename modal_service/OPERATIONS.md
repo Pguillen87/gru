@@ -103,6 +103,12 @@ Inspect versions with `modal app history gru-mascot`, then run `modal app rollba
 
 Use Modal workspace metrics and credits pages plus the `gru-mascot-usage` Dict counters once the new deployment is active. Job quota and estimated generation-cost reservation are separate. With generation disabled, no `global-cost:*` or `user-cost:*` counter is created.
 
+Development permits a small number of CPU-only validation jobs per UID so
+cancel/retry testing does not consume the single paid-smoke allowance. Paid
+generation has its own `user-generations:*` quota and remains limited to one
+generation per UID/day in development, in addition to the global and per-user
+cost caps. Enabling GPU generation is still a separate explicit operation.
+
 ## Retention
 
 Originals and rejected Masters are temporary. Approved Masters and poses are private persistent assets. Cleanup must remain idempotent and job-scoped; no cleanup deployment is enabled until retention durations are product-approved.

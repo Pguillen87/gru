@@ -62,6 +62,25 @@ def test_generation_reservation_is_idempotent_and_enforces_caps():
     first_cost = usage["global-cost:2026-08-03"]
     assert not service.authorize_generation(job.job_id, "uid-a", enabled=True)
     assert usage["global-cost:2026-08-03"] == first_cost
+    assert usage["user-generations:2026-08-03:uid-a"] == 1
+
+
+def test_generation_quota_is_separate_from_free_validation_jobs():
+    limits = replace(
+        limits_for(Environment.DEVELOPMENT),
+        daily_cost_cap_usd=10.0,
+        user_daily_cost_cap_usd=10.0,
+    )
+    service, usage = coordinator(limits=limits)
+    first, _ = service.register("uid-a", "key-a", "original/a")
+    second, _ = service.register("uid-a", "key-b", "original/b")
+
+    assert service.authorize_generation(first.job_id, "uid-a", enabled=True)
+    with pytest.raises(RateLimitExceeded):
+        service.authorize_generation(second.job_id, "uid-a", enabled=True)
+
+    assert usage["user-jobs:2026-08-03:uid-a"] == 2
+    assert usage["user-generations:2026-08-03:uid-a"] == 1
 
 
 def test_uid_job_quota_is_separate_from_generation_cost():

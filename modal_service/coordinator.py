@@ -103,6 +103,10 @@ class JobCoordinator:
         self.ensure_owner(job, user_id)
         if job.state is not JobState.READY_FOR_GENERATION or job.generation_reserved:
             return False
+        generation_key = f"user-generations:{self.day_key}:{user_id}"
+        next_user_generations = require_job_quota(
+            int(self.usage.get(generation_key, 0)), self.limits.generations_per_user_per_day
+        )
         global_key = f"global-cost:{self.day_key}"
         user_key = f"user-cost:{self.day_key}:{user_id}"
         next_global, next_user = generation_reservation(
@@ -114,6 +118,7 @@ class JobCoordinator:
         )
         self.usage[global_key] = next_global
         self.usage[user_key] = next_user
+        self.usage[generation_key] = next_user_generations
         job.generation_reserved = True
         job.transition_to(JobState.VALIDATING_INPUT)
         self.save(job)
