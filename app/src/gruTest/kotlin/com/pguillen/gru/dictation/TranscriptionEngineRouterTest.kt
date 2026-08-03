@@ -17,10 +17,12 @@ class TranscriptionEngineRouterTest {
     @Test
     fun `private session never calls Groq even if selection changes`() = runTest {
         var selected = TranscriptionEngine.PRIVATE_LOCAL
+        var groqCreated = false
         var groqCalled = false
         val router = TranscriptionEngineRouter(
             selectedEngine = { selected },
             groqGateway = {
+                groqCreated = true
                 GruTranscriptionGateway { groqCalled = true; "online" }
             },
             localGateway = { GruTranscriptionGateway { "local" } },
@@ -31,6 +33,7 @@ class TranscriptionEngineRouterTest {
         val result = sessionGateway.transcribe(File("unused.wav"))
 
         assertEquals("local", result)
+        assertFalse(groqCreated)
         assertFalse(groqCalled)
     }
 
