@@ -46,7 +46,7 @@ Gru é uma ferramenta Android cuja interface principal desaparece depois da conf
 - Pingo: criatura violeta, curiosa e suave.
 - Pudim: cão branco e caramelo, alegre e atento.
 
-Cada pet usa um atlas de poses com movimento interpolado. Não há selo de microfone nem botão de fechar. Durante a gravação, aura coral, resposta ao volume e a faixa `● OUVINDO 00:00` tornam o estado inequívoco.
+Cada pet usa um atlas de poses com movimento contínuo do corpo e troca nítida de pose, sem misturar duas imagens completas. Não há selo de microfone nem botão de fechar. Durante a gravação, aura coral, resposta ao volume e a faixa `● OUVINDO 00:00` tornam o estado inequívoco.
 
 ## Interaction
 
@@ -64,7 +64,7 @@ Cada pet usa um atlas de poses com movimento interpolado. Não há selo de micro
 - `Transcribing`: movimento contínuo e controlado.
 - `Success`: confirmação curta e alegre.
 - `Error`: indicação clara e amigável, sem tristeza.
-- Entrada e saída: escala e opacidade rápidas, sem alterar layout.
+- Entrada e saída: anexação e remoção imediatas, sem animação de opacidade que possa ocultar o primeiro quadro.
 
 Quando animações do sistema estão desativadas, as transições são instantâneas e o estado continua legível por texto, pose e descrição acessível.
 
@@ -73,8 +73,8 @@ Quando animações do sistema estão desativadas, as transições são instantâ
 - Tamanhos do pet: pequeno, médio e grande.
 - Transparência: 40% a 100%.
 - Alvo mínimo: 48 dp.
-- Entrada: 150 ms.
-- Saída: 110 ms.
+- Watchdog do primeiro quadro: 750 ms.
+- Reconstrução: até duas tentativas automáticas, separadas por 120 ms.
 - Confirmação de sucesso: 1.200 ms.
 - Easing: desaceleração suave, sem elasticidade excessiva.
 
@@ -85,3 +85,5 @@ Quando animações do sistema estão desativadas, as transições são instantâ
 - Fechar o teclado ou perder o campo cancela uma gravação ativa.
 - Nenhuma falha altera o texto já presente no campo.
 - Textos e controles acomodam RTL, telas pequenas e escala de fonte de 200%.
+- O overlay percorre `Detached`, `Attaching`, `Visible` e `Failed`; somente um quadro realmente desenhado confirma `Visible`.
+- O serviço publica seu estado de conexão enquanto ativo, permitindo diferenciar permissão concedida, serviço ativo e pet já verificado.

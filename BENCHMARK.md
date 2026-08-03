@@ -77,3 +77,15 @@ O modelo é baixado sob ação do usuário, não entra no APK/AAB e é validado 
 - Groq com a chave cifrada já configurada pelo usuário: 901 ms para a mesma gravação e texto equivalente.
 
 O teste Groq não registrou nem alterou a chave. As medições variam com rede, temperatura e carga do aparelho.
+
+## Overlay do pet
+
+Comparação física no Galaxy A55 com o pet em `Idle`:
+
+| Estratégia | Pet visível | Jank moderno | Observação |
+| --- | --- | ---: | --- |
+| Aceleração forçada, sem entrada por alpha | Sim | menor que 1% | Selecionada |
+| Sem aceleração forçada | Sim | 3,75% | Mais quadros irregulares |
+| `LAYER_TYPE_SOFTWARE` na raiz | Sim | 0% moderno, 100% legado | Composição inadequada |
+
+A implementação final mantém a aceleração de hardware, remove a animação de `alpha`, limpa o canvas transparente a cada quadro e confirma a anexação com watchdog de primeiro frame. Três ciclos consecutivos de reanexação com Samsung Keyboard confirmaram `Visible` em 192 ms, 218 ms e 197 ms, sem reconstrução automática.
