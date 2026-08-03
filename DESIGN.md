@@ -7,7 +7,7 @@ Gru é uma ferramenta Android cuja interface principal desaparece depois da conf
 ## Visual System
 
 - Gro, a coruja azul e branca com detalhes dourados, é a identidade principal no launcher, splash e cabeçalho.
-- A marca compacta usa o rosto do Gro sobre azul-marinho; a composição completa é preservada como master institucional.
+- A marca preserva a composição completa do Gro, incluindo corpo, detalhes dourados e o texto `GRU`; somente o espaço escuro excedente pode ser removido.
 - Material 3 e Dynamic Color estruturam a tela em temas claro e escuro.
 - A tela usa áreas abertas, sem cartões aninhados ou decoração sem função.
 - A navegação possui somente duas abas: `Geral` e `Transcrição`.
