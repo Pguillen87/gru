@@ -45,7 +45,7 @@ Gru é uma ferramenta Android cuja interface principal desaparece depois da conf
 
 ## Pet Language
 
-- Lume: coruja azul, calma e atenta.
+- Lume: o Gru oficial, uma coruja azul e branca com detalhes dourados, sem base ou lettering no pet flutuante.
 - Faísca: raposa coral, rápida e expressiva.
 - Bip: robô verde-água, preciso e amigável.
 - Pingo: criatura violeta, curiosa e suave.
