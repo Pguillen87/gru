@@ -28,11 +28,13 @@ Gru é uma ferramenta Android cuja interface principal desaparece depois da conf
 
 ## Transcription Experience
 
-- O primeiro uso abre diretamente em `Transcrição` quando nenhum motor está ativo.
+- O primeiro uso mostra somente a escolha entre Online e Privado; as abas aparecem depois que um motor está realmente ativo.
+- Cada opção resume benefícios e custos em um único card de 8 dp, com uma ação principal.
 - Online usa o ícone de nuvem e a promessa “Mais rápido e leve”.
 - Privado usa o ícone de cadeado e a promessa “Seu áudio não sai do celular”.
 - Solicitar Privado não o ativa antes de existir um modelo válido.
 - Solicitar Online não o ativa antes de existir uma chave salva.
+- A chave Groq pode ser criada pelo link oficial e lida do clipboard somente após toque explícito em `Colar chave`.
 - Progresso de download é determinado por bytes reais; não há progresso inventado.
 - Movimento é reservado ao progresso indeterminado, progresso determinado e mudança de estado.
 

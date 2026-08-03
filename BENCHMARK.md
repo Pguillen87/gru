@@ -2,35 +2,67 @@
 
 ## Ambiente
 
-- Data: 1º de agosto de 2026.
+- Data: 1º e 2 de agosto de 2026.
 - Aparelho: Samsung Galaxy A55 (`SM-A556E`).
 - Android: 16, API 36.
-- SoC: `s5e8845`.
+- SoC: Exynos `s5e8845`, GPU Xclipse 530.
 - RAM física reportada: 7.606.428 KiB.
-- Runtime: whisper.cpp v1.8.6, CPU, quatro threads.
-- Modelo: Large V3 Turbo Q5_0, 574.041.195 bytes.
-- Áudio: português, PCM16 mono, 16 kHz, 11,58 segundos.
+- Runtime: whisper.cpp v1.8.6, quatro threads.
+- Áudio: PCM16 mono, 16 kHz, 11,58 segundos.
+- Frase: "Olá, este é um teste privado de transcrição no celular. O Gru transforma a fala em texto sem enviar o áudio para a internet."
 
-## Download
+RTF abaixo de 1 significa processamento mais rápido que a duração do áudio. PSS é a memória proporcional observada no processo de teste e inclui o aplicativo, runtime e modelo.
 
-- Rede: Wi-Fi do aparelho.
-- Tempo observado até arquivo final verificado: 26 segundos.
-- Fluxo observado: `.part` → tamanho esperado → SHA-256 → promoção para arquivo final.
+## Histórico
 
-## Inferência local
+O primeiro APK de depuração compilava o código nativo sem `-O3`. Com o Large V3 Turbo Q5_0, a inferência não terminou dentro de 15 minutos. O PSS chegou a 945.532 KiB, a bateria foi de 100% para 96% mesmo no USB e a temperatura foi de aproximadamente 22,5 °C para 28,6 °C. Esse resultado motivou a correção do build e a comparação controlada dos modelos.
 
-- Limite do teste: 15 minutos.
-- Resultado: não concluiu o ciclo de benchmark dentro do limite.
-- PSS observado antes do encerramento: 945.532 KiB, cerca de 923 MiB.
-- Temperatura da bateria: aproximadamente 22,5 °C antes e 28,6 °C depois.
-- Bateria: 100% antes e 96% depois, com USB conectado.
-- Tempo de carregamento e inferência separados: indisponíveis porque a primeira rodada não concluiu.
-- Razão de tempo real: superior a 77,7x no limite observado (`900 s / 11,58 s`).
+## CPU genérica otimizada
 
-## Groq
+| Modelo | Tamanho | Tempo | RTF | PSS | Texto |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Large V3 Turbo Q5_0 | 574.041.195 bytes | 41.660 ms | 3,598 | 874.450 KiB | Correto |
+| Medium Q5_0 | 539.212.467 bytes | 28.151 ms | 2,431 | 984.372 KiB | Correto |
+| Small Q5_1 | 190.085.487 bytes | 9.020 ms | 0,779 | 515.872 KiB | Correto |
+| Base Q5_1 | 59.707.625 bytes | 2.961 ms | 0,256 | 317.298 KiB | Correto |
 
-A comparação com a Groq não foi executada porque o pacote de teste não possuía chave configurada. Nenhuma chave foi copiada ou criada para o benchmark.
+## Vulkan
 
-## Conclusão
+Os logs confirmaram uso real da GPU Xclipse 530, mas o backend foi mais lento e consumiu mais memória neste aparelho.
 
-O Large V3 Turbo Q5_0 não oferece experiência interativa aceitável no Galaxy A55 com o runtime CPU atual. Conforme a decisão de produto, ele não foi substituído silenciosamente. Antes de mudar o modelo, recomenda-se avaliar explicitamente uma variante menor e comparar qualidade em português, latência, RAM e bateria com a mesma gravação.
+| Modelo | Tempo | RTF | PSS |
+| --- | ---: | ---: | ---: |
+| Base Q5_1 | 18.917 ms | 1,634 | 543.951 KiB |
+| Small Q5_1 | 59.404 ms | 5,131 | 757.517 KiB |
+| Large V3 Turbo Q5_0 | 324.682 ms | 28,043 | 1.161.484 KiB |
+
+No teste Large Vulkan, a temperatura foi de 26,7 °C para 27,4 °C. O APK Vulkan debug media aproximadamente 111,3 MB. O backend foi rejeitado e não faz parte do produto.
+
+## ARM selecionado em runtime
+
+O APK final contém três variantes CPU ARM64: baseline ARMv8.0, `dotprod` e `dotprod+fp16`. O runtime selecionou `libggml-cpu-android_armv8.2_2.so` no A55.
+
+Resultado final do Small Q5_1:
+
+- Carregamento observado: 220 a 495 ms.
+- Inferência observada: 7.021 a 8.368 ms.
+- RTF observado: 0,606 a 0,723.
+- PSS observado: 515.294 a 517.502 KiB.
+- Temperatura: 27,5 °C para 27,6 °C.
+- Bateria: 100% para 100% durante a rodada observada, com USB conectado.
+- Texto: correto e equivalente ao esperado.
+- APK debug: 30.279.479 bytes.
+
+## Decisão
+
+O Small Q5_1 é o modelo local padrão. Foi o modelo de maior qualidade que cumpriu o limite aceitável de até aproximadamente 8 segundos para ditado interativo no A55. O Base foi mais rápido, mas perdeu para o Small no critério de maior qualidade dentro do limite. Medium e Large ficaram inadequados para interação.
+
+O modelo é baixado sob ação do usuário, não entra no APK/AAB e é validado por tamanho e SHA-256 antes da ativação. A revisão fixada é `5359861c739e955e79d9a303bcbc70fb988958b1`.
+
+## Download e Groq
+
+- Large pela Wi-Fi do aparelho: 26 segundos até validação, medição histórica.
+- Small final pela Wi-Fi do aparelho: 13,4 segundos, do toque até o estado instalado e verificado.
+- Groq com a chave cifrada já configurada pelo usuário: 901 ms para a mesma gravação e texto equivalente.
+
+O teste Groq não registrou nem alterou a chave. As medições variam com rede, temperatura e carga do aparelho.

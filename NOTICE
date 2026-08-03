@@ -41,7 +41,7 @@ distribution.
 whisper.cpp
 ================================================================================
 
-Gru includes a CPU-only subset of whisper.cpp v1.8.6.
+Gru includes a CPU-only subset of whisper.cpp v1.8.6 with runtime-selected ARM CPU variants.
 
     Copyright (c) 2023-2026 The ggml authors
     https://github.com/ggml-org/whisper.cpp

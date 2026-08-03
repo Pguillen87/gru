@@ -34,7 +34,8 @@ O pet aparece somente quando há um campo editável focado e o teclado está vis
 - Comunicar os estados inativo, ouvindo, processando, sucesso e erro.
 - Não oferecer teclado, dicionário, autocorreção, histórico, prompts, reescrita, mídia, extensões ou Wear OS.
 - Não registrar áudio, texto ditado, conteúdo da tela ou chave.
-- O Large V3 Turbo Q5 é experimental no Android e foi medido como inviável para ditado interativo no Samsung A55.
+- O Small Q5_1 é o modelo local padrão: foi o modelo de maior qualidade a atender o limite interativo aceito no Samsung A55.
+- O Large V3 Turbo Q5_0 permanece apenas no histórico de benchmark e não é baixado pelo aplicativo.
 
 ## Product Principles
 
