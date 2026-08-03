@@ -24,11 +24,22 @@ class MascotApiTest {
     }
 
     @Test fun `maps structured API failure`() = runTest {
-        val server = MockWebServer().apply { enqueue(MockResponse().setResponseCode(429).setBody("{\"detail\":{\"code\":\"RATE_LIMITED\",\"message\":\"later\"}}")); start() }
+        val server = MockWebServer().apply {
+            enqueue(MockResponse().setResponseCode(429).setHeader("X-Request-ID", "trace-123").setBody("{\"detail\":{\"code\":\"RATE_LIMITED\",\"message\":\"later\"}}"))
+            start()
+        }
         try {
             val api = MascotApi(FakeAuth, FakeAppCheck, OkHttpClient(), server.url("/").toString())
-            assertEquals("RATE_LIMITED", assertFailsWith<MascotApiException> { api.job("job_1") }.apiError.code)
+            val error = assertFailsWith<MascotApiException> { api.job("job_1") }
+            assertEquals("RATE_LIMITED", error.apiError.code)
+            assertEquals("trace-123", error.requestId)
         } finally { server.shutdown() }
+    }
+
+    @Test fun `telemetry sanitizes values and hashes correlation keys`() {
+        assertEquals("value_with_token", MascotTelemetry.safe("value with/token"))
+        assertEquals(MascotTelemetry.correlation("request-1"), MascotTelemetry.correlation("request-1"))
+        assertTrue(MascotTelemetry.correlation("request-1") != MascotTelemetry.correlation("request-2"))
     }
 
     @Test fun `maps backend failure separately from network failure`() = runTest {

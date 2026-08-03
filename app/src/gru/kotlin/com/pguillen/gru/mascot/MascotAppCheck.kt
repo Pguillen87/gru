@@ -10,12 +10,19 @@ interface MascotAppCheckTokenProvider {
 class FirebaseMascotAppCheckTokenProvider(
     private val appCheck: FirebaseAppCheck? = null,
 ) : MascotAppCheckTokenProvider {
-    override suspend fun token(): String = try {
-        (appCheck ?: FirebaseAppCheck.getInstance()).getAppCheckToken(false).await().token
-    } catch (error: IllegalStateException) {
-        throw MascotFirebaseConfigurationException(error)
-    } catch (error: Exception) {
-        throw MascotAppCheckException(error)
+    override suspend fun token(): String {
+        val started = MascotTelemetry.mark()
+        return try {
+            (appCheck ?: FirebaseAppCheck.getInstance()).getAppCheckToken(false).await().token.also {
+                MascotTelemetry.info("app_check_token", started, mapOf("outcome" to "success"))
+            }
+        } catch (error: IllegalStateException) {
+            throw MascotFirebaseConfigurationException(error).also {
+                MascotTelemetry.failure("app_check_token", started, it)
+            }
+        } catch (error: Exception) {
+            throw MascotAppCheckException(error).also { MascotTelemetry.failure("app_check_token", started, it) }
+        }
     }
 }
 

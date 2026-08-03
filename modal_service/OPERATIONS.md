@@ -53,6 +53,38 @@ Using a registered Debug Android app and Firebase App Check debug token:
 7. confirm pose endpoints return the template guard;
 8. confirm Modal has no GPU task and no generation-cost reservation.
 
+## Safe request diagnostics
+
+Android request telemetry uses the `GruMascot` Logcat tag. It records only the
+pipeline stage, duration, response status, structured API code, request ID and
+payload sizes. It must never contain the photo, selected URI, Firebase UID,
+Bearer token, App Check proof, idempotency key, complete private URL or raw
+exception message.
+
+Capture one reproduction from the connected debug device with:
+
+```powershell
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb logcat -c
+& $adb logcat -v threadtime GruMascot:V FirebaseAuth:V FirebaseAppCheck:V DebugAppCheckProvider:V '*:S'
+```
+
+Correlate an Android response with Modal through the short `X-Request-ID`
+returned by the API. Server logs use `event=http_request` and include only the
+request ID, method, normalized endpoint name, status, duration and content
+length:
+
+```powershell
+modal app logs gru-mascot --timestamps
+```
+
+Interpret the main Android events in order: `photo_read`, `auth_token`,
+`app_check_token`, `create_prepare`, `http_complete`, and `create_complete`.
+If `http_complete` is absent, the request did not receive an HTTP response. If
+it has a request ID, use that value to locate the corresponding server entry.
+Keep `GPU_GENERATION_ENABLED=false` throughout diagnostics unless a separately
+authorized paid smoke is being performed.
+
 ## Templates
 
 Prepare a package matching `pose_templates/README.md`, then run:

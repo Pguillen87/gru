@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import shutil
+import secrets
+import time
 from dataclasses import asdict
 from pathlib import Path
 import modal
@@ -174,6 +176,16 @@ def utc_day_key() -> str:
     return datetime.now(UTC).date().isoformat()
 
 
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1_000))
+
+
+def _endpoint_name(request) -> str:
+    endpoint = request.scope.get("endpoint")
+    name = getattr(endpoint, "__name__", None)
+    return str(name or "unmatched")[:64]
+
+
 @app.function(image=api_image, max_containers=1)
 @modal.concurrent(max_inputs=1)
 def register_job(user_id: str, idempotency_key: str, source_key: str) -> dict[str, object]:
@@ -319,6 +331,26 @@ def api():
         firebase_admin.get_app()
     except ValueError:
         firebase_admin.initialize_app(credentials.Certificate(json.loads(credentials_json)))
+
+    @service.middleware("http")
+    async def request_observability(request, call_next):
+        request_id = secrets.token_hex(6)
+        started = time.monotonic()
+        try:
+            response = await call_next(request)
+        except Exception as error:
+            logging.exception(
+                "event=http_request request_id=%s method=%s endpoint=%s outcome=failure error_class=%s duration_ms=%d",
+                request_id, request.method, _endpoint_name(request), type(error).__name__, _elapsed_ms(started),
+            )
+            raise
+        response.headers["X-Request-ID"] = request_id
+        logging.info(
+            "event=http_request request_id=%s method=%s endpoint=%s status=%d duration_ms=%d content_length=%s",
+            request_id, request.method, _endpoint_name(request), response.status_code, _elapsed_ms(started),
+            request.headers.get("content-length", "unknown"),
+        )
+        return response
 
     class CreateJobRequest(BaseModel):
         image_base64: str = Field(min_length=1, max_length=14_000_000)

@@ -71,6 +71,7 @@ import com.pguillen.gru.mascot.toCreationState
 import com.pguillen.gru.mascot.toMascotFailure
 import com.pguillen.gru.mascot.MasterReference
 import com.pguillen.gru.mascot.CustomMascotStore
+import com.pguillen.gru.mascot.MascotTelemetry
 
 @Composable
 internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modifier: Modifier = Modifier) {
@@ -177,9 +178,17 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             onDiscardPhoto = { photo = null; creation = MascotCreationState.Idle; repository.clearPending() },
             onUsePhoto = { selected -> scope.launch {
                 creation = MascotCreationState.Submitting
-                runCatching { repository.create(context.readMascotPhoto(selected), context.contentResolver.getType(selected) ?: "image/jpeg") }
+                val started = MascotTelemetry.mark()
+                runCatching {
+                    val image = context.readMascotPhoto(selected)
+                    MascotTelemetry.info("photo_read", started, mapOf("outcome" to "success", "image_bytes" to image.size))
+                    repository.create(image, context.contentResolver.getType(selected) ?: "image/jpeg")
+                }
                     .onSuccess { creation = it.toCreationState() }
-                    .onFailure { creation = it.toMascotFailure(prefs.pendingMascotJobId.value) }
+                    .onFailure {
+                        MascotTelemetry.failure("submit_flow", started, it)
+                        creation = it.toMascotFailure(prefs.pendingMascotJobId.value)
+                    }
             } },
             selectedMasterId = selectedMasterId,
             masterPreviews = masterPreviews,

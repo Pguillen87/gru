@@ -96,9 +96,23 @@ class MascotApi(
     private val client: OkHttpClient = OkHttpClient(),
     private val baseUrl: String = BuildConfig.MASCOT_API_BASE_URL,
 ) : MascotRemoteApi {
-    override suspend fun createJob(image: ByteArray, mimeType: String, key: String): MascotJobResponse = requestJob(
-        "/v1/mascot/jobs", "POST", key, CreateMascotJobRequest(Base64.getEncoder().encodeToString(image), mimeType).json(),
-    )
+    override suspend fun createJob(image: ByteArray, mimeType: String, key: String): MascotJobResponse {
+        val started = MascotTelemetry.mark()
+        MascotTelemetry.info(
+            "create_prepare",
+            fields = mapOf("image_bytes" to image.size, "content_type" to mimeType, "correlation" to MascotTelemetry.correlation(key)),
+        )
+        return runCatching {
+            requestJob(
+                "/v1/mascot/jobs", "POST", key,
+                CreateMascotJobRequest(Base64.getEncoder().encodeToString(image), mimeType).json(),
+            )
+        }.onSuccess { job ->
+            MascotTelemetry.info("create_complete", started, mapOf("remote_state" to job.state))
+        }.onFailure { error ->
+            MascotTelemetry.failure("create_complete", started, error)
+        }.getOrThrow()
+    }
 
     override suspend fun job(jobId: String): MascotJobResponse = requestJob("/v1/mascot/jobs/$jobId", "GET")
 
@@ -131,15 +145,36 @@ class MascotApi(
     private suspend fun requestJob(path: String, method: String, key: String? = null, body: JsonObject? = null) =
         MascotJobResponse.from(requestJson(path, method, key, body))
 
-    private suspend fun requestJson(path: String, method: String, key: String? = null, body: JsonObject? = null): JsonObject = withContext(Dispatchers.IO) {
+    private suspend fun requestJson(path: String, method: String, key: String? = null, body: JsonObject? = null): JsonObject =
+        withContext(Dispatchers.IO) {
+            val started = MascotTelemetry.mark()
+            val operation = operationName(path, method)
+            try {
+                executeJson(path, method, key, body, started, operation)
+            } catch (error: Exception) {
+                MascotTelemetry.failure("http_complete", started, error, mapOf("operation" to operation))
+                throw error
+            }
+        }
+
+    private suspend fun executeJson(
+        path: String, method: String, key: String?, body: JsonObject?, started: Long, operation: String,
+    ): JsonObject {
+        val payload = body?.let { Json.encodeToString(JsonObject.serializer(), it) }
         val builder = authenticatedRequest(path)
         key?.let { builder.header("X-Idempotency-Key", it) }
         val request = if (method == "GET") builder.get().build() else builder.method(
-            method, Json.encodeToString(JsonObject.serializer(), body ?: buildJsonObject {}).toRequestBody(JSON_MEDIA),
+            method, (payload ?: "{}").toRequestBody(JSON_MEDIA),
         ).build()
-        client.newCall(request).execute().use { response ->
+        return client.newCall(request).execute().use { response ->
             val responseBody = response.body.string()
             if (!response.isSuccessful) throw response.toMascotApiException(responseBody)
+            MascotTelemetry.info(
+                "http_complete", started,
+                mapOf("operation" to operation, "outcome" to "success", "http_status" to response.code,
+                    "payload_bytes" to (payload?.toByteArray()?.size ?: 0), "response_bytes" to responseBody.toByteArray().size,
+                    "request_id" to response.header("X-Request-ID")),
+            )
             Json.parseToJsonElement(responseBody).jsonObject
         }
     }
@@ -152,11 +187,27 @@ class MascotApi(
     private companion object { val JSON_MEDIA = "application/json; charset=utf-8".toMediaType() }
 }
 
-class MascotApiException(val apiError: ApiError, val httpStatus: Int? = null) : Exception(apiError.message)
+class MascotApiException(
+    val apiError: ApiError,
+    val httpStatus: Int? = null,
+    val requestId: String? = null,
+) : Exception(apiError.message)
 
 private fun okhttp3.Response.toMascotApiException(body: String): MascotApiException {
     val fallback = if (code >= 500) "SERVICE_UNAVAILABLE" else "HTTP_$code"
-    return MascotApiException(ApiError.from(body) ?: ApiError(fallback, ""), code)
+    return MascotApiException(ApiError.from(body) ?: ApiError(fallback, ""), code, header("X-Request-ID"))
+}
+
+private fun operationName(path: String, method: String): String = when {
+    path == "/v1/mascot/jobs" -> "create"
+    "/idempotency/" in path -> "recover"
+    path.endsWith("/approve-master") -> "approve"
+    path.endsWith("/cancel") -> "cancel"
+    path.endsWith("/result") -> "result"
+    "/masters/" in path -> "download_master"
+    "/poses/" in path -> "download_pose"
+    method == "GET" -> "read_job"
+    else -> "unknown"
 }
 
 private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.content
