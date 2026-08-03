@@ -38,6 +38,7 @@ class WhisperRuntimeTest {
         assertTrue(native.cancelled)
         assertTrue(native.destroyed)
         assertEquals("/native/backends", native.backendDirectory)
+        assertEquals(4, native.threadCount)
     }
 
     private class BlockingWhisperNative : WhisperNative {
@@ -45,6 +46,7 @@ class WhisperRuntimeTest {
         @Volatile var cancelled = false
         @Volatile var destroyed = false
         @Volatile var backendDirectory: String? = null
+        @Volatile var threadCount = 0
 
         override fun create(modelPath: String, backendDirectory: String?): Long {
             this.backendDirectory = backendDirectory
@@ -52,6 +54,7 @@ class WhisperRuntimeTest {
         }
 
         override fun transcribe(handle: Long, samples: FloatArray, language: String, threadCount: Int): String {
+            this.threadCount = threadCount
             started.countDown()
             while (!cancelled) Thread.sleep(5)
             error("cancelled")

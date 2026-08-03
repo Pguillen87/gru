@@ -10,6 +10,7 @@ package com.pguillen.gru.local
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
+import com.pguillen.gru.dictation.GruDiagnostics
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -31,9 +32,10 @@ internal class WhisperRuntime(
     private val native: WhisperNative = JniWhisperNative,
     private val wavReader: WavPcmReader = WavPcmReader(),
     private val nativeBackendDirectory: String? = null,
+    private val inferenceThreads: Int = DEFAULT_THREAD_COUNT,
 ) : LocalWhisperTranscriber {
     private val executor = Executors.newSingleThreadExecutor { task ->
-        Thread(task, "gru-whisper").apply { priority = Thread.NORM_PRIORITY - 1 }
+        Thread(task, "gru-whisper").apply { priority = Thread.NORM_PRIORITY }
     }
     private val activeHandle = AtomicLong(NO_HANDLE)
     private var loadedPath: String? = null
@@ -59,6 +61,11 @@ internal class WhisperRuntime(
                     modelLoadMillis = loadMillis,
                     inferenceMillis = elapsedMillis(inferenceStarted),
                     audioDurationMillis = samples.size * 1_000L / SAMPLE_RATE,
+                )
+                GruDiagnostics.info(
+                    "Local transcription completed loadMs=$loadMillis " +
+                        "inferenceMs=${lastMetrics?.inferenceMillis} " +
+                        "audioMs=${lastMetrics?.audioDurationMillis} threads=${threadCount()}",
                 )
                 if (continuation.isActive) continuation.resume(result.trim())
             } catch (error: Throwable) {
@@ -92,13 +99,16 @@ internal class WhisperRuntime(
         return handle
     }
 
-    private fun threadCount(): Int = Runtime.getRuntime().availableProcessors().coerceIn(1, MAX_THREADS)
+    private fun threadCount(): Int = inferenceThreads.coerceIn(
+        1,
+        Runtime.getRuntime().availableProcessors().coerceAtLeast(1),
+    )
 
     private fun elapsedMillis(startedNanos: Long): Long = (System.nanoTime() - startedNanos) / 1_000_000L
 
     private companion object {
         const val NO_HANDLE = 0L
-        const val MAX_THREADS = 4
+        const val DEFAULT_THREAD_COUNT = 4
         const val LANGUAGE_PORTUGUESE = "pt"
         const val SAMPLE_RATE = 16_000
     }
