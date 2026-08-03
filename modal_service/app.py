@@ -14,8 +14,6 @@ import os
 import shutil
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated
-
 import modal
 
 from modal_service.catalog import POSE_PROMPT_VERSION
@@ -332,7 +330,9 @@ def api():
     class PoseRequest(BaseModel):
         pose_id: str = Field(pattern=r"^pose_[0-9]{2}$")
 
-    async def verified_user(authorization: Annotated[str | None, Header()] = None) -> str:
+    # These dependencies live inside the ASGI factory. Keep FastAPI markers in
+    # defaults so postponed annotations cannot turn them into public query args.
+    async def verified_user(authorization: str | None = Header(default=None)) -> str:
         try:
             token = bearer_token(authorization)
         except AuthenticationRejected as error:
@@ -348,7 +348,7 @@ def api():
             from fastapi import HTTPException
             raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": "A valid identity is required."}) from error
 
-    async def verified_app_check(x_firebase_appcheck: Annotated[str | None, Header()] = None) -> None:
+    async def verified_app_check(x_firebase_appcheck: str | None = Header(default=None)) -> None:
         try:
             token = app_check_token(x_firebase_appcheck)
         except AuthenticationRejected as error:
@@ -362,12 +362,15 @@ def api():
             raise HTTPException(status_code=401, detail={"code": "APP_CHECK_REQUIRED", "message": "A valid app proof is required."}) from error
 
     async def cost_context(
-        user_id: Annotated[str, Depends(verified_user)], _: Annotated[None, Depends(verified_app_check)], x_idempotency_key: Annotated[str | None, Header()] = None,
+        user_id: str = Depends(verified_user),
+        _: None = Depends(verified_app_check),
+        x_idempotency_key: str | None = Header(default=None),
     ) -> tuple[str, str]:
         return _request_context(user_id, x_idempotency_key or "")
 
     async def secure_user(
-        user_id: Annotated[str, Depends(verified_user)], _: Annotated[None, Depends(verified_app_check)],
+        user_id: str = Depends(verified_user),
+        _: None = Depends(verified_app_check),
     ) -> str:
         return user_id
 
@@ -382,7 +385,7 @@ def api():
         }
 
     @service.post("/v1/mascot/jobs", status_code=202)
-    async def create_job(request: CreateJobRequest, context: Annotated[tuple[str, str], Depends(cost_context)]):
+    async def create_job(request: CreateJobRequest, context: tuple[str, str] = Depends(cost_context)):
         user_id, key = context
         try:
             content = _decode_image(request.image_base64)
@@ -412,7 +415,7 @@ def api():
             raise _api_error(error) from error
 
     @service.get("/v1/mascot/jobs/{job_id}")
-    async def read_job(job_id: str, user_id: Annotated[str, Depends(secure_user)]):
+    async def read_job(job_id: str, user_id: str = Depends(secure_user)):
         try:
             job = _get_job(job_id)
             _ensure_owner(job, user_id)
@@ -421,7 +424,7 @@ def api():
             raise _api_error(error) from error
 
     @service.get("/v1/mascot/idempotency/{idempotency_key}")
-    async def recover_job(idempotency_key: str, user_id: Annotated[str, Depends(secure_user)]):
+    async def recover_job(idempotency_key: str, user_id: str = Depends(secure_user)):
         try:
             job_id = str(idempotency[_record_key(user_id, idempotency_key)])
             job = _get_job(job_id)
@@ -433,7 +436,11 @@ def api():
             raise _api_error(error) from error
 
     @service.post("/v1/mascot/jobs/{job_id}/approve-master", status_code=202)
-    async def approve_master(job_id: str, request: ApproveMasterRequest, context: Annotated[tuple[str, str], Depends(cost_context)]):
+    async def approve_master(
+        job_id: str,
+        request: ApproveMasterRequest,
+        context: tuple[str, str] = Depends(cost_context),
+    ):
         try:
             job = _get_job(job_id)
             _ensure_owner(job, context[0])
@@ -452,7 +459,7 @@ def api():
             raise _api_error(error) from error
 
     @service.post("/v1/mascot/jobs/{job_id}/cancel")
-    async def cancel_job(job_id: str, context: Annotated[tuple[str, str], Depends(cost_context)]):
+    async def cancel_job(job_id: str, context: tuple[str, str] = Depends(cost_context)):
         try:
             job = _get_job(job_id)
             _ensure_owner(job, context[0])
@@ -470,7 +477,7 @@ def api():
             raise _api_error(error) from error
 
     @service.get("/v1/mascot/jobs/{job_id}/result")
-    async def result(job_id: str, user_id: Annotated[str, Depends(secure_user)]):
+    async def result(job_id: str, user_id: str = Depends(secure_user)):
         try:
             job = _get_job(job_id)
             _ensure_owner(job, user_id)
@@ -481,7 +488,7 @@ def api():
             raise _api_error(error) from error
 
     @service.get("/v1/mascot/jobs/{job_id}/masters/{master_id}")
-    async def download_master(job_id: str, master_id: str, user_id: Annotated[str, Depends(secure_user)]):
+    async def download_master(job_id: str, master_id: str, user_id: str = Depends(secure_user)):
         from fastapi.responses import FileResponse
         if master_id not in {"master_1", "master_2", "master_3", "master_4"}:
             raise _api_error(JobNotFound("Master was not found."))
@@ -493,7 +500,7 @@ def api():
         return FileResponse(path, media_type="image/png", filename=f"{master_id}.png")
 
     @service.get("/v1/mascot/jobs/{job_id}/poses/{pose_id}")
-    async def download_pose(job_id: str, pose_id: str, user_id: Annotated[str, Depends(secure_user)]):
+    async def download_pose(job_id: str, pose_id: str, user_id: str = Depends(secure_user)):
         from fastapi.responses import FileResponse
         try:
             job = _get_job(job_id)
@@ -515,15 +522,19 @@ def api():
             raise _api_error(error) from error
 
     @service.post("/v1/mascot/jobs/{job_id}/consistency", status_code=202)
-    async def run_consistency(job_id: str, context: Annotated[tuple[str, str], Depends(cost_context)]):
+    async def run_consistency(job_id: str, context: tuple[str, str] = Depends(cost_context)):
         return _template_assets_required(job_id, context[0])
 
     @service.post("/v1/mascot/jobs/{job_id}/generate-poses", status_code=202)
-    async def generate_poses(job_id: str, context: Annotated[tuple[str, str], Depends(cost_context)]):
+    async def generate_poses(job_id: str, context: tuple[str, str] = Depends(cost_context)):
         return _template_assets_required(job_id, context[0])
 
     @service.post("/v1/mascot/jobs/{job_id}/retry-pose", status_code=202)
-    async def retry_pose(job_id: str, request: PoseRequest, context: Annotated[tuple[str, str], Depends(cost_context)]):
+    async def retry_pose(
+        job_id: str,
+        request: PoseRequest,
+        context: tuple[str, str] = Depends(cost_context),
+    ):
         del request
         return _template_assets_required(job_id, context[0])
 
