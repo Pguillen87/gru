@@ -125,4 +125,16 @@
   <string name="gru__model_error_network">The download stopped. Check your connection and try again.</string>
   <string name="gru__model_error_corrupt">The downloaded file failed verification and was removed. Try again.</string>
   <string name="gru__model_error_storage">Gru could not save the model. Check available storage and try again.</string>
+  <string name="gru__mascot_tab">Mascot</string>
+  <string name="gru__my_mascot">My mascot</string>
+  <string name="gru__gru_mascots">Gru mascots</string>
+  <string name="gru__create_mascot">Create my mascot</string>
+  <string name="gru__create_mascot_summary">Turn your pet into a Gru mascot with one photo.</string>
+  <string name="gru__choose_photo">Create with a photo</string>
+  <string name="gru__choose_another_photo">Choose another photo</string>
+  <string name="gru__photo_preview">Selected pet photo</string>
+  <string name="gru__photo_tip">Choose a photo where your pet appears clearly.</string>
+  <string name="gru__custom_mascot">Your personalized mascot</string>
+  <string name="gru__poses">Poses</string>
+  <string name="gru__poses_summary">Choose the pose used while Gru is ready, listening, or transcribing.</string>
 </resources>

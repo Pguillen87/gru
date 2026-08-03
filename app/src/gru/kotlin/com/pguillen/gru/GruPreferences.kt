@@ -13,6 +13,7 @@ import android.util.Log
 import com.pguillen.gru.dictation.TranscriptionEngine
 import com.pguillen.gru.dictation.TranscriptionSelectionPolicy
 import com.pguillen.gru.security.GroqApiKeyStore
+import com.pguillen.gru.mascot.MascotSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +27,12 @@ class GruPreferences private constructor(context: Context) {
 
     private val mutablePet = MutableStateFlow(store.enumValue(KEY_PET, GruPet.FAISCA))
     val pet: StateFlow<GruPet> = mutablePet.asStateFlow()
+
+    private val mutableMascotSource = MutableStateFlow(readMascotSource())
+    val mascotSource: StateFlow<MascotSource> = mutableMascotSource.asStateFlow()
+
+    private val mutablePendingMascotJobId = MutableStateFlow(store.getString(KEY_PENDING_MASCOT_JOB, null))
+    val pendingMascotJobId: StateFlow<String?> = mutablePendingMascotJobId.asStateFlow()
 
     private val mutableSize = MutableStateFlow(store.enumValue(KEY_SIZE, GruPetSize.MEDIUM))
     val size: StateFlow<GruPetSize> = mutableSize.asStateFlow()
@@ -72,7 +79,28 @@ class GruPreferences private constructor(context: Context) {
 
     fun setPet(value: GruPet) {
         mutablePet.value = value
+        mutableMascotSource.value = MascotSource.BuiltIn(value)
         store.edit().putString(KEY_PET, value.name).apply()
+        store.edit().putString(KEY_MASCOT_SOURCE, SOURCE_BUILT_IN).remove(KEY_CUSTOM_POSE_SET).remove(KEY_CUSTOM_MASTER).apply()
+    }
+
+    fun selectCustomMascot(poseSetId: String, masterId: String) {
+        mutableMascotSource.value = MascotSource.Custom(poseSetId, masterId)
+        store.edit().putString(KEY_MASCOT_SOURCE, SOURCE_CUSTOM)
+            .putString(KEY_CUSTOM_POSE_SET, poseSetId).putString(KEY_CUSTOM_MASTER, masterId).apply()
+    }
+
+    fun setPendingMascotJobId(jobId: String?) {
+        mutablePendingMascotJobId.value = jobId
+        store.edit().apply { if (jobId == null) remove(KEY_PENDING_MASCOT_JOB) else putString(KEY_PENDING_MASCOT_JOB, jobId) }.apply()
+    }
+
+    private fun readMascotSource(): MascotSource {
+        if (store.getString(KEY_MASCOT_SOURCE, SOURCE_BUILT_IN) != SOURCE_CUSTOM) return MascotSource.BuiltIn(mutablePet.value)
+        val poseSetId = store.getString(KEY_CUSTOM_POSE_SET, null)
+        val masterId = store.getString(KEY_CUSTOM_MASTER, null)
+        return if (poseSetId.isNullOrBlank() || masterId.isNullOrBlank()) MascotSource.BuiltIn(mutablePet.value)
+        else MascotSource.Custom(poseSetId, masterId)
     }
 
     fun setSize(value: GruPetSize) {
@@ -183,6 +211,10 @@ class GruPreferences private constructor(context: Context) {
         private const val FILE_NAME = "gru_preferences"
         private const val KEY_ENABLED = "pet_enabled"
         private const val KEY_PET = "pet"
+        private const val KEY_MASCOT_SOURCE = "mascot_source"
+        private const val KEY_CUSTOM_POSE_SET = "custom_pose_set"
+        private const val KEY_CUSTOM_MASTER = "custom_master"
+        private const val KEY_PENDING_MASCOT_JOB = "pending_mascot_job"
         private const val KEY_SIZE = "pet_size"
         private const val KEY_OPACITY = "pet_opacity"
         private const val KEY_GROQ_API_KEY = "groq_api_key"
@@ -190,6 +222,8 @@ class GruPreferences private constructor(context: Context) {
         private const val KEY_ENGINE = "transcription_engine"
         private const val KEY_REQUESTED_ENGINE = "requested_transcription_engine"
         private const val KEY_TRANSACTIONAL_SELECTION_MIGRATED = "transactional_selection_migrated"
+        private const val SOURCE_BUILT_IN = "built_in"
+        private const val SOURCE_CUSTOM = "custom"
 
         @Volatile private var instance: GruPreferences? = null
 

@@ -20,6 +20,7 @@ import android.view.animation.LinearInterpolator
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+import com.pguillen.gru.mascot.MascotVisual
 
 internal enum class PetMotionMode { IDLE, LISTENING, PROCESSING, SUCCESS, ERROR }
 
@@ -29,10 +30,11 @@ internal enum class PetMotionMode { IDLE, LISTENING, PROCESSING, SUCCESS, ERROR 
  */
 internal class LivingPetView(
     context: Context,
-    atlasRes: Int,
+    visual: MascotVisual,
     private val onFirstFrame: () -> Unit = {},
 ) : View(context) {
-    private val bitmap: Bitmap = decodeAtlas(atlasRes)
+    private val bitmap: Bitmap = decodeVisual(visual)
+    private val atlas = visual is MascotVisual.Atlas
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val source = Rect()
     private val destination = RectF()
@@ -200,13 +202,13 @@ internal class LivingPetView(
     }
 
     private fun drawFrame(canvas: Canvas, frame: Int, alpha: Int) {
-        val column = frame % 4
-        val row = frame / 4
+        val column = if (atlas) frame % 4 else 0
+        val row = if (atlas) frame / 4 else 0
         source.set(
-            column * bitmap.width / 4,
-            row * bitmap.height / 4,
-            (column + 1) * bitmap.width / 4,
-            (row + 1) * bitmap.height / 4,
+            if (atlas) column * bitmap.width / 4 else 0,
+            if (atlas) row * bitmap.height / 4 else 0,
+            if (atlas) (column + 1) * bitmap.width / 4 else bitmap.width,
+            if (atlas) (row + 1) * bitmap.height / 4 else bitmap.height,
         )
         destination.set(0f, 0f, width.toFloat(), height.toFloat())
         paint.alpha = alpha
@@ -223,21 +225,24 @@ internal class LivingPetView(
         }
     }
 
-    private fun decodeAtlas(atlasRes: Int): Bitmap {
-        val decoded = checkNotNull(
-            BitmapFactory.decodeResource(
-                resources,
-                atlasRes,
-                BitmapFactory.Options().apply {
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                    inScaled = false
-                },
-            ),
-        ) { "Unable to decode pet atlas" }
-        if (decoded.config != Bitmap.Config.HARDWARE) return decoded
-        return checkNotNull(decoded.copy(Bitmap.Config.ARGB_8888, false)) {
+    private fun decodeVisual(visual: MascotVisual): Bitmap {
+        val decoded = when (visual) {
+            is MascotVisual.Atlas -> BitmapFactory.decodeResource(resources, visual.drawableRes, options())
+            is MascotVisual.ImageFile -> BitmapFactory.decodeFile(visual.absolutePath, options())
+        }
+        return checkNotNull(decoded) { "Unable to decode mascot visual" }.toMutableBitmap()
+    }
+
+    private fun options() = BitmapFactory.Options().apply {
+        inPreferredConfig = Bitmap.Config.ARGB_8888
+        inScaled = false
+    }
+
+    private fun Bitmap.toMutableBitmap(): Bitmap {
+        if (config != Bitmap.Config.HARDWARE) return this
+        return checkNotNull(copy(Bitmap.Config.ARGB_8888, false)) {
             "Unable to prepare pet atlas"
-        }.also { decoded.recycle() }
+        }.also { recycle() }
     }
 
     private fun smoothStep(from: Float, to: Float, value: Float): Float {

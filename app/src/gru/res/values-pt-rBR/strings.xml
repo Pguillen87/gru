@@ -125,4 +125,16 @@
   <string name="gru__model_error_network">O download parou. Verifique sua conexão e tente novamente.</string>
   <string name="gru__model_error_corrupt">O arquivo não passou na verificação e foi removido. Tente novamente.</string>
   <string name="gru__model_error_storage">O Gru não conseguiu salvar o modelo. Verifique o espaço disponível e tente novamente.</string>
+  <string name="gru__mascot_tab">Mascote</string>
+  <string name="gru__my_mascot">Meu mascote</string>
+  <string name="gru__gru_mascots">Mascotes do Gru</string>
+  <string name="gru__create_mascot">Criar meu mascote</string>
+  <string name="gru__create_mascot_summary">Transforme seu pet em um mascote do Gru com uma foto.</string>
+  <string name="gru__choose_photo">Criar com uma foto</string>
+  <string name="gru__choose_another_photo">Escolher outra foto</string>
+  <string name="gru__photo_preview">Foto do pet selecionada</string>
+  <string name="gru__photo_tip">Escolha uma foto em que seu pet apareça bem.</string>
+  <string name="gru__custom_mascot">Seu mascote personalizado</string>
+  <string name="gru__poses">Poses</string>
+  <string name="gru__poses_summary">Escolha a pose usada quando o Gru está pronto, ouvindo ou transcrevendo.</string>
 </resources>

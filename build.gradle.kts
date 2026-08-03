@@ -17,4 +17,5 @@
 plugins {
     alias(libs.plugins.agp.application) apply false
     alias(libs.plugins.kotlin.plugin.compose) apply false
+    alias(libs.plugins.google.services) apply false
 }

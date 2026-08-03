@@ -13,6 +13,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.agp.application)
     alias(libs.plugins.kotlin.plugin.compose)
+    alias(libs.plugins.google.services)
 }
 
 val projectMinSdk: String by project
@@ -48,6 +49,7 @@ configure<ApplicationExtension> {
         targetSdk = projectTargetSdk.toInt()
         versionCode = projectVersionCode.toInt()
         versionName = projectVersionName.substringBefore("-")
+        buildConfigField("String", "MASCOT_API_BASE_URL", "\"https://automacao-guillenia--gru-mascot-api.modal.run\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -63,6 +65,7 @@ configure<ApplicationExtension> {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -150,8 +153,11 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.kotlinx.coroutines)
+    implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
 
     testImplementation(libs.kotlin.test.junit5)
     testImplementation(libs.kotlinx.coroutines.test)

@@ -74,9 +74,10 @@ class GruActivity : ComponentActivity() {
     }
 }
 
-private enum class GruDestination(val label: Int) {
+internal enum class GruDestination(val label: Int) {
     GENERAL(R.string.gru__general_tab),
     TRANSCRIPTION(R.string.gru__transcription_tab),
+    MASCOT(R.string.gru__mascot_tab),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -126,6 +127,11 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
             )
             GruDestination.TRANSCRIPTION -> GruTranscriptionScreen(
                 prefs = prefs,
+                modifier = Modifier.fillMaxSize().padding(padding),
+            )
+            GruDestination.MASCOT -> GruMascotScreen(
+                prefs = prefs,
+                permissionRefresh = permissionRefresh,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
         }

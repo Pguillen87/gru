@@ -32,6 +32,10 @@ import com.pguillen.gru.R
 import com.pguillen.gru.GruPet
 import com.pguillen.gru.GruPetSize
 import com.pguillen.gru.GruPreferences
+import com.pguillen.gru.mascot.CustomMascotStore
+import com.pguillen.gru.mascot.MascotRuntimeState
+import com.pguillen.gru.mascot.MascotSource
+import com.pguillen.gru.mascot.MascotVisualResolver
 import com.pguillen.gru.dictation.GruDictation
 import com.pguillen.gru.dictation.GruDictationFailure
 import com.pguillen.gru.dictation.GruDictationState
@@ -64,17 +68,19 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private var recoveryJob: Job? = null
     private var viewGeneration = 0
 
-    private var currentDesign = GruPet.FAISCA
+    private var currentSource: MascotSource = MascotSource.BuiltIn(GruPet.FAISCA)
+    private val visualResolver by lazy { MascotVisualResolver(CustomMascotStore(context)) }
     private var currentSize = GruPetSize.MEDIUM
     private var currentOpacity = 100
     private var previousState: GruDictationState = GruDictationState.Idle
+    private var currentRuntimeState = MascotRuntimeState.IDLE
     private var currentPackage: String? = null
     private var previousVisibility: VisibilitySnapshot? = null
     private val positions = mutableMapOf<String, Pair<Int, Int>>()
     private var snapAnimator: ValueAnimator? = null
 
     private data class Appearance(
-        val design: GruPet,
+        val source: MascotSource,
         val size: GruPetSize,
         val opacity: Int,
     )
@@ -98,10 +104,10 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         }
         scope.launch {
             val appearance = combine(
-                prefs.pet,
+                prefs.mascotSource,
                 prefs.size,
                 prefs.opacity,
-            ) { design, size, opacity -> Appearance(design, size, opacity.coerceIn(40, 100)) }
+            ) { source, size, opacity -> Appearance(source, size, opacity.coerceIn(40, 100)) }
             val target = combine(
                 GruAccessibilityService.editableFocused,
                 GruAccessibilityService.imeVisible,
@@ -143,13 +149,19 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         target: TargetState,
         state: GruDictationState,
     ) {
-        if (appearance.design != currentDesign ||
+        val nextRuntimeState = runtimeState(state)
+        if (appearance.source != currentSource ||
             appearance.size != currentSize ||
             appearance.opacity != currentOpacity
         ) {
-            currentDesign = appearance.design
+            currentSource = appearance.source
             currentSize = appearance.size
             currentOpacity = appearance.opacity
+            currentRuntimeState = nextRuntimeState
+            rebuildView()
+        }
+        if (currentSource is MascotSource.Custom && nextRuntimeState != currentRuntimeState) {
+            currentRuntimeState = nextRuntimeState
             rebuildView()
         }
 
@@ -242,7 +254,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             errorColor = ContextCompat.getColor(context, R.color.colorError),
         ).also { signalView = it }
         val generation = ++viewGeneration
-        val pet = LivingPetView(context, petAtlas(currentDesign)) {
+        val pet = LivingPetView(context, visualResolver.resolve(currentSource, currentRuntimeState)) {
             onFirstFrame(generation)
         }.apply {
             alpha = currentOpacity / 100f
@@ -539,12 +551,10 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         updateWindowLayout()
     }
 
-    private fun petAtlas(design: GruPet): Int = when (design) {
-        GruPet.LUME -> R.drawable.gru_pet_lume_atlas
-        GruPet.FAISCA -> R.drawable.gru_pet_faisca_atlas
-        GruPet.BIP -> R.drawable.gru_pet_bip_atlas
-        GruPet.PINGO -> R.drawable.gru_pet_pingo_atlas
-        GruPet.PUDIM -> R.drawable.gru_pet_pudim_atlas
+    private fun runtimeState(state: GruDictationState): MascotRuntimeState = when (state) {
+        GruDictationState.Idle, is GruDictationState.Success, is GruDictationState.Error -> MascotRuntimeState.IDLE
+        is GruDictationState.Recording -> MascotRuntimeState.RECORDING
+        is GruDictationState.Transcribing -> MascotRuntimeState.TRANSCRIBING
     }
 
     private fun roundedRect(color: Int, radius: Float) = GradientDrawable().apply {

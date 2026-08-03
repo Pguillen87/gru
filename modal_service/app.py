@@ -1,7 +1,7 @@
 """Modal deployment entrypoint for the GRU Mascot service.
 
-This service is deliberately proxy-authenticated in development. A future GRU
-control plane authenticates the end user and forwards only a verified user id.
+Firebase Authentication authenticates every cost-bearing request. The Android
+client never receives a Modal account or proxy credential.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ ENVIRONMENT = Environment(os.getenv("GRU_MASCOT_ENV", Environment.DEVELOPMENT))
 LIMITS = limits_for(ENVIRONMENT)
 
 api_image = modal.Image.debian_slim(python_version="3.12").pip_install(
-    "fastapi[standard]>=0.115,<1", "pillow>=11,<12", "httpx>=0.28,<1"
+    "fastapi[standard]>=0.115,<1", "pillow>=11,<12", "httpx>=0.28,<1", "google-auth>=2.38,<3"
 )
 gpu_image = api_image.pip_install(
     "torch>=2.6,<3", "diffusers>=0.35", "transformers>=4.51", "accelerate>=1.6", "safetensors>=0.5"
@@ -58,7 +58,10 @@ def _decode_image(value: str) -> bytes:
 
 
 def _serialize(job: JobRecord) -> dict[str, object]:
-    return asdict(job) | {"state": job.state.value}
+    payload = asdict(job) | {"state": job.state.value}
+    if job.state is JobState.AWAITING_MASTER_APPROVAL:
+        payload["masters"] = {f"master_{index}": {"id": f"master_{index}"} for index in range(1, 4)}
+    return payload
 
 
 def _deserialize(record: dict[str, object]) -> JobRecord:
@@ -196,9 +199,11 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
 
 
 @app.function(image=api_image, volumes={ASSET_ROOT: assets}, max_containers=1)
-@modal.asgi_app(requires_proxy_auth=True)
+@modal.asgi_app()
 def api():
     from fastapi import Depends, FastAPI, Header
+    from google.auth.transport.requests import Request as GoogleRequest
+    from google.oauth2 import id_token
     from pydantic import BaseModel, Field
 
     service = FastAPI(title="GRU Mascot API", docs_url=None, redoc_url=None)
@@ -210,17 +215,34 @@ def api():
     class ApproveMasterRequest(BaseModel):
         master_id: str = Field(pattern=r"^master_[1-4]$")
 
-    async def identity(
-        x_gru_user_id: Annotated[str, Header()], x_idempotency_key: Annotated[str, Header()]
+    class PoseRequest(BaseModel):
+        pose_id: str = Field(pattern=r"^pose_[0-9]{2}$")
+
+    async def verified_user(authorization: Annotated[str | None, Header()] = None) -> str:
+        if not authorization or not authorization.startswith("Bearer "):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": "A valid identity is required."})
+        try:
+            claims = id_token.verify_firebase_token(authorization.removeprefix("Bearer "), GoogleRequest(), audience="gru-mascote")
+            if claims.get("iss") != "https://securetoken.google.com/gru-mascote" or not claims.get("uid"):
+                raise ValueError("Unexpected Firebase token claims.")
+            return str(claims["uid"])
+        except Exception as error:
+            logging.info("firebase_token_rejected type=%s", type(error).__name__)
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": "A valid identity is required."}) from error
+
+    async def cost_context(
+        user_id: Annotated[str, Depends(verified_user)], x_idempotency_key: Annotated[str | None, Header()] = None,
     ) -> tuple[str, str]:
-        return _request_context(x_gru_user_id, x_idempotency_key)
+        return _request_context(user_id, x_idempotency_key or "")
 
     @service.get("/health")
     async def health() -> dict[str, object]:
         return {"service": APP_NAME, "environment": ENVIRONMENT.value, "gpu_enabled": True}
 
     @service.post("/v1/mascot/jobs", status_code=202)
-    async def create_job(request: CreateJobRequest, context: Annotated[tuple[str, str], Depends(identity)]):
+    async def create_job(request: CreateJobRequest, context: Annotated[tuple[str, str], Depends(cost_context)]):
         user_id, key = context
         request_key = _record_key(user_id, key)
         if request_key in idempotency:
@@ -243,16 +265,16 @@ def api():
             raise _api_error(error) from error
 
     @service.get("/v1/mascot/jobs/{job_id}")
-    async def read_job(job_id: str, context: Annotated[tuple[str, str], Depends(identity)]):
+    async def read_job(job_id: str, user_id: Annotated[str, Depends(verified_user)]):
         try:
             job = _get_job(job_id)
-            _ensure_owner(job, context[0])
+            _ensure_owner(job, user_id)
             return _serialize(job)
         except DomainError as error:
             raise _api_error(error) from error
 
     @service.post("/v1/mascot/jobs/{job_id}/approve-master", status_code=202)
-    async def approve_master(job_id: str, request: ApproveMasterRequest, context: Annotated[tuple[str, str], Depends(identity)]):
+    async def approve_master(job_id: str, request: ApproveMasterRequest, context: Annotated[tuple[str, str], Depends(cost_context)]):
         try:
             job = _get_job(job_id)
             _ensure_owner(job, context[0])
@@ -266,5 +288,52 @@ def api():
             return _serialize(job)
         except DomainError as error:
             raise _api_error(error) from error
+
+    @service.post("/v1/mascot/jobs/{job_id}/cancel")
+    async def cancel_job(job_id: str, context: Annotated[tuple[str, str], Depends(cost_context)]):
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, context[0])
+            if job.state not in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELED}:
+                _transition(job, JobState.CANCELED)
+            return _serialize(job)
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.get("/v1/mascot/jobs/{job_id}/result")
+    async def result(job_id: str, user_id: Annotated[str, Depends(verified_user)]):
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, user_id)
+            if job.state is not JobState.COMPLETED:
+                raise DomainError("Mascot result is not ready.")
+            return _serialize(job) | {"poses": []}
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.post("/v1/mascot/jobs/{job_id}/consistency", status_code=202)
+    async def run_consistency(job_id: str, context: Annotated[tuple[str, str], Depends(cost_context)]):
+        return _template_assets_required(job_id, context[0])
+
+    @service.post("/v1/mascot/jobs/{job_id}/generate-poses", status_code=202)
+    async def generate_poses(job_id: str, context: Annotated[tuple[str, str], Depends(cost_context)]):
+        return _template_assets_required(job_id, context[0])
+
+    @service.post("/v1/mascot/jobs/{job_id}/retry-pose", status_code=202)
+    async def retry_pose(job_id: str, request: PoseRequest, context: Annotated[tuple[str, str], Depends(cost_context)]):
+        del request
+        return _template_assets_required(job_id, context[0])
+
+    def _template_assets_required(job_id: str, user_id: str):
+        from fastapi import HTTPException
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, user_id)
+        except DomainError as error:
+            raise _api_error(error) from error
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "TEMPLATE_ASSETS_UNAVAILABLE", "message": "Official pose templates are not installed."},
+        )
 
     return service

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "816774877835",
+    "project_id": "gru-mascote",
+    "storage_bucket": "gru-mascote.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:816774877835:android:dabb1c37b8d1a602407a8e",
+        "android_client_info": {
+          "package_name": "com.pguillen.gru"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBS3AJ5Awv7KzcOwf-cqrIxjdIrsGfoRng"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -72,10 +72,6 @@ internal fun GruGeneralScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val enabled by prefs.enabled.collectAsState()
-    val pet by prefs.pet.collectAsState()
-    val size by prefs.size.collectAsState()
-    val opacity by prefs.opacity.collectAsState()
     val engine by prefs.engine.collectAsState()
     val key by prefs.groqApiKeyState.collectAsState()
     val modelState by WhisperModelManager.get(context).state.collectAsState()
@@ -89,20 +85,14 @@ internal fun GruGeneralScreen(
         TranscriptionEngine.PRIVATE_LOCAL -> modelState is WhisperModelState.Installed
         null -> false
     }
-    val setupReady = accessibilityReady && serviceConnected && microphoneReady && engineReady
 
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        StatusSummary(enabled, accessibilityReady, serviceConnected, microphoneReady, engineReady, overlayHealth)
+        StatusSummary(false, accessibilityReady, serviceConnected, microphoneReady, engineReady, overlayHealth)
         PermissionSection(accessibilityReady, microphoneReady, notificationsReady, onPermissionChanged)
-        PetRuntimeStatus(accessibilityReady, serviceConnected, overlayHealth)
-        PetPreview(pet, opacity)
-        MasterToggle(enabled, setupReady, prefs::setEnabled)
-        PetPicker(pet, prefs::setPet)
-        AppearanceControls(size, opacity, prefs)
         Spacer(Modifier.height(8.dp))
     }
 }
