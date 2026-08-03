@@ -77,6 +77,7 @@ gpu_image = api_image.pip_install(
     "diffusers>=0.35",
     "transformers>=4.51",
     "accelerate>=1.6",
+    "peft>=0.17,<1",
     "safetensors>=0.5",
 )
 app = modal.App(APP_NAME)
