@@ -1,24 +1,21 @@
-# Execution Plan
+# Execution status
 
 ## Implemented foundation
 
-1. Private Modal API and L40S worker, both scale-to-zero.
-2. Stable job state machine, identifier model, ownership boundary, and idempotency keys.
-3. Byte-level JPEG, PNG, and WebP validation before scheduling GPU work.
-4. Private Volume layout for `original`, `masters`, `consistency`, `poses`, and `temporary` objects.
-5. Qwen production candidate contract plus OmniGen2 and FLUX benchmark descriptors.
-6. Development controls: one GPU container, timeout, retry cap, and five-dollar logical daily ceiling.
+1. Firebase ID token plus App Check protected ASGI API.
+2. Stable state machine with `READY_FOR_GENERATION` as the honest no-GPU stop.
+3. Deterministic create IDs, idempotent approval/cancel, UID ownership, and resumable Android polling.
+4. Byte-level JPEG, PNG, and WebP validation and private Volume storage.
+5. Separate per-UID job quota, per-UID cost cap, global cost cap, and serialized coordination.
+6. `GPU_GENERATION_ENABLED=false` by default in every environment; one development container maximum.
+7. Typed private Master/result downloads and Android checksum-gated atomic promotion.
+8. Versioned administrator-only pose-template installer with a six-pose MVP contract scalable to twenty.
 
-## Gates before GPU smoke
+## Gates before the first paid Master smoke
 
-1. Add six approved pose-reference assets at the catalog keys in `catalog.py`.
-2. Supply a consented pet photo for the development smoke test.
-3. Create the GRU control-plane identity bridge before production; Modal proxy tokens are development-only.
+1. Register Firebase Android app `com.pguillen.gru.debug` and add its variant JSON.
+2. Create Modal Secret `gru-mascot-firebase-admin` outside Git.
+3. Deploy and pass the authenticated no-GPU smoke with generation disabled.
+4. Supply one authorized pet photo and explicitly approve the financial ceiling.
 
-## Next implementation batch
-
-1. Run the Qwen master smoke test and record measured cold start, GPU seconds, and cost.
-2. Run the three consistency poses from the approved master.
-3. Run the six-pose MVP only after consistency approval.
-4. Add the same controlled benchmark path for OmniGen2; FLUX stays non-production.
-5. Replace operational Dict records with the selected durable metadata store before production.
+Official pose templates and real consistency evaluation tooling are required only after the Master smoke and human Master approval. See `FIRST_GPU_SMOKE.md`.

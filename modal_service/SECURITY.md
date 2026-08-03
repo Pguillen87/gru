@@ -1,16 +1,13 @@
 # Security
 
-- Android authenticates with a short-lived Firebase Anonymous ID token; no Modal token is shipped.
-- The ASGI service validates Firebase signature, issuer, audience (`gru-mascote`) and expiry before it uses a UID.
-- The UID, never a client-supplied user header, owns jobs and idempotency records.
-- Firebase tokens, source images, signed URLs and secrets are excluded from application logs.
-- Cost-bearing operations require Firebase App Check in addition to the Firebase ID token. Android uses Play Integrity in release and Firebase's official debug provider only in debug builds.
-- The service applies a per-UID daily job and cost quota before the global daily cost cap. The global cap remains the final financial guard.
-- A Firebase Admin credential is not committed. If operational administration later requires one, it must be created only as a Modal Secret.
-
-- Modal credentials never enter the Android application.
-- Development endpoint uses Modal proxy authentication.
-- Production requires an external authenticated GRU control plane and private, signed object exchange.
-- MIME is verified from bytes, not from the request label.
-- Storage paths are generated server-side and are never returned.
-- Logs must contain identifiers and durations only, never tokens, signed URLs, prompt contents, or image bytes.
+- Android sends short-lived Firebase Anonymous ID tokens and App Check proofs; it contains no Modal or Firebase Admin credential.
+- Release includes only Play Integrity App Check code. Debug includes only the official Debug App Check provider.
+- The API validates Firebase signature, expiry, audience `gru-mascote`, issuer, and UID, then validates App Check before executing endpoint code.
+- Invalid or missing authentication is rejected before image storage, quota mutation, job creation, cost reservation, or GPU scheduling.
+- Ownership failures return the same safe `JOB_NOT_FOUND` behavior and expose no state, image, Master, or result metadata.
+- Create IDs are deterministic for UID plus idempotency key. Approval and cancellation use stable operation keys and idempotent domain transitions.
+- Per-UID/global job count, per-UID generation cost, and global generation cost are separate guards. A serialized coordinator prevents concurrent check/update races.
+- `GPU_GENERATION_ENABLED` defaults to false everywhere. Both the API scheduler and GPU function enforce it.
+- Master and pose images are streamed through authenticated owner-only endpoints; the Volume is not public or enumerable.
+- Tokens, images, private download references, and credentials are never logged.
+- Official pose templates can be installed only by an operator, never by the APK.

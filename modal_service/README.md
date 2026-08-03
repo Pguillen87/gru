@@ -1,12 +1,10 @@
-# GRU Mascot Modal
+# GRU Mascot on Modal
 
-Serverless generation service for a user-approved pet mascot and its pose library.
+Private, asynchronous backend for validating a pet photo, creating a resumable job, and—only when explicitly enabled—generating Master mascots and versioned poses.
 
-## Boundaries
+## Safe default
 
-- The service produces masters, consistency samples, and poses.
-- It never maps a pose to an Android state.
-- The mobile client must not contain Modal credentials.
+`GPU_GENERATION_ENABLED` is `false` in development, staging, and production. With that value, `POST /v1/mascot/jobs` validates authentication, App Check, image bytes, idempotency, ownership, storage, and job quota, then stops at `READY_FOR_GENERATION`. It does not reserve generation cost or call a GPU function.
 
 ## Local verification
 
@@ -15,12 +13,16 @@ python -m pytest modal_service/tests
 python -m compileall modal_service
 ```
 
-## Deployment
+## Before deployment
 
-Development endpoints use Modal proxy authentication. Production deployment additionally requires the `gru-mascot-api-auth` Modal secret with `GRU_MASCOT_API_TOKEN` set by the control plane owner.
+1. Create the Modal Secret `gru-mascot-firebase-admin` with the single key `FIREBASE_ADMIN_CREDENTIALS_JSON`. Use the Modal dashboard or a temporary ignored dotenv file; never commit the service-account JSON or place it in a command that will remain in shell history.
+2. Confirm `modal secret list` contains the secret name.
+3. Force the safe flag in the deployment shell:
 
 ```powershell
-modal deploy modal_service/app.py
+$env:GRU_MASCOT_ENV='development'
+$env:GPU_GENERATION_ENABLED='false'
+modal deploy -m modal_service.app
 ```
 
-GPU work is disabled until a job reaches its explicit generation state and passes the configured cost guard.
+The deployment must not proceed if the Firebase Admin Secret is absent. See [OPERATIONS.md](OPERATIONS.md), [API.md](API.md), and [FIRST_GPU_SMOKE.md](FIRST_GPU_SMOKE.md).

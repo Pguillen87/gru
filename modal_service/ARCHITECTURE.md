@@ -1,19 +1,27 @@
 # Architecture
 
-The Modal app owns asynchronous mascot work only. `modal_service.domain` contains the stable job state machine; API and GPU code depend on it, not the reverse.
+The Modal app owns asynchronous mascot work only. Android owns the mapping from runtime state to a downloaded local pose.
+
+## Components
+
+- `domain.py`: centralized job states and legal transitions.
+- `coordinator.py`: serialized job idempotency, UID ownership, job quota, and generation-cost reservation.
+- `app.py`: authenticated ASGI API, private asset streaming, and GPU boundary.
+- `templates.py` plus `tools/install_pose_templates.py`: administrator-only versioned pose package activation.
+- Android `MascotApi`/`MascotRepository`: typed contract, stable operation keys, polling/resume/cancel.
+- Android `CustomMascotStore`: checksum validation, staging, atomic promotion, and offline files.
 
 ## Resources
 
-- `gru-mascot-assets` Volume: private original, master, consistency, pose, and temporary objects.
-- `gru-mascot-models` Volume: model cache only; it contains no user media.
-- `gru-mascot-jobs` Dict: short-lived operational job state.
-- `gru-mascot-idempotency` Dict: duplicate-charge protection.
-- `gru-mascot-usage` Dict: cost-guard ledger.
+- `gru-mascot-assets` Volume: private originals, Masters, consistency artifacts, pose sets, and template packages.
+- `gru-mascot-models` Volume: model cache only.
+- `gru-mascot-jobs` Dict: operational job state.
+- `gru-mascot-idempotency` Dict: create and operation replay protection.
+- `gru-mascot-usage` Dict: separate job-count and generation-cost ledgers.
+- `gru-mascot-firebase-admin` Secret: server-only Firebase Admin credential.
 
-Approved assets require an external durable object store before production, because Modal Dict entries expire after inactivity and Volumes are not a database. The API exposes identifiers only; it never exposes container paths.
+## Lifecycle
 
-## API lifecycle
+`create -> READY_FOR_GENERATION -> generate Masters -> explicit Master approval -> consistency -> approved six-pose MVP -> result`.
 
-`create → poll → approve master → consistency → generate MVP poses → poll result`.
-
-The currently deployed API only opens the master approval transition. Consistency and pose endpoints are intentionally withheld until the official pose-reference assets and the external authenticated control plane exist; generating against absent pose assets would create unreviewable, billable output.
+With the kill switch off, the lifecycle stops honestly at `READY_FOR_GENERATION`. Closing Android does not cancel; it persists `job_id` and resumes polling. Network failure preserves the pending job. Explicit cancellation is confirmed by the server before local state is cleared.

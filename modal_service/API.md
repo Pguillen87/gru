@@ -1,29 +1,32 @@
-# API
+# API contract
 
-All mascot endpoints except `/health` require `Authorization: Bearer <Firebase ID Token>`.
-The service verifies the Firebase signature, issuer, audience and expiry, then derives job
-ownership from the verified UID. Cost-bearing writes also require `X-Idempotency-Key`.
-The client must never send a user id or any Modal credential.
+`GET /health` is public and never schedules work. Every `/v1/mascot/**` request requires both:
 
-`consistency`, `generate-poses`, and `retry-pose` are contract endpoints. They return
-`TEMPLATE_ASSETS_UNAVAILABLE` until the approved pose-reference assets are installed; this guard
-prevents accidental GPU work while the visual templates are pending.
+- `Authorization: Bearer <Firebase ID token>`
+- `X-Firebase-AppCheck: <Firebase App Check token>`
 
-All endpoints require Modal proxy authentication in development. The future GRU control plane must authenticate the end user and inject `X-GRU-User-Id`; it must also create a unique `X-Idempotency-Key` for every cost-bearing operation.
+Cost-sensitive writes also require `X-Idempotency-Key`. The verified Firebase UID is the owner; no client-provided user ID is accepted.
 
-## Implemented
+## Endpoints
 
-- `GET /health`
-- `POST /v1/mascot/jobs`
-- `GET /v1/mascot/jobs/{job_id}`
-- `POST /v1/mascot/jobs/{job_id}/approve-master`
-
-`POST /v1/mascot/jobs` accepts base64 JPEG, PNG, or WebP for development. Production replaces it with signed, private object upload while preserving the job contract.
-
-## Reserved contract
-
+- `POST /v1/mascot/jobs` — validates and stores an image, then returns a job. With generation disabled the state is `READY_FOR_GENERATION`.
+- `GET /v1/mascot/jobs/{job_id}` — returns only the owner's job.
+- `GET /v1/mascot/idempotency/{key}` — recovers a create whose response was lost, for the same authenticated UID.
+- `POST /v1/mascot/jobs/{job_id}/approve-master` — approves one Master idempotently.
+- `POST /v1/mascot/jobs/{job_id}/cancel` — records server-side cancellation idempotently.
+- `GET /v1/mascot/jobs/{job_id}/masters/{master_id}` — authenticated, owner-only image stream.
+- `GET /v1/mascot/jobs/{job_id}/result` — completed pose-set manifest.
+- `GET /v1/mascot/jobs/{job_id}/poses/{pose_id}` — authenticated, owner-only, checksum-verified image stream.
 - `POST /v1/mascot/jobs/{job_id}/consistency`
 - `POST /v1/mascot/jobs/{job_id}/generate-poses`
 - `POST /v1/mascot/jobs/{job_id}/retry-pose`
-- `POST /v1/mascot/jobs/{job_id}/cancel`
-- `GET /v1/mascot/jobs/{job_id}/result`
+
+The last three endpoints return `TEMPLATE_ASSETS_UNAVAILABLE` until a validated administrator-installed package is active. If templates exist but the kill switch is off, they return `GENERATION_DISABLED`. The evaluator and paid pose worker remain intentionally unavailable until product templates and evaluation tooling are approved.
+
+## Typed image references
+
+Master entries contain `id`, `download_path`, and `sha256`. Result poses contain `poseId`, `name`, `fileName`, `sha256`, and an API-issued `downloadPath`. Internal Volume paths and public bucket URLs are never returned.
+
+## Errors
+
+Errors use `{"detail":{"code":"...","message":"..."}}`. Relevant codes include `UNAUTHENTICATED`, `APP_CHECK_REQUIRED`, `INVALID_IMAGE`, `JOB_NOT_FOUND`, `RATE_LIMITED`, `COST_LIMIT_REACHED`, `GENERATION_DISABLED`, and `TEMPLATE_ASSETS_UNAVAILABLE`.
