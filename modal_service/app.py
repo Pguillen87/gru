@@ -55,8 +55,21 @@ class ApproveMasterRequest(BaseModel):
 class PoseRequest(BaseModel):
     pose_id: str = Field(pattern=r"^pose_[0-9]{2}$")
 
-api_image = modal.Image.debian_slim(python_version="3.12").pip_install(
-    "fastapi[standard]>=0.115,<1", "pillow>=11,<12", "httpx>=0.28,<1", "google-auth>=2.38,<3", "firebase-admin>=6.6,<7"
+api_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .env(
+        {
+            "GRU_MASCOT_ENV": ENVIRONMENT.value,
+            "GPU_GENERATION_ENABLED": "true" if GPU_GENERATION_ENABLED else "false",
+        }
+    )
+    .pip_install(
+        "fastapi[standard]>=0.115,<1",
+        "pillow>=11,<12",
+        "httpx>=0.28,<1",
+        "google-auth>=2.38,<3",
+        "firebase-admin>=6.6,<7",
+    )
 )
 gpu_image = api_image.pip_install(
     "torch>=2.6,<3", "diffusers>=0.35", "transformers>=4.51", "accelerate>=1.6", "safetensors>=0.5"
