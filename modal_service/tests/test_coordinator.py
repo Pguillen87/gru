@@ -90,3 +90,51 @@ def test_global_job_quota_blocks_many_anonymous_uids():
     service.register("uid-a", "key-a", "original/a")
     with pytest.raises(RateLimitExceeded):
         service.register("uid-b", "key-b", "original/b")
+
+
+def test_worker_success_cannot_overwrite_canceled_or_promote_files():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-x", "original/hash")
+    assert service.authorize_generation(job.job_id, "uid-a", enabled=True)
+    _, started = service.transition_if_active(job.job_id, JobState.VALIDATING_INPUT, JobState.GENERATING_MASTER)
+    assert started
+    service.cancel(job.job_id, "uid-a")
+    promoted = []
+
+    final, committed = service.commit_master_outputs(job.job_id, lambda _: promoted.append("master.png"))
+
+    assert not committed
+    assert final.state is JobState.CANCELED
+    assert promoted == []
+
+
+def test_worker_failure_cannot_overwrite_canceled():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-x", "original/hash")
+    assert service.authorize_generation(job.job_id, "uid-a", enabled=True)
+    service.transition_if_active(job.job_id, JobState.VALIDATING_INPUT, JobState.GENERATING_MASTER)
+    service.cancel(job.job_id, "uid-a")
+
+    final, changed = service.transition_if_active(
+        job.job_id, JobState.GENERATING_MASTER, JobState.FAILED, "MASTER_GENERATION_FAILED"
+    )
+
+    assert not changed
+    assert final.state is JobState.CANCELED
+
+
+@pytest.mark.parametrize("terminal", [JobState.COMPLETED, JobState.FAILED, JobState.CANCELED])
+def test_stale_worker_cannot_overwrite_any_terminal_state(terminal):
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-x", "original/hash")
+    service.jobs[job.job_id]["state"] = terminal.value
+    promoted = []
+
+    final, committed = service.commit_master_outputs(job.job_id, lambda _: promoted.append("master.png"))
+    failed, failure_written = service.transition_if_active(
+        job.job_id, JobState.GENERATING_MASTER, JobState.FAILED, "MASTER_GENERATION_FAILED"
+    )
+
+    assert not committed and not failure_written
+    assert final.state is terminal and failed.state is terminal
+    assert promoted == []

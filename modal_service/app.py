@@ -11,15 +11,16 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
 import modal
 
-from modal_service.catalog import MASTER_PROMPT_VERSION, POSE_PROMPT_VERSION, POSE_TEMPLATE_VERSION
+from modal_service.catalog import POSE_PROMPT_VERSION
 from modal_service.config import Environment, generation_enabled, limits_for
-from modal_service.coordinator import JobCoordinator
+from modal_service.coordinator import JobCoordinator, JobOperation
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
 from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState
 from modal_service.security import AuthenticationRejected, app_check_token, bearer_token, may_schedule_gpu, valid_firebase_claims
@@ -138,10 +139,6 @@ def _get_job(job_id: str) -> JobRecord:
         raise JobNotFound("Job was not found.") from error
 
 
-def _save_job(job: JobRecord) -> None:
-    jobs[job.job_id] = asdict(job) | {"state": job.state.value}
-
-
 def _ensure_owner(job: JobRecord, user_id: str) -> None:
     if job.user_id != user_id:
         raise JobNotFound("Job was not found.")
@@ -173,17 +170,6 @@ def _request_context(user_id: str, idempotency_key: str) -> tuple[str, str]:
     return user_id.strip(), idempotency_key.strip()
 
 
-def _transition(job: JobRecord, state: JobState) -> None:
-    try:
-        current = _get_job(job.job_id)
-        job.gpu_call_id = current.gpu_call_id or job.gpu_call_id
-        job.generation_reserved = current.generation_reserved or job.generation_reserved
-    except JobNotFound:
-        pass
-    job.transition_to(state)
-    _save_job(job)
-
-
 def utc_day_key() -> str:
     from datetime import UTC, datetime
 
@@ -201,14 +187,42 @@ def register_job(user_id: str, idempotency_key: str, source_key: str) -> dict[st
         return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
 
 
-@app.function(image=api_image, max_containers=1)
+@app.function(image=api_image, max_containers=1, volumes={ASSET_ROOT: assets})
 @modal.concurrent(max_inputs=1)
-def authorize_generation(job_id: str, user_id: str) -> dict[str, object]:
+def job_control(
+    operation: str,
+    job_id: str,
+    user_id: str = "",
+    master_id: str = "",
+    call_id: str = "",
+    outputs: list[bytes] | None = None,
+) -> dict[str, object]:
     try:
-        authorized = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key()).authorize_generation(
-            job_id, user_id, GPU_GENERATION_ENABLED
-        )
-        return {"authorized": authorized}
+        coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
+        command = JobOperation(operation)
+        changed = False
+        if command is JobOperation.AUTHORIZE_GENERATION:
+            changed = coordinator.authorize_generation(job_id, user_id, GPU_GENERATION_ENABLED)
+            job = coordinator.get(job_id)
+        elif command is JobOperation.START_MASTER:
+            job, changed = coordinator.transition_if_active(job_id, JobState.VALIDATING_INPUT, JobState.GENERATING_MASTER)
+        elif command is JobOperation.COMMIT_MASTER:
+            job, changed = coordinator.commit_master_outputs(
+                job_id, lambda current: _persist_master_outputs(current, outputs or [])
+            )
+        elif command is JobOperation.FAIL_MASTER:
+            job, changed = coordinator.transition_if_active(
+                job_id, JobState.GENERATING_MASTER, JobState.FAILED, "MASTER_GENERATION_FAILED"
+            )
+        elif command is JobOperation.RECORD_GPU_CALL:
+            job, changed = coordinator.record_gpu_call(job_id, call_id)
+        elif command is JobOperation.APPROVE_MASTER:
+            job, changed = coordinator.approve_master(job_id, user_id, master_id, POSE_PROMPT_VERSION)
+        elif command is JobOperation.CANCEL:
+            job, changed = coordinator.cancel(job_id, user_id)
+        else:  # StrEnum exhaustiveness guard.
+            raise DomainError("Unsupported job operation.")
+        return {"job": _serialize(job), "changed": changed}
     except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
         return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
 
@@ -227,21 +241,21 @@ def generate_master(job_id: str) -> None:
     if not GPU_GENERATION_ENABLED:
         logging.warning("generation_blocked job_id=%s", job_id)
         return
-    job = _get_job(job_id)
-    if job.state is not JobState.VALIDATING_INPUT:
+    started = job_control.remote(JobOperation.START_MASTER.value, job_id)
+    _raise_guard_error(started)
+    if not bool(started["changed"]):
         return
-    _transition(job, JobState.GENERATING_MASTER)
+    job = _deserialize(dict(started["job"]))
     try:
         outputs = _generate_qwen_masters(job)
-        if _get_job(job_id).state is JobState.CANCELED:
-            return
-        _persist_master_outputs(job, outputs)
-        _transition(job, JobState.AWAITING_MASTER_APPROVAL)
+        committed = job_control.remote(JobOperation.COMMIT_MASTER.value, job_id, outputs=outputs)
+        _raise_guard_error(committed)
     except Exception as error:  # GPU libraries expose unstable exception classes.
         logging.exception("master_generation_failed job_id=%s", job.job_id)
-        job.error_code = "MASTER_GENERATION_FAILED"
-        _transition(job, JobState.FAILED)
-        raise error
+        failed = job_control.remote(JobOperation.FAIL_MASTER.value, job_id)
+        _raise_guard_error(failed)
+        if bool(failed["changed"]):
+            raise error
 
 
 def _generate_qwen_masters(job: JobRecord) -> list[bytes]:
@@ -273,10 +287,18 @@ def _master_prompt() -> str:
 
 
 def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
+    if not outputs:
+        raise DomainError("Master generation returned no images.")
+    staging = Path(ASSET_ROOT, "temporary", job.job_id, "masters")
+    target = Path(ASSET_ROOT, "masters", job.job_id)
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
     for index, content in enumerate(outputs, start=1):
-        destination = _asset_path(job.job_id, "masters", f"master_{index}.png")
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination = staging / f"master_{index}.png"
         destination.write_bytes(content)
+    shutil.rmtree(target, ignore_errors=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging.replace(target)
     assets.commit()
 
 
@@ -374,14 +396,17 @@ def api():
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(content)
                 assets.commit()
-            authorization = authorize_generation.remote(str(job_data["job_id"]), user_id)
+            authorization = job_control.remote(JobOperation.AUTHORIZE_GENERATION.value, str(job_data["job_id"]), user_id)
             _raise_guard_error(authorization)
-            if may_schedule_gpu(GPU_GENERATION_ENABLED, bool(authorization["authorized"])):
+            if may_schedule_gpu(GPU_GENERATION_ENABLED, bool(authorization["changed"])):
                 function_call = generate_master.spawn(str(job_data["job_id"]))
-                scheduled = _get_job(str(job_data["job_id"]))
-                scheduled.gpu_call_id = function_call.object_id
-                _save_job(scheduled)
-                job_data = _serialize(scheduled)
+                recorded = job_control.remote(
+                    JobOperation.RECORD_GPU_CALL.value,
+                    str(job_data["job_id"]),
+                    call_id=function_call.object_id,
+                )
+                _raise_guard_error(recorded)
+                job_data = dict(recorded["job"])
             return job_data | {"idempotent_replay": not bool(registration["created"])}
         except (ImageValidationError, DomainError, CostLimitExceeded, RateLimitExceeded) as error:
             raise _api_error(error) from error
@@ -417,12 +442,12 @@ def api():
                 return _serialize(job)
             if not _asset_path(job_id, "masters", f"{request.master_id}.png").is_file():
                 raise JobNotFound("Master was not found.")
-            changed = job.approve_master(request.master_id)
-            if changed:
-                job.prompt_version = POSE_PROMPT_VERSION
-                _save_job(job)
+            approval = job_control.remote(
+                JobOperation.APPROVE_MASTER.value, job_id, context[0], master_id=request.master_id
+            )
+            _raise_guard_error(approval)
             idempotency[operation_key] = job.job_id
-            return _serialize(job)
+            return dict(approval["job"])
         except DomainError as error:
             raise _api_error(error) from error
 
@@ -434,12 +459,13 @@ def api():
             operation_key = _operation_key(context[0], f"cancel:{job_id}")
             if operation_key in idempotency:
                 return _serialize(job)
-            if job.cancel():
-                _save_job(job)
-            if job.gpu_call_id:
-                modal.FunctionCall.from_id(job.gpu_call_id).cancel()
+            canceled = job_control.remote(JobOperation.CANCEL.value, job_id, context[0])
+            _raise_guard_error(canceled)
+            current = _deserialize(dict(canceled["job"]))
+            if current.gpu_call_id:
+                modal.FunctionCall.from_id(current.gpu_call_id).cancel()
             idempotency[operation_key] = job.job_id
-            return _serialize(job)
+            return dict(canceled["job"])
         except DomainError as error:
             raise _api_error(error) from error
 

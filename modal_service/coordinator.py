@@ -4,11 +4,23 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import MutableMapping
+from collections.abc import Callable
 from dataclasses import asdict
+from enum import StrEnum
 
 from modal_service.config import RuntimeLimits
 from modal_service.costs import generation_reservation, require_job_quota
-from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState
+from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, TERMINAL_STATES
+
+
+class JobOperation(StrEnum):
+    AUTHORIZE_GENERATION = "AUTHORIZE_GENERATION"
+    START_MASTER = "START_MASTER"
+    COMMIT_MASTER = "COMMIT_MASTER"
+    FAIL_MASTER = "FAIL_MASTER"
+    RECORD_GPU_CALL = "RECORD_GPU_CALL"
+    APPROVE_MASTER = "APPROVE_MASTER"
+    CANCEL = "CANCEL"
 
 
 def deterministic_job_id(user_id: str, idempotency_key: str) -> str:
@@ -106,3 +118,58 @@ class JobCoordinator:
         job.transition_to(JobState.VALIDATING_INPUT)
         self.save(job)
         return True
+
+    def transition_if_active(
+        self,
+        job_id: str,
+        expected: JobState,
+        target: JobState,
+        error_code: str | None = None,
+    ) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state in TERMINAL_STATES or job.state is not expected:
+            return job, False
+        job.error_code = error_code
+        job.transition_to(target)
+        self.save(job)
+        return job, True
+
+    def commit_master_outputs(
+        self,
+        job_id: str,
+        persist: Callable[[JobRecord], None],
+    ) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state in TERMINAL_STATES or job.state is not JobState.GENERATING_MASTER:
+            return job, False
+        persist(job)
+        job.transition_to(JobState.AWAITING_MASTER_APPROVAL)
+        self.save(job)
+        return job, True
+
+    def record_gpu_call(self, job_id: str, call_id: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state in TERMINAL_STATES:
+            return job, False
+        job.gpu_call_id = call_id
+        self.save(job)
+        return job, True
+
+    def approve_master(self, job_id: str, user_id: str, master_id: str, prompt_version: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        self.ensure_owner(job, user_id)
+        if job.state in TERMINAL_STATES:
+            return job, False
+        changed = job.approve_master(master_id)
+        if changed:
+            job.prompt_version = prompt_version
+            self.save(job)
+        return job, changed
+
+    def cancel(self, job_id: str, user_id: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        self.ensure_owner(job, user_id)
+        changed = job.cancel()
+        if changed:
+            self.save(job)
+        return job, changed
