@@ -38,9 +38,15 @@ internal class GroqTranscriptionGateway(
     override suspend fun transcribe(audioFile: File): String {
         val key = settings.apiKey.trim()
         if (key.isEmpty()) throw GruTranscriptionException(GruDictationFailure.MISSING_API_KEY)
+        val startedAt = GruDiagnostics.nowMillis()
         return try {
             client.transcribe(audioFile, key, settings.model).ifEmpty {
                 throw GruTranscriptionException(GruDictationFailure.EMPTY_RESPONSE)
+            }.also {
+                GruDiagnostics.info(
+                    "Online transcription completed durationMs=${GruDiagnostics.nowMillis() - startedAt} " +
+                        "audioBytes=${audioFile.length()}",
+                )
             }
         } catch (error: GruTranscriptionException) {
             throw error
@@ -52,6 +58,7 @@ internal class GroqTranscriptionGateway(
             throw GruTranscriptionException(GruDictationFailure.PROVIDER, error)
         }
     }
+
 }
 
 class GruTranscriptionException(

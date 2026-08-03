@@ -89,6 +89,9 @@ class GruSessionCoordinator(
                 mutableState.value = GruDictationState.Error(GruDictationFailure.NO_SPEECH)
                 return@launch
             }
+            GruDiagnostics.info(
+                "Recording ready durationMs=${recording.durationMillis} audioBytes=${recording.file.length()}",
+            )
             transcribeAndInsert(recording.file)
         }
     }
