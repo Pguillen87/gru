@@ -94,12 +94,56 @@ internal class LivingPetView(
         }
     }
 
-    private fun motionAt(seconds: Float): PetMotion = when (mode) {
+    private fun motionAt(seconds: Float): PetMotion = if (!atlas) {
+        singleImageMotionAt(seconds)
+    } else when (mode) {
         PetMotionMode.IDLE -> idleMotion(seconds)
         PetMotionMode.LISTENING -> listeningMotion(seconds)
         PetMotionMode.PROCESSING -> processingMotion(seconds)
         PetMotionMode.SUCCESS -> successMotion(seconds)
         PetMotionMode.ERROR -> errorMotion(seconds)
+    }
+
+    private fun singleImageMotionAt(t: Float): PetMotion = when (mode) {
+        PetMotionMode.IDLE -> customIdleMotion(t)
+        PetMotionMode.LISTENING -> customListeningMotion(t)
+        PetMotionMode.PROCESSING -> customProcessingMotion(t)
+        PetMotionMode.SUCCESS -> successMotion(t).uniformScale()
+        PetMotionMode.ERROR -> errorMotion(t).uniformScale()
+    }
+
+    private fun customIdleMotion(t: Float): PetMotion {
+        val breath = sin(t * PI.toFloat() * 0.9f)
+        return PetMotion(
+            y = breath * density * 2.2f,
+            rotation = sin(t * 0.8f) * 1.8f,
+            scaleX = 1f + breath * 0.018f,
+            scaleY = 1f + breath * 0.018f,
+        )
+    }
+
+    private fun customListeningMotion(t: Float): PetMotion {
+        val pulse = (sin(t * 7.5f) + 1f) / 2f
+        val response = maxOf(renderedLevel, pulse * 0.32f)
+        return PetMotion(
+            x = sin(t * 2.1f) * density * 1.8f,
+            y = -density * (2.5f + response * 4f),
+            rotation = sin(t * 3.2f) * 4.2f,
+            scaleX = 1f + response * 0.055f,
+            scaleY = 1f + response * 0.055f,
+        )
+    }
+
+    private fun customProcessingMotion(t: Float): PetMotion {
+        val orbit = t * PI.toFloat() * 1.35f
+        val scale = 1f + sin(orbit * 2f) * 0.018f
+        return PetMotion(
+            x = cos(orbit) * density * 3.4f,
+            y = sin(orbit * 2f) * density * 2.2f,
+            rotation = sin(orbit) * 8f,
+            scaleX = scale,
+            scaleY = scale,
+        )
     }
 
     private fun idleMotion(t: Float): PetMotion {
@@ -211,7 +255,12 @@ internal class LivingPetView(
             if (atlas) (column + 1) * bitmap.width / 4 else bitmap.width,
             if (atlas) (row + 1) * bitmap.height / 4 else bitmap.height,
         )
-        destination.set(0f, 0f, width.toFloat(), height.toFloat())
+        if (atlas) {
+            destination.set(0f, 0f, width.toFloat(), height.toFloat())
+        } else {
+            val bounds = aspectFitBottomBounds(source.width(), source.height(), width, height)
+            destination.set(bounds.left, bounds.top, bounds.right, bounds.bottom)
+        }
         paint.alpha = alpha
         canvas.drawBitmap(bitmap, source, destination, paint)
     }
@@ -261,11 +310,29 @@ internal class LivingPetView(
         val fromFrame: Int = 0,
         val toFrame: Int = fromFrame,
         val blend: Float = 0f,
-    )
+    ) {
+        fun uniformScale(): PetMotion {
+            val scale = (scaleX + scaleY) / 2f
+            return copy(scaleX = scale, scaleY = scale)
+        }
+    }
 
     private companion object {
         const val IDLE_CYCLE_SECONDS = 7.2f
     }
+}
+
+internal data class AspectFitBounds(val left: Float, val top: Float, val right: Float, val bottom: Float)
+
+internal fun aspectFitBottomBounds(sourceWidth: Int, sourceHeight: Int, targetWidth: Int, targetHeight: Int): AspectFitBounds {
+    if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
+        return AspectFitBounds(0f, 0f, targetWidth.toFloat(), targetHeight.toFloat())
+    }
+    val scale = minOf(targetWidth.toFloat() / sourceWidth, targetHeight.toFloat() / sourceHeight)
+    val fittedWidth = sourceWidth * scale
+    val fittedHeight = sourceHeight * scale
+    val left = (targetWidth - fittedWidth) / 2f
+    return AspectFitBounds(left, targetHeight - fittedHeight, left + fittedWidth, targetHeight.toFloat())
 }
 
 /** Draws state around the pet without adding another button or obscuring the character. */
