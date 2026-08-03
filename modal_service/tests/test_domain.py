@@ -18,3 +18,26 @@ def test_score_requires_identity_gate():
 
 def test_missing_job_has_safe_public_code():
     assert JobNotFound.code == "JOB_NOT_FOUND"
+
+
+def test_master_approval_is_idempotent_after_response_loss():
+    job = JobRecord("job", "user", "key", "source", state=JobState.AWAITING_MASTER_APPROVAL)
+    assert job.approve_master("master_1")
+    assert not job.approve_master("master_1")
+    assert job.state is JobState.CONSISTENCY_TEST
+
+
+def test_different_master_is_rejected_after_approval():
+    job = JobRecord("job", "user", "key", "source", state=JobState.AWAITING_MASTER_APPROVAL)
+    job.approve_master("master_1")
+    try:
+        job.approve_master("master_2")
+    except DomainError:
+        return
+    raise AssertionError("different master was accepted")
+
+
+def test_cancel_is_idempotent():
+    job = JobRecord("job", "user", "key", "source", state=JobState.READY_FOR_GENERATION)
+    assert job.cancel()
+    assert not job.cancel()

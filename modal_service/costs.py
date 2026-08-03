@@ -25,3 +25,16 @@ def require_job_quota(current_jobs: int, cap: int) -> int:
     if current_jobs >= cap:
         raise RateLimitExceeded("Daily job limit reached.")
     return current_jobs + 1
+
+
+def generation_reservation(
+    global_cost: float,
+    user_cost: float,
+    requested: float,
+    global_cap: float,
+    user_cap: float,
+) -> tuple[float, float]:
+    return (
+        require_reservation(global_cost, requested, global_cap),
+        require_reservation(user_cost, requested, user_cap),
+    )

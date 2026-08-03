@@ -11,7 +11,6 @@ import hashlib
 import json
 import logging
 import os
-import uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
@@ -19,8 +18,11 @@ from typing import Annotated
 import modal
 
 from modal_service.catalog import MASTER_PROMPT_VERSION, POSE_PROMPT_VERSION, POSE_TEMPLATE_VERSION
-from modal_service.config import Environment, limits_for
+from modal_service.config import Environment, generation_enabled, limits_for
+from modal_service.coordinator import JobCoordinator
+from modal_service.costs import CostLimitExceeded, RateLimitExceeded
 from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState
+from modal_service.security import AuthenticationRejected, app_check_token, bearer_token, may_schedule_gpu, valid_firebase_claims
 from modal_service.validation import ImageValidationError, validate_image
 
 APP_NAME = "gru-mascot"
@@ -30,6 +32,7 @@ ASSET_ROOT = "/gru-assets"
 MODEL_ROOT = "/gru-models"
 ENVIRONMENT = Environment(os.getenv("GRU_MASCOT_ENV", Environment.DEVELOPMENT))
 LIMITS = limits_for(ENVIRONMENT)
+GPU_GENERATION_ENABLED = generation_enabled(ENVIRONMENT, os.getenv("GPU_GENERATION_ENABLED"))
 
 api_image = modal.Image.debian_slim(python_version="3.12").pip_install(
     "fastapi[standard]>=0.115,<1", "pillow>=11,<12", "httpx>=0.28,<1", "google-auth>=2.38,<3", "firebase-admin>=6.6,<7"
@@ -47,11 +50,51 @@ firebase_admin_secret = modal.Secret.from_name("gru-mascot-firebase-admin")
 
 
 def _record_key(user_id: str, idempotency_key: str) -> str:
-    return f"{user_id}:{idempotency_key}"
+    return f"create:{user_id}:{idempotency_key}"
+
+
+def _operation_key(user_id: str, operation: str) -> str:
+    return f"operation:{user_id}:{operation}"
 
 
 def _asset_path(job_id: str, folder: str, name: str) -> Path:
     return Path(ASSET_ROOT, folder, job_id, name)
+
+
+def _templates_installed() -> bool:
+    pointer = Path(ASSET_ROOT, "pose_templates", "active.json")
+    if not pointer.is_file():
+        return False
+    try:
+        version = str(json.loads(pointer.read_text(encoding="utf-8"))["version"])
+    except (KeyError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+    package_root = Path(ASSET_ROOT, "pose_templates", "versions", version)
+    try:
+        from modal_service.templates import validate_template_package
+
+        validate_template_package(package_root)
+        return True
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def _result_payload(job: JobRecord) -> dict[str, object]:
+    manifest = _asset_path(job.job_id, "poses", "manifest.json")
+    if not manifest.is_file():
+        raise DomainError("Mascot result metadata is unavailable.")
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    if payload.get("poseSetId") != job.pose_set_id or payload.get("masterId") != job.master_id:
+        raise DomainError("Mascot result metadata is inconsistent.")
+    poses = []
+    for pose in payload.get("poses", []):
+        item = dict(pose)
+        pose_id = str(item.get("poseId", ""))
+        if not pose_id.startswith("pose_"):
+            raise DomainError("Mascot result contains an invalid pose reference.")
+        item["downloadPath"] = f"/v1/mascot/jobs/{job.job_id}/poses/{pose_id}"
+        poses.append(item)
+    return payload | {"poses": poses}
 
 
 def _decode_image(value: str) -> bytes:
@@ -64,8 +107,24 @@ def _decode_image(value: str) -> bytes:
 def _serialize(job: JobRecord) -> dict[str, object]:
     payload = asdict(job) | {"state": job.state.value}
     if job.state is JobState.AWAITING_MASTER_APPROVAL:
-        payload["masters"] = {f"master_{index}": {"id": f"master_{index}"} for index in range(1, 4)}
+        payload["masters"] = _master_references(job)
     return payload
+
+
+def _master_references(job: JobRecord) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    for index in range(1, 5):
+        master_id = f"master_{index}"
+        path = _asset_path(job.job_id, "masters", f"{master_id}.png")
+        if path.is_file():
+            references.append(
+                {
+                    "id": master_id,
+                    "download_path": f"/v1/mascot/jobs/{job.job_id}/masters/{master_id}",
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            )
+    return references
 
 
 def _deserialize(record: dict[str, object]) -> JobRecord:
@@ -80,7 +139,7 @@ def _get_job(job_id: str) -> JobRecord:
 
 
 def _save_job(job: JobRecord) -> None:
-    jobs[job.job_id] = _serialize(job)
+    jobs[job.job_id] = asdict(job) | {"state": job.state.value}
 
 
 def _ensure_owner(job: JobRecord, user_id: str) -> None:
@@ -92,8 +151,20 @@ def _api_error(error: Exception):
     from fastapi import HTTPException
 
     code = getattr(error, "code", "INVALID_REQUEST")
-    status = 429 if code == "RATE_LIMITED" else 404 if code == "JOB_NOT_FOUND" else 400 if code in {"INVALID_IMAGE", "INVALID_REQUEST"} else 409
+    status = 429 if code in {"RATE_LIMITED", "COST_LIMIT_REACHED"} else 404 if code == "JOB_NOT_FOUND" else 400 if code in {"INVALID_IMAGE", "INVALID_REQUEST"} else 409
     return HTTPException(status_code=status, detail={"code": code, "message": str(error)})
+
+
+class GuardRejected(DomainError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _raise_guard_error(result: dict[str, object]) -> None:
+    code = result.get("error_code")
+    if code:
+        raise GuardRejected(str(code), str(result.get("error_message", "Request was rejected.")))
 
 
 def _request_context(user_id: str, idempotency_key: str) -> tuple[str, str]:
@@ -102,51 +173,44 @@ def _request_context(user_id: str, idempotency_key: str) -> tuple[str, str]:
     return user_id.strip(), idempotency_key.strip()
 
 
-def _new_job(user_id: str, idempotency_key: str, source_key: str) -> JobRecord:
-    return JobRecord(
-        job_id=f"job_{uuid.uuid4().hex}",
-        user_id=user_id,
-        idempotency_key=idempotency_key,
-        source_key=source_key,
-        model_version="Qwen-Image-Edit-2511",
-        prompt_version=MASTER_PROMPT_VERSION,
-        template_version=POSE_TEMPLATE_VERSION,
-    )
-
-
 def _transition(job: JobRecord, state: JobState) -> None:
+    try:
+        current = _get_job(job.job_id)
+        job.gpu_call_id = current.gpu_call_id or job.gpu_call_id
+        job.generation_reserved = current.generation_reserved or job.generation_reserved
+    except JobNotFound:
+        pass
     job.transition_to(state)
     _save_job(job)
-
-
-def _reserve_budget(user_id: str) -> None:
-    """Development guard; one API container serializes reservations in this phase."""
-    day_key = utc_day_key()
-    from modal_service.costs import require_job_quota, require_reservation
-    global_cost = float(_usage_value(f"global-cost:{day_key}", 0.0))
-    user_cost_key = f"user-cost:{day_key}:{user_id}"
-    user_jobs_key = f"user-jobs:{day_key}:{user_id}"
-    user_cost = float(_usage_value(user_cost_key, 0.0))
-    user_jobs = int(_usage_value(user_jobs_key, 0))
-    next_global = require_reservation(global_cost, LIMITS.estimated_generation_cost_usd, LIMITS.daily_cost_cap_usd)
-    next_user = require_reservation(user_cost, LIMITS.estimated_generation_cost_usd, LIMITS.user_daily_cost_cap_usd)
-    next_jobs = require_job_quota(user_jobs, LIMITS.jobs_per_user_per_day)
-    usage[f"global-cost:{day_key}"] = next_global
-    usage[user_cost_key] = next_user
-    usage[user_jobs_key] = next_jobs
-
-
-def _usage_value(key: str, fallback: float | int) -> float | int:
-    try:
-        return usage[key]
-    except KeyError:
-        return fallback
 
 
 def utc_day_key() -> str:
     from datetime import UTC, datetime
 
     return datetime.now(UTC).date().isoformat()
+
+
+@app.function(image=api_image, max_containers=1)
+@modal.concurrent(max_inputs=1)
+def register_job(user_id: str, idempotency_key: str, source_key: str) -> dict[str, object]:
+    try:
+        coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
+        job, created = coordinator.register(user_id, idempotency_key, source_key)
+        return {"job": _serialize(job), "created": created}
+    except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
+        return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
+
+
+@app.function(image=api_image, max_containers=1)
+@modal.concurrent(max_inputs=1)
+def authorize_generation(job_id: str, user_id: str) -> dict[str, object]:
+    try:
+        authorized = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key()).authorize_generation(
+            job_id, user_id, GPU_GENERATION_ENABLED
+        )
+        return {"authorized": authorized}
+    except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
+        return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
 
 
 @app.function(
@@ -160,12 +224,17 @@ def utc_day_key() -> str:
 )
 def generate_master(job_id: str) -> None:
     """GPU boundary. The Qwen provider is enabled only after a smoke fixture exists."""
+    if not GPU_GENERATION_ENABLED:
+        logging.warning("generation_blocked job_id=%s", job_id)
+        return
     job = _get_job(job_id)
     if job.state is not JobState.VALIDATING_INPUT:
         return
     _transition(job, JobState.GENERATING_MASTER)
     try:
         outputs = _generate_qwen_masters(job)
+        if _get_job(job_id).state is JobState.CANCELED:
+            return
         _persist_master_outputs(job, outputs)
         _transition(job, JobState.AWAITING_MASTER_APPROVAL)
     except Exception as error:  # GPU libraries expose unstable exception classes.
@@ -226,7 +295,10 @@ def api():
     credentials_json = os.environ.get("FIREBASE_ADMIN_CREDENTIALS_JSON")
     if not credentials_json:
         raise RuntimeError("Firebase Admin credentials are required for protected API startup.")
-    firebase_admin.initialize_app(credentials.Certificate(json.loads(credentials_json)))
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        firebase_admin.initialize_app(credentials.Certificate(json.loads(credentials_json)))
 
     class CreateJobRequest(BaseModel):
         image_base64: str = Field(min_length=1, max_length=14_000_000)
@@ -239,25 +311,29 @@ def api():
         pose_id: str = Field(pattern=r"^pose_[0-9]{2}$")
 
     async def verified_user(authorization: Annotated[str | None, Header()] = None) -> str:
-        if not authorization or not authorization.startswith("Bearer "):
-            from fastapi import HTTPException
-            raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": "A valid identity is required."})
         try:
-            claims = id_token.verify_firebase_token(authorization.removeprefix("Bearer "), GoogleRequest(), audience="gru-mascote")
-            if claims.get("iss") != "https://securetoken.google.com/gru-mascote" or not claims.get("uid"):
+            token = bearer_token(authorization)
+        except AuthenticationRejected as error:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": str(error)}) from error
+        try:
+            claims = id_token.verify_firebase_token(token, GoogleRequest(), audience="gru-mascote")
+            if not valid_firebase_claims(claims, FIREBASE_PROJECT_ID):
                 raise ValueError("Unexpected Firebase token claims.")
-            return str(claims["uid"])
+            return str(claims.get("uid") or claims["sub"])
         except Exception as error:
             logging.info("firebase_token_rejected type=%s", type(error).__name__)
             from fastapi import HTTPException
             raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": "A valid identity is required."}) from error
 
     async def verified_app_check(x_firebase_appcheck: Annotated[str | None, Header()] = None) -> None:
-        if not x_firebase_appcheck:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=401, detail={"code": "APP_CHECK_REQUIRED", "message": "A valid app proof is required."})
         try:
-            firebase_app_check.verify_token(x_firebase_appcheck)
+            token = app_check_token(x_firebase_appcheck)
+        except AuthenticationRejected as error:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail={"code": "APP_CHECK_REQUIRED", "message": str(error)}) from error
+        try:
+            firebase_app_check.verify_token(token)
         except Exception as error:
             logging.info("firebase_app_check_rejected type=%s", type(error).__name__)
             from fastapi import HTTPException
@@ -268,39 +344,66 @@ def api():
     ) -> tuple[str, str]:
         return _request_context(user_id, x_idempotency_key or "")
 
+    async def secure_user(
+        user_id: Annotated[str, Depends(verified_user)], _: Annotated[None, Depends(verified_app_check)],
+    ) -> str:
+        return user_id
+
     @service.get("/health")
     async def health() -> dict[str, object]:
-        return {"service": APP_NAME, "environment": ENVIRONMENT.value, "gpu_enabled": True}
+        return {
+            "service": APP_NAME,
+            "environment": ENVIRONMENT.value,
+            "generation_enabled": GPU_GENERATION_ENABLED,
+            "templates_installed": _templates_installed(),
+            "model_configured": True,
+        }
 
     @service.post("/v1/mascot/jobs", status_code=202)
     async def create_job(request: CreateJobRequest, context: Annotated[tuple[str, str], Depends(cost_context)]):
         user_id, key = context
-        request_key = _record_key(user_id, key)
-        if request_key in idempotency:
-            return {"job_id": idempotency[request_key], "idempotent_replay": True}
         try:
             content = _decode_image(request.image_base64)
             _, _, _ = validate_image(content, request.content_type)
             digest = hashlib.sha256(content).hexdigest()
-            job = _new_job(user_id, key, f"original/{digest}")
-            _reserve_budget(user_id)
-            destination = _asset_path(job.job_id, "original", "source.bin")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(content)
-            assets.commit()
-            _transition(job, JobState.VALIDATING_INPUT)
-            idempotency[request_key] = job.job_id
-            generate_master.spawn(job.job_id)
-            return {"job_id": job.job_id, "state": job.state.value, "idempotent_replay": False}
-        except (ImageValidationError, DomainError) as error:
+            registration = register_job.remote(user_id, key, f"original/{digest}")
+            _raise_guard_error(registration)
+            job_data = dict(registration["job"])
+            destination = _asset_path(str(job_data["job_id"]), "original", "source.bin")
+            if not destination.is_file() or hashlib.sha256(destination.read_bytes()).hexdigest() != digest:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
+                assets.commit()
+            authorization = authorize_generation.remote(str(job_data["job_id"]), user_id)
+            _raise_guard_error(authorization)
+            if may_schedule_gpu(GPU_GENERATION_ENABLED, bool(authorization["authorized"])):
+                function_call = generate_master.spawn(str(job_data["job_id"]))
+                scheduled = _get_job(str(job_data["job_id"]))
+                scheduled.gpu_call_id = function_call.object_id
+                _save_job(scheduled)
+                job_data = _serialize(scheduled)
+            return job_data | {"idempotent_replay": not bool(registration["created"])}
+        except (ImageValidationError, DomainError, CostLimitExceeded, RateLimitExceeded) as error:
             raise _api_error(error) from error
 
     @service.get("/v1/mascot/jobs/{job_id}")
-    async def read_job(job_id: str, user_id: Annotated[str, Depends(verified_user)]):
+    async def read_job(job_id: str, user_id: Annotated[str, Depends(secure_user)]):
         try:
             job = _get_job(job_id)
             _ensure_owner(job, user_id)
             return _serialize(job)
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.get("/v1/mascot/idempotency/{idempotency_key}")
+    async def recover_job(idempotency_key: str, user_id: Annotated[str, Depends(secure_user)]):
+        try:
+            job_id = str(idempotency[_record_key(user_id, idempotency_key)])
+            job = _get_job(job_id)
+            _ensure_owner(job, user_id)
+            return _serialize(job)
+        except KeyError as error:
+            raise _api_error(JobNotFound("Job was not found.")) from error
         except DomainError as error:
             raise _api_error(error) from error
 
@@ -309,13 +412,16 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, context[0])
-            if job.state is JobState.AWAITING_MASTER_APPROVAL and job.master_id == request.master_id:
+            operation_key = _operation_key(context[0], f"approve:{job_id}:{request.master_id}")
+            if operation_key in idempotency:
                 return _serialize(job)
-            if job.state is not JobState.AWAITING_MASTER_APPROVAL:
-                raise DomainError("Master approval is not available for this job.")
-            job.master_id = request.master_id
-            job.prompt_version = POSE_PROMPT_VERSION
-            _transition(job, JobState.CONSISTENCY_TEST)
+            if not _asset_path(job_id, "masters", f"{request.master_id}.png").is_file():
+                raise JobNotFound("Master was not found.")
+            changed = job.approve_master(request.master_id)
+            if changed:
+                job.prompt_version = POSE_PROMPT_VERSION
+                _save_job(job)
+            idempotency[operation_key] = job.job_id
             return _serialize(job)
         except DomainError as error:
             raise _api_error(error) from error
@@ -325,20 +431,60 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, context[0])
-            if job.state not in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELED}:
-                _transition(job, JobState.CANCELED)
+            operation_key = _operation_key(context[0], f"cancel:{job_id}")
+            if operation_key in idempotency:
+                return _serialize(job)
+            if job.cancel():
+                _save_job(job)
+            if job.gpu_call_id:
+                modal.FunctionCall.from_id(job.gpu_call_id).cancel()
+            idempotency[operation_key] = job.job_id
             return _serialize(job)
         except DomainError as error:
             raise _api_error(error) from error
 
     @service.get("/v1/mascot/jobs/{job_id}/result")
-    async def result(job_id: str, user_id: Annotated[str, Depends(verified_user)]):
+    async def result(job_id: str, user_id: Annotated[str, Depends(secure_user)]):
         try:
             job = _get_job(job_id)
             _ensure_owner(job, user_id)
             if job.state is not JobState.COMPLETED:
                 raise DomainError("Mascot result is not ready.")
-            return _serialize(job) | {"poses": []}
+            return _result_payload(job)
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.get("/v1/mascot/jobs/{job_id}/masters/{master_id}")
+    async def download_master(job_id: str, master_id: str, user_id: Annotated[str, Depends(secure_user)]):
+        from fastapi.responses import FileResponse
+        if master_id not in {"master_1", "master_2", "master_3", "master_4"}:
+            raise _api_error(JobNotFound("Master was not found."))
+        job = _get_job(job_id)
+        _ensure_owner(job, user_id)
+        path = _asset_path(job_id, "masters", f"{master_id}.png")
+        if not path.is_file():
+            raise _api_error(JobNotFound("Master was not found."))
+        return FileResponse(path, media_type="image/png", filename=f"{master_id}.png")
+
+    @service.get("/v1/mascot/jobs/{job_id}/poses/{pose_id}")
+    async def download_pose(job_id: str, pose_id: str, user_id: Annotated[str, Depends(secure_user)]):
+        from fastapi.responses import FileResponse
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, user_id)
+            if job.state is not JobState.COMPLETED:
+                raise JobNotFound("Pose was not found.")
+            result_payload = _result_payload(job)
+            pose = next((item for item in result_payload["poses"] if item.get("poseId") == pose_id), None)
+            if pose is None:
+                raise JobNotFound("Pose was not found.")
+            filename = Path(str(pose.get("fileName", ""))).name
+            if not filename:
+                raise JobNotFound("Pose was not found.")
+            path = _asset_path(job_id, "poses", filename)
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != pose.get("sha256"):
+                raise JobNotFound("Pose was not found.")
+            return FileResponse(path, media_type="image/png", filename=f"{pose_id}.png")
         except DomainError as error:
             raise _api_error(error) from error
 
@@ -362,9 +508,19 @@ def api():
             _ensure_owner(job, user_id)
         except DomainError as error:
             raise _api_error(error) from error
+        if not _templates_installed():
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "TEMPLATE_ASSETS_UNAVAILABLE", "message": "Official pose templates are not installed."},
+            )
+        if not GPU_GENERATION_ENABLED:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "GENERATION_DISABLED", "message": "GPU generation is disabled."},
+            )
         raise HTTPException(
-            status_code=409,
-            detail={"code": "TEMPLATE_ASSETS_UNAVAILABLE", "message": "Official pose templates are not installed."},
+            status_code=501,
+            detail={"code": "GENERATION_PIPELINE_NOT_READY", "message": "Pose generation awaits approved evaluation tooling."},
         )
 
     return service

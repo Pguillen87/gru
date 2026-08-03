@@ -11,6 +11,7 @@ from typing import Mapping
 class JobState(StrEnum):
     QUEUED = "QUEUED"
     VALIDATING_INPUT = "VALIDATING_INPUT"
+    READY_FOR_GENERATION = "READY_FOR_GENERATION"
     GENERATING_MASTER = "GENERATING_MASTER"
     AWAITING_MASTER_APPROVAL = "AWAITING_MASTER_APPROVAL"
     CONSISTENCY_TEST = "CONSISTENCY_TEST"
@@ -26,7 +27,8 @@ TERMINAL_STATES = frozenset({JobState.COMPLETED, JobState.FAILED, JobState.CANCE
 
 ALLOWED_TRANSITIONS: Mapping[JobState, frozenset[JobState]] = {
     JobState.QUEUED: frozenset({JobState.VALIDATING_INPUT, JobState.CANCELED}),
-    JobState.VALIDATING_INPUT: frozenset({JobState.GENERATING_MASTER, JobState.FAILED, JobState.CANCELED}),
+    JobState.VALIDATING_INPUT: frozenset({JobState.READY_FOR_GENERATION, JobState.GENERATING_MASTER, JobState.FAILED, JobState.CANCELED}),
+    JobState.READY_FOR_GENERATION: frozenset({JobState.VALIDATING_INPUT, JobState.CANCELED}),
     JobState.GENERATING_MASTER: frozenset({JobState.AWAITING_MASTER_APPROVAL, JobState.FAILED, JobState.CANCELED}),
     JobState.AWAITING_MASTER_APPROVAL: frozenset({JobState.CONSISTENCY_TEST, JobState.CANCELED}),
     JobState.CONSISTENCY_TEST: frozenset({JobState.READY_FOR_POSES, JobState.CONSISTENCY_FAILED, JobState.FAILED, JobState.CANCELED}),
@@ -98,8 +100,29 @@ class JobRecord:
     template_version: str = "poses-v1"
     attempts: int = 0
     error_code: str | None = None
+    generation_reserved: bool = False
+    gpu_call_id: str | None = None
 
     def transition_to(self, target: JobState) -> None:
         require_transition(self.state, target)
         self.state = target
         self.updated_at = utc_now()
+
+    def approve_master(self, master_id: str) -> bool:
+        if self.master_id == master_id:
+            return False
+        if self.master_id is not None:
+            raise DomainError("A different master is already approved for this job.")
+        if self.state is not JobState.AWAITING_MASTER_APPROVAL:
+            raise DomainError("Master approval is not available for this job.")
+        self.master_id = master_id
+        self.transition_to(JobState.CONSISTENCY_TEST)
+        return True
+
+    def cancel(self) -> bool:
+        if self.state is JobState.CANCELED:
+            return False
+        if self.state in TERMINAL_STATES:
+            return False
+        self.transition_to(JobState.CANCELED)
+        return True
