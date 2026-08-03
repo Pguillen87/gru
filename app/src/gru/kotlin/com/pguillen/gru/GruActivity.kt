@@ -89,7 +89,6 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
             (modelState is WhisperModelState.NotInstalled || modelState is WhisperModelState.Error)
         ) {
             prefs.setEngine(null)
-            prefs.setEnabled(false)
             prefs.requestEngine(TranscriptionEngine.PRIVATE_LOCAL)
         }
     }

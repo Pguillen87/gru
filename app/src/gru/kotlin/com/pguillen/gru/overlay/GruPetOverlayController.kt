@@ -91,11 +91,12 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             ) { focused, imeVisible -> TargetState(focused, imeVisible) }
             combine(
                 prefs.enabled,
+                prefs.engine,
                 appearance,
                 target,
                 GruDictation.state(context),
-            ) { enabled, visual, targetState, dictationState ->
-                update(enabled, visual, targetState, dictationState)
+            ) { enabled, engine, visual, targetState, dictationState ->
+                update(enabled, engine != null, visual, targetState, dictationState)
             }.collect { }
         }
     }
@@ -111,6 +112,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
 
     private fun update(
         enabled: Boolean,
+        engineReady: Boolean,
         appearance: Appearance,
         target: TargetState,
         state: GruDictationState,
@@ -129,6 +131,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         if (!targetAvailable && state is GruDictationState.Recording) GruDictation.cancel()
         val shouldShow = PetVisibilityPolicy.shouldShow(
             enabled = enabled,
+            engineReady = engineReady,
             editableFocused = target.editableFocused,
             imeVisible = target.imeVisible,
         )

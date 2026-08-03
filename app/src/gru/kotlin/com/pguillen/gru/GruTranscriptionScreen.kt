@@ -135,7 +135,6 @@ internal fun GruTranscriptionScreen(
                 prefs.removeGroqApiKey()
                 if (current == TranscriptionEngine.ONLINE_GROQ) {
                     prefs.setEngine(null)
-                    prefs.setEnabled(false)
                 }
             })
         }
@@ -152,7 +151,6 @@ internal fun GruTranscriptionScreen(
                 onRemove = {
                     if (current == TranscriptionEngine.PRIVATE_LOCAL) {
                         prefs.setEngine(null)
-                        prefs.setEnabled(false)
                     }
                     manager.removeModel(GruDictation::releaseLocalModel)
                 },

@@ -50,8 +50,7 @@ class GruPreferences private constructor(context: Context) {
 
     init {
         if (storedEngine != initialEngine) {
-            mutableEnabled.value = false
-            store.edit().remove(KEY_ENGINE).putBoolean(KEY_ENABLED, false).apply()
+            store.edit().remove(KEY_ENGINE).apply()
         }
     }
 
@@ -100,8 +99,7 @@ class GruPreferences private constructor(context: Context) {
         mutableEngine.value = retainedEngine
         store.edit().putString(KEY_REQUESTED_ENGINE, value.name).apply {
             if (retainedEngine == null) {
-                mutableEnabled.value = false
-                remove(KEY_ENGINE).putBoolean(KEY_ENABLED, false)
+                remove(KEY_ENGINE)
             }
         }.apply()
     }

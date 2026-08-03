@@ -6,14 +6,19 @@ import org.junit.jupiter.api.Test
 
 class PetVisibilityPolicyTest {
     @Test
-    fun `shows only with enabled focused editor and visible keyboard`() {
-        assertTrue(PetVisibilityPolicy.shouldShow(true, true, true))
-        assertFalse(PetVisibilityPolicy.shouldShow(true, false, true))
-        assertFalse(PetVisibilityPolicy.shouldShow(true, true, false))
+    fun `shows only with enabled ready engine focused editor and visible keyboard`() {
+        assertTrue(PetVisibilityPolicy.shouldShow(true, true, true, true))
+        assertFalse(PetVisibilityPolicy.shouldShow(true, true, false, true))
+        assertFalse(PetVisibilityPolicy.shouldShow(true, true, true, false))
     }
 
     @Test
     fun `stays hidden when disabled`() {
-        assertFalse(PetVisibilityPolicy.shouldShow(false, true, true))
+        assertFalse(PetVisibilityPolicy.shouldShow(false, true, true, true))
+    }
+
+    @Test
+    fun `pauses while the requested engine is not ready`() {
+        assertFalse(PetVisibilityPolicy.shouldShow(true, false, true, true))
     }
 }

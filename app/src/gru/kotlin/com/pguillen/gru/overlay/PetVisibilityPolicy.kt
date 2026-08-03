@@ -9,9 +9,11 @@ package com.pguillen.gru.overlay
 internal object PetVisibilityPolicy {
     fun shouldShow(
         enabled: Boolean,
+        engineReady: Boolean,
         editableFocused: Boolean,
         imeVisible: Boolean,
     ): Boolean = enabled &&
+        engineReady &&
         editableFocused &&
         imeVisible
 }
