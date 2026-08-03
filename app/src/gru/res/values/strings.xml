@@ -144,4 +144,14 @@
   <string name="gru__choose_master">Choose your mascot</string>
   <string name="gru__master_images_pending">Your mascot options will appear here when they are ready.</string>
   <string name="gru__choose_this_mascot">Choose this mascot</string>
+  <string name="gru__mascot_waiting_generation">Your request is saved. Mascot generation is temporarily paused.</string>
+  <string name="gru__mascot_network_paused">No connection. We’ll continue checking your mascot when the internet returns.</string>
+  <string name="gru__mascot_submission_uncertain">We could not confirm the request. Try again to safely recover the same creation.</string>
+  <string name="gru__cancel_creation">Cancel creation</string>
+  <string name="gru__canceling_creation">Canceling creation…</string>
+  <string name="gru__cancel_pending">No connection. Cancellation is pending and no new creation can start.</string>
+  <string name="gru__try_again">Try again</string>
+  <string name="gru__master_preview">Mascot option</string>
+  <string name="gru__master_preview_number">Mascot option %1$d</string>
+  <string name="gru__master_preview_unavailable">Preview unavailable</string>
 </resources>

@@ -31,6 +31,37 @@ class MascotApiTest {
         } finally { server.shutdown() }
     }
 
+    @Test fun `recovers a create by stable idempotency key`() = runTest {
+        val server = MockWebServer().apply { enqueue(MockResponse().setBody("{\"job_id\":\"job_1\",\"state\":\"READY_FOR_GENERATION\"}")); start() }
+        try {
+            val api = MascotApi(FakeAuth, FakeAppCheck, OkHttpClient(), server.url("/").toString())
+            assertEquals("job_1", api.recoverJob("request-1").jobId)
+            assertEquals("/v1/mascot/idempotency/request-1", server.takeRequest().path)
+        } finally { server.shutdown() }
+    }
+
+    @Test fun `parses typed master references and downloads with proof headers`() = runTest {
+        val body = """{"job_id":"job_1","state":"AWAITING_MASTER_APPROVAL","masters":[{"id":"master_1","download_path":"/v1/mascot/jobs/job_1/masters/master_1","sha256":"abc"}]}"""
+        val server = MockWebServer().apply {
+            enqueue(MockResponse().setBody(body)); enqueue(MockResponse().setBody("image-bytes")); start()
+        }
+        try {
+            val api = MascotApi(FakeAuth, FakeAppCheck, OkHttpClient(), server.url("/").toString())
+            val master = api.job("job_1").masters.single()
+            assertEquals("master_1", master.id)
+            assertEquals("abc", master.sha256)
+            assertEquals("image-bytes", api.download(master.downloadPath).decodeToString())
+            val download = server.takeRequest().let { server.takeRequest() }
+            assertEquals("Bearer test-id-token", download.getHeader("Authorization"))
+            assertEquals("test-app-check", download.getHeader("X-Firebase-AppCheck"))
+        } finally { server.shutdown() }
+    }
+
+    @Test fun `rejects an untrusted server download path`() = runTest {
+        val api = MascotApi(FakeAuth, FakeAppCheck, OkHttpClient(), "https://example.invalid")
+        assertFailsWith<IllegalArgumentException> { api.download("https://attacker.invalid/file") }
+    }
+
     private data object FakeAuth : MascotAuthTokenProvider { override suspend fun token() = "test-id-token" }
     private data object FakeAppCheck : MascotAppCheckTokenProvider { override suspend fun token() = "test-app-check" }
 }

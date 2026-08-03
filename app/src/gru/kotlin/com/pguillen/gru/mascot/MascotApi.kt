@@ -1,23 +1,25 @@
 package com.pguillen.gru.mascot
 
 import com.pguillen.gru.BuildConfig
+import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.Base64
 
 data class CreateMascotJobRequest(val imageBase64: String, val contentType: String) {
     fun json(): JsonObject = buildJsonObject {
-        put("image_base64", JsonPrimitive(imageBase64)); put("content_type", JsonPrimitive(contentType))
+        put("image_base64", JsonPrimitive(imageBase64))
+        put("content_type", JsonPrimitive(contentType))
     }
 }
 
@@ -25,12 +27,46 @@ data class ApproveMasterRequest(val masterId: String) {
     fun json(): JsonObject = buildJsonObject { put("master_id", JsonPrimitive(masterId)) }
 }
 
-data class MascotJobResponse(val jobId: String, val state: String, val masterIds: List<String>) {
+data class MasterReference(
+    val id: String,
+    val downloadPath: String,
+    val sha256: String? = null,
+)
+
+data class MascotJobResponse(
+    val jobId: String,
+    val state: String,
+    val masters: List<MasterReference> = emptyList(),
+) {
     companion object {
         fun from(json: JsonObject) = MascotJobResponse(
-            jobId = json["job_id"]?.jsonPrimitive?.content ?: throw MascotApiException(ApiError("INVALID_RESPONSE", "Resposta inválida do serviço.")),
-            state = json["state"]?.jsonPrimitive?.content ?: "QUEUED",
-            masterIds = json["masters"]?.jsonObject?.keys?.toList().orEmpty(),
+            jobId = json.requiredString("job_id"),
+            state = json.string("state") ?: "QUEUED",
+            masters = json["masters"]?.jsonArray?.map { item ->
+                val master = item.jsonObject
+                MasterReference(master.requiredString("id"), master.requiredString("download_path"), master.string("sha256"))
+            }.orEmpty(),
+        )
+    }
+}
+
+data class MascotResultResponse(
+    val poseSetId: String,
+    val masterId: String,
+    val version: String,
+    val modelVersion: String?,
+    val poses: List<MascotPose>,
+) {
+    companion object {
+        fun from(json: JsonObject) = MascotResultResponse(
+            poseSetId = json.requiredString("poseSetId"), masterId = json.requiredString("masterId"),
+            version = json.requiredString("version"), modelVersion = json.string("modelVersion"),
+            poses = json["poses"]?.jsonArray?.map { item -> item.jsonObject.let { pose ->
+                MascotPose(
+                    pose.requiredString("poseId"), pose.requiredString("name"), pose.requiredString("fileName"),
+                    pose.requiredString("sha256"), pose.requiredString("downloadPath"),
+                )
+            } }.orEmpty(),
         )
     }
 }
@@ -39,9 +75,19 @@ data class ApiError(val code: String, val message: String) {
     companion object {
         fun from(body: String): ApiError? = runCatching {
             val detail = Json.parseToJsonElement(body).jsonObject["detail"]?.jsonObject ?: return null
-            ApiError(detail["code"]?.jsonPrimitive?.content ?: "UNKNOWN", detail["message"]?.jsonPrimitive?.content ?: "")
+            ApiError(detail.string("code") ?: "UNKNOWN", detail.string("message").orEmpty())
         }.getOrNull()
     }
+}
+
+interface MascotRemoteApi {
+    suspend fun createJob(image: ByteArray, mimeType: String, key: String): MascotJobResponse
+    suspend fun job(jobId: String): MascotJobResponse
+    suspend fun recoverJob(idempotencyKey: String): MascotJobResponse
+    suspend fun approveMaster(jobId: String, masterId: String, key: String): MascotJobResponse
+    suspend fun cancel(jobId: String, key: String): MascotJobResponse
+    suspend fun result(jobId: String): MascotResultResponse
+    suspend fun download(path: String): ByteArray
 }
 
 class MascotApi(
@@ -49,32 +95,68 @@ class MascotApi(
     private val appCheck: MascotAppCheckTokenProvider,
     private val client: OkHttpClient = OkHttpClient(),
     private val baseUrl: String = BuildConfig.MASCOT_API_BASE_URL,
-) {
-    suspend fun createJob(image: ByteArray, mimeType: String, idempotencyKey: String): MascotJobResponse = request(
-        "/v1/mascot/jobs", "POST", idempotencyKey,
-        CreateMascotJobRequest(Base64.getEncoder().encodeToString(image), mimeType).json(),
+) : MascotRemoteApi {
+    override suspend fun createJob(image: ByteArray, mimeType: String, key: String): MascotJobResponse = requestJob(
+        "/v1/mascot/jobs", "POST", key, CreateMascotJobRequest(Base64.getEncoder().encodeToString(image), mimeType).json(),
     )
 
-    suspend fun job(jobId: String): MascotJobResponse = request("/v1/mascot/jobs/$jobId", "GET")
+    override suspend fun job(jobId: String): MascotJobResponse = requestJob("/v1/mascot/jobs/$jobId", "GET")
 
-    suspend fun approveMaster(jobId: String, masterId: String, idempotencyKey: String): MascotJobResponse = request(
-        "/v1/mascot/jobs/$jobId/approve-master", "POST", idempotencyKey, ApproveMasterRequest(masterId).json(),
+    override suspend fun recoverJob(idempotencyKey: String): MascotJobResponse = requestJob(
+        "/v1/mascot/idempotency/${idempotencyKey.requireSafeIdentifier()}", "GET",
     )
 
-    private suspend fun request(path: String, method: String, idempotencyKey: String? = null, body: JsonObject? = null): MascotJobResponse = withContext(Dispatchers.IO) {
-        val builder = Request.Builder().url(baseUrl.trimEnd('/') + path)
-            .header("Authorization", "Bearer ${tokens.token()}")
-            .header("X-Firebase-AppCheck", appCheck.token())
-        idempotencyKey?.let { builder.header("X-Idempotency-Key", it) }
-        val request = if (method == "GET") builder.get().build() else builder.method(method, Json.encodeToString(JsonObject.serializer(), body ?: buildJsonObject {}).toRequestBody(JSON)).build()
-        client.newCall(request).execute().use { response ->
-            val responseBody = response.body.string()
-            if (!response.isSuccessful) throw MascotApiException(ApiError.from(responseBody) ?: ApiError("HTTP_${response.code}", ""))
-            MascotJobResponse.from(Json.parseToJsonElement(responseBody).jsonObject)
+    override suspend fun approveMaster(jobId: String, masterId: String, key: String): MascotJobResponse = requestJob(
+        "/v1/mascot/jobs/$jobId/approve-master", "POST", key, ApproveMasterRequest(masterId).json(),
+    )
+
+    override suspend fun cancel(jobId: String, key: String): MascotJobResponse =
+        requestJob("/v1/mascot/jobs/$jobId/cancel", "POST", key, buildJsonObject {})
+
+    override suspend fun result(jobId: String): MascotResultResponse = MascotResultResponse.from(
+        requestJson("/v1/mascot/jobs/$jobId/result", "GET"),
+    )
+
+    override suspend fun download(path: String): ByteArray = withContext(Dispatchers.IO) {
+        require(path.startsWith("/v1/mascot/jobs/") && ".." !in path && '?' !in path && '#' !in path) {
+            "Untrusted mascot download path."
+        }
+        client.newCall(authenticatedRequest(path).get().build()).execute().use { response ->
+            val bytes = response.body.bytes()
+            if (!response.isSuccessful) throw MascotApiException(ApiError.from(bytes.decodeToString()) ?: ApiError("HTTP_${response.code}", ""))
+            bytes
         }
     }
 
-    private companion object { val JSON = "application/json; charset=utf-8".toMediaType() }
+    private suspend fun requestJob(path: String, method: String, key: String? = null, body: JsonObject? = null) =
+        MascotJobResponse.from(requestJson(path, method, key, body))
+
+    private suspend fun requestJson(path: String, method: String, key: String? = null, body: JsonObject? = null): JsonObject = withContext(Dispatchers.IO) {
+        val builder = authenticatedRequest(path)
+        key?.let { builder.header("X-Idempotency-Key", it) }
+        val request = if (method == "GET") builder.get().build() else builder.method(
+            method, Json.encodeToString(JsonObject.serializer(), body ?: buildJsonObject {}).toRequestBody(JSON_MEDIA),
+        ).build()
+        client.newCall(request).execute().use { response ->
+            val responseBody = response.body.string()
+            if (!response.isSuccessful) throw MascotApiException(ApiError.from(responseBody) ?: ApiError("HTTP_${response.code}", ""))
+            Json.parseToJsonElement(responseBody).jsonObject
+        }
+    }
+
+    private suspend fun authenticatedRequest(path: String): Request.Builder = Request.Builder()
+        .url(baseUrl.trimEnd('/') + path)
+        .header("Authorization", "Bearer ${tokens.token()}")
+        .header("X-Firebase-AppCheck", appCheck.token())
+
+    private companion object { val JSON_MEDIA = "application/json; charset=utf-8".toMediaType() }
 }
 
 class MascotApiException(val apiError: ApiError) : Exception(apiError.message)
+
+private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.content
+private fun String.requireSafeIdentifier(): String = also {
+    require(matches(Regex("^[A-Za-z0-9:_-]{1,160}$"))) { "Invalid mascot identifier." }
+}
+private fun JsonObject.requiredString(key: String): String = string(key)
+    ?: throw MascotApiException(ApiError("INVALID_RESPONSE", "Resposta inválida do serviço."))

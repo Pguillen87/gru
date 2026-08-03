@@ -37,6 +37,9 @@ class GruPreferences private constructor(context: Context) {
     private val mutablePendingMascotRequestId = MutableStateFlow(store.getString(KEY_PENDING_MASCOT_REQUEST, null))
     val pendingMascotRequestId: StateFlow<String?> = mutablePendingMascotRequestId.asStateFlow()
 
+    private val mutableMascotCancelPending = MutableStateFlow(store.getBoolean(KEY_MASCOT_CANCEL_PENDING, false))
+    val mascotCancelPending: StateFlow<Boolean> = mutableMascotCancelPending.asStateFlow()
+
     private val mutableSize = MutableStateFlow(store.enumValue(KEY_SIZE, GruPetSize.MEDIUM))
     val size: StateFlow<GruPetSize> = mutableSize.asStateFlow()
 
@@ -101,6 +104,11 @@ class GruPreferences private constructor(context: Context) {
     fun setPendingMascotRequestId(requestId: String?) {
         mutablePendingMascotRequestId.value = requestId
         store.edit().apply { if (requestId == null) remove(KEY_PENDING_MASCOT_REQUEST) else putString(KEY_PENDING_MASCOT_REQUEST, requestId) }.apply()
+    }
+
+    fun setMascotCancelPending(value: Boolean) {
+        mutableMascotCancelPending.value = value
+        store.edit().putBoolean(KEY_MASCOT_CANCEL_PENDING, value).apply()
     }
 
     private fun readMascotSource(): MascotSource {
@@ -224,6 +232,7 @@ class GruPreferences private constructor(context: Context) {
         private const val KEY_CUSTOM_MASTER = "custom_master"
         private const val KEY_PENDING_MASCOT_JOB = "pending_mascot_job"
         private const val KEY_PENDING_MASCOT_REQUEST = "pending_mascot_request"
+        private const val KEY_MASCOT_CANCEL_PENDING = "mascot_cancel_pending"
         private const val KEY_SIZE = "pet_size"
         private const val KEY_OPACITY = "pet_opacity"
         private const val KEY_GROQ_API_KEY = "groq_api_key"

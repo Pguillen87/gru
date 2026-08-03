@@ -73,6 +73,10 @@ result
 
 # Rust
 debug/
+!/app/src/debug/
+!/app/src/debug/kotlin/
+!/app/src/debug/kotlin/**
+!/app/src/debug/google-services.json
 target/
 **/*.rs.bk
 *.pdb

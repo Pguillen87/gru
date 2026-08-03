@@ -17,10 +17,11 @@ import android.graphics.RectF
 import android.os.SystemClock
 import android.view.View
 import android.view.animation.LinearInterpolator
+import com.pguillen.gru.R
+import com.pguillen.gru.mascot.MascotVisual
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
-import com.pguillen.gru.mascot.MascotVisual
 
 internal enum class PetMotionMode { IDLE, LISTENING, PROCESSING, SUCCESS, ERROR }
 
@@ -230,7 +231,8 @@ internal class LivingPetView(
             is MascotVisual.Atlas -> BitmapFactory.decodeResource(resources, visual.drawableRes, options())
             is MascotVisual.ImageFile -> BitmapFactory.decodeFile(visual.absolutePath, options())
         }
-        return checkNotNull(decoded) { "Unable to decode mascot visual" }.toMutableBitmap()
+        val safe = decoded ?: BitmapFactory.decodeResource(resources, R.drawable.gru_pet_faisca_atlas, options())
+        return checkNotNull(safe) { "Built-in mascot artwork is unavailable" }.toMutableBitmap()
     }
 
     private fun options() = BitmapFactory.Options().apply {
