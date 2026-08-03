@@ -1,0 +1,101 @@
+"""Stable, framework-independent GRU Mascot domain model."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Mapping
+
+
+class JobState(StrEnum):
+    QUEUED = "QUEUED"
+    VALIDATING_INPUT = "VALIDATING_INPUT"
+    GENERATING_MASTER = "GENERATING_MASTER"
+    AWAITING_MASTER_APPROVAL = "AWAITING_MASTER_APPROVAL"
+    CONSISTENCY_TEST = "CONSISTENCY_TEST"
+    CONSISTENCY_FAILED = "CONSISTENCY_FAILED"
+    READY_FOR_POSES = "READY_FOR_POSES"
+    GENERATING_POSES = "GENERATING_POSES"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELED = "CANCELED"
+
+
+TERMINAL_STATES = frozenset({JobState.COMPLETED, JobState.FAILED, JobState.CANCELED})
+
+ALLOWED_TRANSITIONS: Mapping[JobState, frozenset[JobState]] = {
+    JobState.QUEUED: frozenset({JobState.VALIDATING_INPUT, JobState.CANCELED}),
+    JobState.VALIDATING_INPUT: frozenset({JobState.GENERATING_MASTER, JobState.FAILED, JobState.CANCELED}),
+    JobState.GENERATING_MASTER: frozenset({JobState.AWAITING_MASTER_APPROVAL, JobState.FAILED, JobState.CANCELED}),
+    JobState.AWAITING_MASTER_APPROVAL: frozenset({JobState.CONSISTENCY_TEST, JobState.CANCELED}),
+    JobState.CONSISTENCY_TEST: frozenset({JobState.READY_FOR_POSES, JobState.CONSISTENCY_FAILED, JobState.FAILED, JobState.CANCELED}),
+    JobState.CONSISTENCY_FAILED: frozenset({JobState.GENERATING_MASTER, JobState.CANCELED}),
+    JobState.READY_FOR_POSES: frozenset({JobState.GENERATING_POSES, JobState.CANCELED}),
+    JobState.GENERATING_POSES: frozenset({JobState.COMPLETED, JobState.FAILED, JobState.CANCELED}),
+    JobState.COMPLETED: frozenset(),
+    JobState.FAILED: frozenset(),
+    JobState.CANCELED: frozenset(),
+}
+
+
+class DomainError(ValueError):
+    """A safe error which may be shown to the integration client."""
+
+
+def utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def require_transition(current: JobState, target: JobState) -> None:
+    if target not in ALLOWED_TRANSITIONS[current]:
+        raise DomainError(f"Cannot transition from {current} to {target}.")
+
+
+@dataclass(frozen=True)
+class BenchmarkScore:
+    identity: float
+    pose: float
+    style: float
+    anatomy: float
+    cost_speed: float
+    operations_license: float
+
+    def total(self) -> float:
+        return round(
+            self.identity * 0.40
+            + self.pose * 0.20
+            + self.style * 0.15
+            + self.anatomy * 0.10
+            + self.cost_speed * 0.10
+            + self.operations_license * 0.05,
+            2,
+        )
+
+    def passes(self, total_gate: float = 8.2, identity_gate: float = 9.0, critical_gate: float = 8.0) -> bool:
+        return self.total() >= total_gate and self.identity >= identity_gate and min(
+            self.identity, self.pose, self.style, self.anatomy
+        ) >= critical_gate
+
+
+@dataclass
+class JobRecord:
+    job_id: str
+    user_id: str
+    idempotency_key: str
+    source_key: str
+    state: JobState = JobState.QUEUED
+    master_id: str | None = None
+    pose_set_id: str | None = None
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+    model_version: str = "qwen-image-edit-2511"
+    prompt_version: str = "master-v1"
+    template_version: str = "poses-v1"
+    attempts: int = 0
+    error_code: str | None = None
+
+    def transition_to(self, target: JobState) -> None:
+        require_transition(self.state, target)
+        self.state = target
+        self.updated_at = utc_now()
