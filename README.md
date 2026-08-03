@@ -1,5 +1,9 @@
 # Gru
 
+<p align="center">
+  <img src="brand/gru-brand-icon-master.png" width="180" alt="Gro, mascote do Gru">
+</p>
+
 **Fale. O Gru escreve.**
 
 Gru é um aplicativo Android de ditado por voz com pet flutuante. Ele mantém o teclado habitual do usuário e aparece somente quando há um campo editável focado e o teclado está visível.
