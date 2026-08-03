@@ -74,3 +74,14 @@ Use Modal workspace metrics and credits pages plus the `gru-mascot-usage` Dict c
 ## Retention
 
 Originals and rejected Masters are temporary. Approved Masters and poses are private persistent assets. Cleanup must remain idempotent and job-scoped; no cleanup deployment is enabled until retention durations are product-approved.
+
+## Play Store release gate
+
+Before publishing the mascot feature, execute and archive the mandatory release
+and LGPD audit defined in `SECURITY.md`. This is a blocking operational gate,
+not a post-release task. At minimum, the operator must retain evidence for Play
+Integrity on `com.pguillen.gru`, release-artifact credential scanning, EXIF
+removal, informed consent, approved retention periods, end-to-end deletion, and
+confirmation that Firebase Admin and Modal credentials are absent from the
+APK/AAB. Debug App Check tokens are development-only and must never be copied
+into source code, Android resources, Git, or a release artifact.
