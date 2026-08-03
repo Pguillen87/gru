@@ -28,16 +28,22 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import com.pguillen.gru.overlay.GruAccessibilityService
+import com.pguillen.gru.dictation.TranscriptionEngine
+import com.pguillen.gru.local.WhisperModelManager
+import com.pguillen.gru.local.WhisperModelState
 
 class GruActivity : ComponentActivity() {
     private val prefs by lazy { GruPreferences.get(this) }
@@ -70,24 +76,47 @@ private enum class GruDestination(val label: Int) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionChanged: () -> Unit) {
+    val context = LocalContext.current
+    val modelManager = remember { WhisperModelManager.get(context) }
+    val engine by prefs.engine.collectAsState()
+    val modelState by modelManager.state.collectAsState()
     var destination by remember {
-        mutableIntStateOf(if (prefs.engine.value == null) GruDestination.TRANSCRIPTION.ordinal else 0)
+        mutableIntStateOf(GruDestination.GENERAL.ordinal)
+    }
+    LaunchedEffect(engine, modelState) {
+        if (
+            engine == TranscriptionEngine.PRIVATE_LOCAL &&
+            (modelState is WhisperModelState.NotInstalled || modelState is WhisperModelState.Error)
+        ) {
+            prefs.setEngine(null)
+            prefs.setEnabled(false)
+            prefs.requestEngine(TranscriptionEngine.PRIVATE_LOCAL)
+        }
     }
     Scaffold(topBar = {
         Column {
             TopAppBar(title = { Text(stringResource(R.string.gru__app_name)) })
-            PrimaryTabRow(selectedTabIndex = destination) {
-                GruDestination.entries.forEachIndexed { index, item ->
-                    Tab(
-                        selected = destination == index,
-                        onClick = { destination = index },
-                        text = { Text(stringResource(item.label)) },
-                    )
+            if (engine != null) {
+                PrimaryTabRow(selectedTabIndex = destination) {
+                    GruDestination.entries.forEachIndexed { index, item ->
+                        Tab(
+                            selected = destination == index,
+                            onClick = { destination = index },
+                            text = { Text(stringResource(item.label)) },
+                        )
+                    }
                 }
             }
         }
     }) { padding ->
-        when (GruDestination.entries[destination]) {
+        if (engine == null) {
+            GruTranscriptionScreen(
+                prefs = prefs,
+                firstUse = true,
+                onConfigured = { destination = GruDestination.GENERAL.ordinal },
+                modifier = Modifier.fillMaxSize().padding(padding),
+            )
+        } else when (GruDestination.entries[destination]) {
             GruDestination.GENERAL -> GruGeneralScreen(
                 prefs = prefs,
                 permissionRefresh = permissionRefresh,

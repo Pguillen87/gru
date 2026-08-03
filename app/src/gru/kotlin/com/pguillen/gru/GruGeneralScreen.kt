@@ -156,14 +156,12 @@ private fun PermissionSection(accessibility: Boolean, microphone: Boolean, notif
 @Composable
 private fun PermissionRow(title: Int, summary: Int, granted: Boolean, actionLabel: Int, action: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-            Text(stringResource(title), style = MaterialTheme.typography.titleSmall)
-            Text(
-                stringResource(if (granted) R.string.gru__granted else R.string.gru__pending),
-                color = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
+        Text(stringResource(title), style = MaterialTheme.typography.titleSmall)
+        Text(
+            stringResource(if (granted) R.string.gru__granted else R.string.gru__pending),
+            color = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            fontWeight = FontWeight.SemiBold,
+        )
         Text(stringResource(summary), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (!granted) Button(onClick = action, modifier = Modifier.fillMaxWidth()) { Text(stringResource(actionLabel)) }
     }
