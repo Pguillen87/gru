@@ -157,5 +157,8 @@
   <string name="gru__try_again">Try again</string>
   <string name="gru__master_preview">Mascot option</string>
   <string name="gru__master_preview_number">Mascot option %1$d</string>
+  <string name="gru__approved_master">Mascot selected</string>
+  <string name="gru__approved_master_preview">Selected mascot preview</string>
+  <string name="gru__pose_package_pending">Your selection is saved. Its poses are not available yet, so this mascot cannot be activated yet.</string>
   <string name="gru__master_preview_unavailable">Preview unavailable</string>
 </resources>

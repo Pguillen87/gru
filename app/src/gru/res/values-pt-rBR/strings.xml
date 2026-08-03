@@ -157,5 +157,8 @@
   <string name="gru__try_again">Tentar novamente</string>
   <string name="gru__master_preview">Opção de mascote</string>
   <string name="gru__master_preview_number">Opção de mascote %1$d</string>
+  <string name="gru__approved_master">Mascote escolhido</string>
+  <string name="gru__approved_master_preview">Prévia do mascote escolhido</string>
+  <string name="gru__pose_package_pending">A opção escolhida está salva. As poses ainda não estão disponíveis, então esse mascote ainda não pode ser ativado.</string>
   <string name="gru__master_preview_unavailable">Prévia indisponível</string>
 </resources>

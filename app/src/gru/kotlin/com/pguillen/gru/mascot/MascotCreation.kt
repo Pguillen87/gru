@@ -12,6 +12,7 @@ sealed interface MascotCreationState {
     data class Tracking(val job: MascotJobResponse) : MascotCreationState
     data class GenerationPaused(val job: MascotJobResponse) : MascotCreationState
     data class AwaitingMasterApproval(val job: MascotJobResponse) : MascotCreationState
+    data class PosePreparationPending(val job: MascotJobResponse) : MascotCreationState
     data class InstallingMascot(val jobId: String) : MascotCreationState
     data object Completed : MascotCreationState
     data class InstallFailed(val jobId: String, val message: String) : MascotCreationState
@@ -133,6 +134,7 @@ private class GruMascotPendingState(private val preferences: GruPreferences) : M
 fun MascotJobResponse.toCreationState(): MascotCreationState = when (state) {
     "READY_FOR_GENERATION" -> MascotCreationState.GenerationPaused(this)
     "AWAITING_MASTER_APPROVAL" -> MascotCreationState.AwaitingMasterApproval(this)
+    "CONSISTENCY_TEST", "READY_FOR_POSES" -> MascotCreationState.PosePreparationPending(this)
     "COMPLETED" -> MascotCreationState.InstallingMascot(jobId)
     "FAILED" -> MascotCreationState.RemoteFailed(
         "Não foi possível criar seu mascote. Escolha outra foto e tente novamente.",

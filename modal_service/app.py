@@ -146,7 +146,7 @@ def _decode_image(value: str) -> bytes:
 
 def _serialize(job: JobRecord) -> dict[str, object]:
     payload = asdict(job) | {"state": job.state.value}
-    if job.state is JobState.AWAITING_MASTER_APPROVAL:
+    if job.state is JobState.AWAITING_MASTER_APPROVAL or job.master_id is not None:
         payload["masters"] = _master_references(job)
     return payload
 

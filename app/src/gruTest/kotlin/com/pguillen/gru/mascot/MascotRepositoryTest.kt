@@ -128,6 +128,11 @@ class MascotRepositoryTest {
         assertEquals(MascotCreationState.GenerationPaused(job), job.toCreationState())
     }
 
+    @Test fun `consistency state explains that pose preparation is pending`() {
+        val job = MascotJobResponse("job-1", "CONSISTENCY_TEST", masterId = "master_3")
+        assertEquals(MascotCreationState.PosePreparationPending(job), job.toCreationState())
+    }
+
     @Test fun `starting a paused Master uses a stable idempotency key`() = runTest {
         val remote = FakeRemote(jobResponse = MascotJobResponse("job-1", "VALIDATING_INPUT"))
         val repository = MascotRepository(remote, FakePending("job-1"))

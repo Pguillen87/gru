@@ -120,9 +120,12 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         }
     }
     val awaiting = creation as? MascotCreationState.AwaitingMasterApproval
-    LaunchedEffect(awaiting?.job?.jobId, awaiting?.job?.masters) {
-        val masters = awaiting?.job?.masters ?: return@LaunchedEffect
-        selectedMasterId = null
+    val posePending = creation as? MascotCreationState.PosePreparationPending
+    val previewJob = awaiting?.job ?: posePending?.job
+    LaunchedEffect(previewJob?.jobId, previewJob?.masters) {
+        val job = previewJob ?: return@LaunchedEffect
+        val masters = job.masters
+        selectedMasterId = if (awaiting != null) null else job.masterId
         masterPreviews = emptyMap()
         masterPreviews = masters.mapNotNull { reference ->
             runCatching {
@@ -292,6 +295,12 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
         }
         is MascotCreationState.AwaitingMasterApproval -> MasterChoices(state.job.masters, masterPreviews, selectedMasterId, onSelectMaster, onApprove)
+        is MascotCreationState.PosePreparationPending -> {
+            ApprovedMasterPending(state.job, masterPreviews)
+            OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.gru__cancel_creation))
+            }
+        }
         is MascotCreationState.InstallingMascot -> LoadingMessage(R.string.gru__mascot_installing)
         MascotCreationState.Completed -> Text(
             stringResource(R.string.gru__mascot_install_complete),
@@ -333,6 +342,29 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     }
     if (photo != null && state is MascotCreationState.PhotoSelected) {
         PhotoConfirmation(photo, onUsePhoto, onPick, onDiscardPhoto)
+    }
+}
+
+@Composable private fun ApprovedMasterPending(
+    job: com.pguillen.gru.mascot.MascotJobResponse,
+    previews: Map<String, ImageBitmap>,
+) {
+    val selectedId = job.masterId
+    val preview = selectedId?.let(previews::get)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(stringResource(R.string.gru__approved_master), style = MaterialTheme.typography.titleMedium)
+        if (preview != null) {
+            Image(
+                preview,
+                stringResource(R.string.gru__approved_master_preview),
+                modifier = Modifier.size(160.dp),
+                contentScale = ContentScale.Fit,
+            )
+        }
+        Text(
+            stringResource(R.string.gru__pose_package_pending),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

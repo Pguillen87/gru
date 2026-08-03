@@ -38,6 +38,7 @@ data class MascotJobResponse(
     val jobId: String,
     val state: String,
     val masters: List<MasterReference> = emptyList(),
+    val masterId: String? = null,
 ) {
     companion object {
         fun from(json: JsonObject) = MascotJobResponse(
@@ -47,6 +48,7 @@ data class MascotJobResponse(
                 val master = item.jsonObject
                 MasterReference(master.requiredString("id"), master.requiredString("download_path"), master.string("sha256"))
             }.orEmpty(),
+            masterId = json.string("master_id"),
         )
     }
 }
