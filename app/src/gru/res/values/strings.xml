@@ -140,6 +140,9 @@
   <string name="gru__use_this_photo">Use this photo</string>
   <string name="gru__mascot_submitting">Starting your mascot…</string>
   <string name="gru__mascot_tracking">Creating your mascot options…</string>
+  <string name="gru__mascot_installing">Installing your mascot…</string>
+  <string name="gru__mascot_install_complete">Your mascot is ready to use.</string>
+  <string name="gru__mascot_install_failed">We couldn’t install the complete mascot package. Your current mascot is unchanged.</string>
   <string name="gru__try_another_photo">Choose another photo</string>
   <string name="gru__choose_master">Choose your mascot</string>
   <string name="gru__master_images_pending">Your mascot options will appear here when they are ready.</string>

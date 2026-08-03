@@ -40,6 +40,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -63,6 +64,7 @@ import com.pguillen.gru.mascot.MascotApi
 import com.pguillen.gru.mascot.FirebaseMascotAuthTokenProvider
 import com.pguillen.gru.mascot.FirebaseMascotAppCheckTokenProvider
 import com.pguillen.gru.mascot.MascotCreationState
+import com.pguillen.gru.mascot.MascotFailureRecovery
 import com.pguillen.gru.mascot.MascotRepository
 import com.pguillen.gru.mascot.mascotErrorMessage
 import com.pguillen.gru.mascot.toCreationState
@@ -130,7 +132,31 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                 .getOrNull()?.let { reference.id to it }
         }.toMap()
     }
-    Column(modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    val installing = creation as? MascotCreationState.InstallingMascot
+    val installFailureMessage = stringResource(R.string.gru__mascot_install_failed)
+    LaunchedEffect(installing?.jobId) {
+        val jobId = installing?.jobId ?: return@LaunchedEffect
+        creation = runCatching { repository.installCompletedMascot(jobId) }
+            .fold(
+                onSuccess = { installed ->
+                    if (installed) MascotCreationState.Completed
+                    else MascotCreationState.InstallFailed(
+                        jobId,
+                        installFailureMessage,
+                    )
+                },
+                onFailure = {
+                    MascotCreationState.InstallFailed(
+                        jobId,
+                        installFailureMessage,
+                    )
+                },
+            )
+    }
+    Column(
+        modifier.clipToBounds().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
         Text(stringResource(R.string.gru__my_mascot), style = MaterialTheme.typography.headlineSmall)
         MascotPreview(source, opacity)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -171,6 +197,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                     .onSuccess { job -> creation = job?.toCreationState() ?: MascotCreationState.Idle }
                     .onFailure { creation = it.toMascotFailure(jobId) }
             } },
+            onRetryInstall = { jobId -> creation = MascotCreationState.InstallingMascot(jobId) },
             onCancelCreation = { scope.launch {
                 val jobId = prefs.pendingMascotJobId.value ?: return@launch
                 creation = MascotCreationState.Canceling
@@ -214,6 +241,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     photo: Uri?, state: MascotCreationState, onPick: () -> Unit, onDiscardPhoto: () -> Unit,
     onUsePhoto: (Uri) -> Unit, selectedMasterId: String?, masterPreviews: Map<String, ImageBitmap>,
     onSelectMaster: (String) -> Unit, onApprove: (String) -> Unit, onRetryTracking: () -> Unit,
+    onRetryInstall: (String) -> Unit,
     onCancelCreation: () -> Unit,
 ) {
     when (state) {
@@ -225,6 +253,17 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
         }
         is MascotCreationState.AwaitingMasterApproval -> MasterChoices(state.job.masters, masterPreviews, selectedMasterId, onSelectMaster, onApprove)
+        is MascotCreationState.InstallingMascot -> LoadingMessage(R.string.gru__mascot_installing)
+        MascotCreationState.Completed -> Text(
+            stringResource(R.string.gru__mascot_install_complete),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        is MascotCreationState.InstallFailed -> {
+            Text(state.message, color = MaterialTheme.colorScheme.error)
+            Button(onClick = { onRetryInstall(state.jobId) }, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.gru__try_again))
+            }
+        }
         is MascotCreationState.NetworkUnavailable -> {
             Text(stringResource(R.string.gru__mascot_network_paused), color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = onRetryTracking, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__try_again)) }
@@ -236,7 +275,15 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         }
         is MascotCreationState.RemoteFailed -> {
             Text(state.message, color = MaterialTheme.colorScheme.error)
-            Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__try_another_photo)) }
+            if (state.recovery == MascotFailureRecovery.CHOOSE_PHOTO) {
+                Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.gru__try_another_photo))
+                }
+            } else {
+                Button(onClick = onRetryTracking, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.gru__try_again))
+                }
+            }
         }
         MascotCreationState.Canceling -> LoadingMessage(R.string.gru__canceling_creation)
         is MascotCreationState.CancelPending -> {

@@ -8,7 +8,15 @@ interface MascotAppCheckTokenProvider {
 }
 
 class FirebaseMascotAppCheckTokenProvider(
-    private val appCheck: FirebaseAppCheck = FirebaseAppCheck.getInstance(),
+    private val appCheck: FirebaseAppCheck? = null,
 ) : MascotAppCheckTokenProvider {
-    override suspend fun token(): String = appCheck.getAppCheckToken(false).await().token
+    override suspend fun token(): String = try {
+        (appCheck ?: FirebaseAppCheck.getInstance()).getAppCheckToken(false).await().token
+    } catch (error: IllegalStateException) {
+        throw MascotFirebaseConfigurationException(error)
+    } catch (error: Exception) {
+        throw MascotAppCheckException(error)
+    }
 }
+
+class MascotAppCheckException(cause: Throwable) : Exception("Unable to validate the application.", cause)

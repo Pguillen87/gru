@@ -8,14 +8,24 @@ interface MascotAuthTokenProvider {
 }
 
 class FirebaseMascotAuthTokenProvider(
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
+    private val auth: FirebaseAuth? = null,
 ) : MascotAuthTokenProvider {
     override suspend fun token(): String {
-        val user = auth.currentUser ?: auth.signInAnonymously().await().user
-            ?: throw MascotAuthException("Não foi possível criar sua identidade segura.")
-        return user.getIdToken(false).await().token
-            ?: throw MascotAuthException("Não foi possível validar sua identidade segura.")
+        try {
+            val firebaseAuth = auth ?: FirebaseAuth.getInstance()
+            val user = firebaseAuth.currentUser ?: firebaseAuth.signInAnonymously().await().user
+                ?: throw MascotAuthException("Unable to create a secure identity.")
+            return user.getIdToken(false).await().token
+                ?: throw MascotAuthException("Unable to validate the secure identity.")
+        } catch (error: MascotAuthException) {
+            throw error
+        } catch (error: IllegalStateException) {
+            throw MascotFirebaseConfigurationException(error)
+        } catch (error: Exception) {
+            throw MascotAuthException("Unable to validate the secure identity.", error)
+        }
     }
 }
 
-class MascotAuthException(message: String) : Exception(message)
+class MascotAuthException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class MascotFirebaseConfigurationException(cause: Throwable) : Exception("Firebase is not configured.", cause)

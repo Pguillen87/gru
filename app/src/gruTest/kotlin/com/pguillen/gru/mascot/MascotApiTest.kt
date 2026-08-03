@@ -31,6 +31,20 @@ class MascotApiTest {
         } finally { server.shutdown() }
     }
 
+    @Test fun `maps backend failure separately from network failure`() = runTest {
+        val server = MockWebServer().apply { enqueue(MockResponse().setResponseCode(503).setBody("unavailable")); start() }
+        try {
+            val api = MascotApi(FakeAuth, FakeAppCheck, OkHttpClient(), server.url("/").toString())
+            val error = assertFailsWith<MascotApiException> { api.job("job_1") }
+            assertEquals("SERVICE_UNAVAILABLE", error.apiError.code)
+            assertEquals(503, error.httpStatus)
+            assertEquals(
+                "O serviço de mascotes está temporariamente indisponível. Tente novamente mais tarde.",
+                mascotErrorMessage(error),
+            )
+        } finally { server.shutdown() }
+    }
+
     @Test fun `recovers a create by stable idempotency key`() = runTest {
         val server = MockWebServer().apply { enqueue(MockResponse().setBody("{\"job_id\":\"job_1\",\"state\":\"READY_FOR_GENERATION\"}")); start() }
         try {

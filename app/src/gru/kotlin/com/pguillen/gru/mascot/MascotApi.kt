@@ -123,7 +123,7 @@ class MascotApi(
         }
         client.newCall(authenticatedRequest(path).get().build()).execute().use { response ->
             val bytes = response.body.bytes()
-            if (!response.isSuccessful) throw MascotApiException(ApiError.from(bytes.decodeToString()) ?: ApiError("HTTP_${response.code}", ""))
+            if (!response.isSuccessful) throw response.toMascotApiException(bytes.decodeToString())
             bytes
         }
     }
@@ -139,7 +139,7 @@ class MascotApi(
         ).build()
         client.newCall(request).execute().use { response ->
             val responseBody = response.body.string()
-            if (!response.isSuccessful) throw MascotApiException(ApiError.from(responseBody) ?: ApiError("HTTP_${response.code}", ""))
+            if (!response.isSuccessful) throw response.toMascotApiException(responseBody)
             Json.parseToJsonElement(responseBody).jsonObject
         }
     }
@@ -152,7 +152,12 @@ class MascotApi(
     private companion object { val JSON_MEDIA = "application/json; charset=utf-8".toMediaType() }
 }
 
-class MascotApiException(val apiError: ApiError) : Exception(apiError.message)
+class MascotApiException(val apiError: ApiError, val httpStatus: Int? = null) : Exception(apiError.message)
+
+private fun okhttp3.Response.toMascotApiException(body: String): MascotApiException {
+    val fallback = if (code >= 500) "SERVICE_UNAVAILABLE" else "HTTP_$code"
+    return MascotApiException(ApiError.from(body) ?: ApiError(fallback, ""), code)
+}
 
 private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.content
 private fun String.requireSafeIdentifier(): String = also {

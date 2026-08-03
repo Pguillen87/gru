@@ -11,13 +11,21 @@ sealed interface MascotCreationState {
     data object Submitting : MascotCreationState
     data class Tracking(val job: MascotJobResponse) : MascotCreationState
     data class AwaitingMasterApproval(val job: MascotJobResponse) : MascotCreationState
+    data class InstallingMascot(val jobId: String) : MascotCreationState
+    data object Completed : MascotCreationState
+    data class InstallFailed(val jobId: String, val message: String) : MascotCreationState
     data class NetworkUnavailable(val jobId: String) : MascotCreationState
     data object SubmissionUncertain : MascotCreationState
-    data class RemoteFailed(val message: String) : MascotCreationState
+    data class RemoteFailed(
+        val message: String,
+        val recovery: MascotFailureRecovery = MascotFailureRecovery.RETRY,
+    ) : MascotCreationState
     data object Canceling : MascotCreationState
     data class CancelPending(val jobId: String) : MascotCreationState
     data object Canceled : MascotCreationState
 }
+
+enum class MascotFailureRecovery { RETRY, CHOOSE_PHOTO }
 
 class MascotRepository(
     private val api: MascotRemoteApi,
@@ -118,7 +126,11 @@ private class GruMascotPendingState(private val preferences: GruPreferences) : M
 
 fun MascotJobResponse.toCreationState(): MascotCreationState = when (state) {
     "AWAITING_MASTER_APPROVAL" -> MascotCreationState.AwaitingMasterApproval(this)
-    "FAILED" -> MascotCreationState.RemoteFailed("Não foi possível criar seu mascote. Tente novamente.")
+    "COMPLETED" -> MascotCreationState.InstallingMascot(jobId)
+    "FAILED" -> MascotCreationState.RemoteFailed(
+        "Não foi possível criar seu mascote. Escolha outra foto e tente novamente.",
+        MascotFailureRecovery.CHOOSE_PHOTO,
+    )
     "CANCELED" -> MascotCreationState.Canceled
     else -> MascotCreationState.Tracking(this)
 }
@@ -126,7 +138,13 @@ fun MascotJobResponse.toCreationState(): MascotCreationState = when (state) {
 fun Throwable.toMascotFailure(jobId: String?): MascotCreationState = if (isNetworkFailure()) {
     if (jobId == null) MascotCreationState.SubmissionUncertain else MascotCreationState.NetworkUnavailable(jobId)
 } else {
-    MascotCreationState.RemoteFailed(mascotErrorMessage(this))
+    val code = (this as? MascotApiException)?.apiError?.code
+    val recovery = if (code in setOf("INVALID_IMAGE", "JOB_NOT_FOUND", "MASTER_GENERATION_FAILED")) {
+        MascotFailureRecovery.CHOOSE_PHOTO
+    } else {
+        MascotFailureRecovery.RETRY
+    }
+    MascotCreationState.RemoteFailed(mascotErrorMessage(this), recovery)
 }
 
 fun Throwable.isNetworkFailure(): Boolean = this is IOException || cause is IOException
@@ -136,13 +154,19 @@ private class MascotRecoveryPendingException : IOException("Mascot create acknow
 fun MascotJobResponse.isTerminal(): Boolean = state in setOf("COMPLETED", "FAILED", "CANCELED")
 
 fun mascotErrorMessage(error: Throwable): String = when ((error as? MascotApiException)?.apiError?.code) {
-    "UNAUTHENTICATED", "APP_CHECK_REQUIRED" -> "Não foi possível confirmar a segurança do aplicativo. Tente novamente."
+    "UNAUTHENTICATED" -> "Não foi possível confirmar sua identidade. Tente novamente."
+    "APP_CHECK_REQUIRED" -> "Não foi possível validar a segurança deste aplicativo. Tente novamente."
     "INVALID_IMAGE" -> "Essa foto não pode ser usada. Escolha outra foto do seu pet."
     "COST_LIMIT_REACHED", "RATE_LIMITED" -> "A criação de mascotes está temporariamente indisponível. Tente mais tarde."
     "GENERATION_DISABLED" -> "A criação está temporariamente pausada. Sua solicitação continua salva."
     "TEMPLATE_ASSETS_UNAVAILABLE" -> "As poses do mascote ainda estão sendo preparadas."
     "JOB_NOT_FOUND" -> "Não encontramos essa criação. Escolha a foto novamente."
     "MASTER_GENERATION_FAILED" -> "Não foi possível preparar as opções do mascote. Tente novamente."
-    else -> if (error is MascotAuthException) "Não foi possível confirmar sua identidade segura. Tente novamente."
-    else "Não foi possível conectar agora. Verifique sua internet e tente novamente."
+    "SERVICE_UNAVAILABLE" -> "O serviço de mascotes está temporariamente indisponível. Tente novamente mais tarde."
+    else -> when (error) {
+        is MascotFirebaseConfigurationException -> "A criação de mascotes ainda não está configurada neste aplicativo."
+        is MascotAppCheckException -> "Não foi possível validar a segurança deste aplicativo. Tente novamente."
+        is MascotAuthException -> "Não foi possível confirmar sua identidade. Tente novamente."
+        else -> "Não foi possível concluir a solicitação. Tente novamente."
+    }
 }
