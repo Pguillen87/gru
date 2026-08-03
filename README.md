@@ -21,9 +21,9 @@ Gru é um aplicativo Android de ditado por voz com pet flutuante. Ele mantém o 
 - Nunca usa a Groq como fallback automático.
 - O modelo é opcional, fica no armazenamento privado e é removido com a desinstalação.
 
-O modelo fixado é `ggml-small-q5_1.bin`, da revisão `5359861c739e955e79d9a303bcbc70fb988958b1` do repositório oficial `ggerganov/whisper.cpp`. Ele possui `190.085.487` bytes e SHA-256 `ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb`.
+O modelo fixado é `ggml-base-q5_1.bin`, da revisão `5359861c739e955e79d9a303bcbc70fb988958b1` do repositório oficial `ggerganov/whisper.cpp`. Ele possui `59.707.625` bytes e SHA-256 `422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898`.
 
-No Samsung A55, o Small Q5_1 transcreveu o áudio de teste de 11,58 segundos em 7,02 segundos usando a variante ARM com `dotprod+fp16`. O Large, Medium, Base e Vulkan permanecem documentados em [BENCHMARK.md](BENCHMARK.md).
+No Samsung A55, o Base Q5_1 transcreveu o áudio de teste de 11,58 segundos em 2,51 segundos usando quatro threads e a variante ARM com `dotprod+fp16`. As comparações com Small, Medium, Large e Vulkan permanecem documentadas em [BENCHMARK.md](BENCHMARK.md).
 
 ## Funcionalidades
 
@@ -40,7 +40,7 @@ O Gru não contém teclado próprio, histórico, prompts, reescrita, dicionário
 ## Primeiro uso
 
 1. Escolha Online ou Privado na primeira tela.
-2. No Online, abra a página oficial da Groq, cole e salve a chave. No Privado, inicie conscientemente o download de cerca de 181 MiB e ative o modo depois da verificação.
+2. No Online, abra a página oficial da Groq, cole e salve a chave. No Privado, inicie conscientemente o download de cerca de 57 MiB e ative o modo depois da verificação.
 3. Em `Geral`, permita Acessibilidade, microfone e notificação.
 4. Ative o pet flutuante.
 5. Abra outro aplicativo, toque em um campo de texto e toque no pet para falar.

@@ -76,7 +76,7 @@
   <string name="gru__private_title">Private — on device</string>
   <string name="gru__private_subtitle">Your audio stays on this device</string>
   <string name="gru__private_benefits">✓ Audio stays on the phone\n✓ Works offline\n✓ No API key required</string>
-  <string name="gru__private_details">Requires a download of about 181 MiB. Uses more battery and processing; speed depends on the device.</string>
+  <string name="gru__private_details">Requires a download of about 57 MiB. Uses more battery and processing; speed depends on the device.</string>
   <string name="gru__use_online">Use Online</string>
   <string name="gru__use_private">Download private mode</string>
   <string name="gru__active">Active</string>
@@ -95,8 +95,8 @@
   <string name="gru__paste_key">Paste key</string>
   <string name="gru__save_and_continue">Save and continue</string>
   <string name="gru__offline_model">Offline model</string>
-  <string name="gru__model_name">Whisper Small Q5_1</string>
-  <string name="gru__model_size">Download: about 181 MiB. Wi-Fi is recommended.</string>
+  <string name="gru__model_name">Whisper Base Q5_1</string>
+  <string name="gru__model_size">Download: about 57 MiB. Wi-Fi is recommended.</string>
   <string name="gru__model_not_installed">Not installed. The download starts only when you request it.</string>
   <string name="gru__download_model">Download offline model</string>
   <string name="gru__model_preparing">Preparing download…</string>
@@ -108,7 +108,7 @@
   <string name="gru__remove_model">Remove offline model</string>
   <string name="gru__try_download_again">Try download again</string>
   <string name="gru__model_source">Verified, fixed model version.</string>
-  <string name="gru__model_error_space">Not enough free space. Free at least 310 MiB and try again.</string>
+  <string name="gru__model_error_space">Not enough free space. Free at least 185 MiB and try again.</string>
   <string name="gru__model_error_network">The download stopped. Check your connection and try again.</string>
   <string name="gru__model_error_corrupt">The downloaded file failed verification and was removed. Try again.</string>
   <string name="gru__model_error_storage">Gru could not save the model. Check available storage and try again.</string>

@@ -26,7 +26,7 @@ O WAV é processado pelo `whisper.cpp` dentro do aparelho. O Gru não envia áud
 
 ## Modelo offline
 
-O modelo não faz parte do APK ou AAB. Quando o usuário solicita o download, o Gru acessa uma revisão fixa do repositório oficial `ggerganov/whisper.cpp` no Hugging Face. O modelo Small Q5_1 possui `190.085.487` bytes e checksum SHA-256 fixado.
+O modelo não faz parte do APK ou AAB. Quando o usuário solicita o download, o Gru acessa uma revisão fixa do repositório oficial `ggerganov/whisper.cpp` no Hugging Face. O modelo Base Q5_1 possui `59.707.625` bytes e checksum SHA-256 fixado.
 
 O download usa um arquivo `.part` controlado pelo aplicativo, pode ser retomado após interrupção de rede e só é promovido após validação. O modelo final fica em `filesDir/whisper-models`, armazenamento privado removido automaticamente na desinstalação. O usuário também pode removê-lo pela tela `Transcrição`.
 

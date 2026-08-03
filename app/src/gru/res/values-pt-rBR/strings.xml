@@ -76,7 +76,7 @@
   <string name="gru__private_title">Privado — no aparelho</string>
   <string name="gru__private_subtitle">Seu áudio não sai do celular</string>
   <string name="gru__private_benefits">✓ Áudio permanece no celular\n✓ Funciona offline\n✓ Não precisa de chave API</string>
-  <string name="gru__private_details">Precisa baixar cerca de 181 MiB. Usa mais bateria e processamento; a velocidade depende do aparelho.</string>
+  <string name="gru__private_details">Precisa baixar cerca de 57 MiB. Usa mais bateria e processamento; a velocidade depende do aparelho.</string>
   <string name="gru__use_online">Usar Online</string>
   <string name="gru__use_private">Baixar modo privado</string>
   <string name="gru__active">Ativo</string>
@@ -95,8 +95,8 @@
   <string name="gru__paste_key">Colar chave</string>
   <string name="gru__save_and_continue">Salvar e continuar</string>
   <string name="gru__offline_model">Modelo offline</string>
-  <string name="gru__model_name">Whisper Small Q5_1</string>
-  <string name="gru__model_size">Download de cerca de 181 MiB. Recomendamos usar Wi-Fi.</string>
+  <string name="gru__model_name">Whisper Base Q5_1</string>
+  <string name="gru__model_size">Download de cerca de 57 MiB. Recomendamos usar Wi-Fi.</string>
   <string name="gru__model_not_installed">Não instalado. O download só começa quando você pedir.</string>
   <string name="gru__download_model">Baixar modelo offline</string>
   <string name="gru__model_preparing">Preparando download…</string>
@@ -108,7 +108,7 @@
   <string name="gru__remove_model">Remover modelo offline</string>
   <string name="gru__try_download_again">Tentar baixar novamente</string>
   <string name="gru__model_source">Versão fixa e verificada do modelo.</string>
-  <string name="gru__model_error_space">Não há espaço suficiente. Libere pelo menos 310 MiB e tente novamente.</string>
+  <string name="gru__model_error_space">Não há espaço suficiente. Libere pelo menos 185 MiB e tente novamente.</string>
   <string name="gru__model_error_network">O download parou. Verifique sua conexão e tente novamente.</string>
   <string name="gru__model_error_corrupt">O arquivo não passou na verificação e foi removido. Tente novamente.</string>
   <string name="gru__model_error_storage">O Gru não conseguiu salvar o modelo. Verifique o espaço disponível e tente novamente.</string>

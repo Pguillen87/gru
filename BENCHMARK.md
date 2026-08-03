@@ -42,7 +42,7 @@ No teste Large Vulkan, a temperatura foi de 26,7 °C para 27,4 °C. O APK Vulkan
 
 O APK final contém três variantes CPU ARM64: baseline ARMv8.0, `dotprod` e `dotprod+fp16`. O runtime selecionou `libggml-cpu-android_armv8.2_2.so` no A55.
 
-Resultado final do Small Q5_1:
+Resultado validado do Small Q5_1:
 
 - Carregamento observado: 220 a 495 ms.
 - Inferência observada: 7.021 a 8.368 ms.
@@ -55,14 +55,25 @@ Resultado final do Small Q5_1:
 
 ## Decisão
 
-O Small Q5_1 é o modelo local padrão. Foi o modelo de maior qualidade que cumpriu o limite aceitável de até aproximadamente 8 segundos para ditado interativo no A55. O Base foi mais rápido, mas perdeu para o Small no critério de maior qualidade dentro do limite. Medium e Large ficaram inadequados para interação.
+O Small Q5_1 foi inicialmente escolhido por qualidade, mas um teste posterior de uso real mostrou 11,4 segundos de espera para 4,08 segundos de áudio. A latência não se manteve adequada para frases curtas com outros processos ativos no A55.
+
+Em 3 de agosto, o Base Q5_1 foi repetido com prioridade normal e o mesmo WAV padronizado:
+
+| Threads | Inferência | RTF | Resultado |
+| ---: | ---: | ---: | --- |
+| 4 | 2.507 ms | 0,217 | Correto |
+| 6 | 2.603 ms | 0,225 | Correto |
+| 8 | superior a 120 s | inadequado | Interrompido |
+
+O Base Q5_1 com quatro threads passou a ser o padrão. Ele reduz a latência, o download e a memória, aceitando a possível perda de precisão em fala difícil em favor de uma experiência interativa. Medium, Large e Vulkan continuam inadequados neste aparelho.
 
 O modelo é baixado sob ação do usuário, não entra no APK/AAB e é validado por tamanho e SHA-256 antes da ativação. A revisão fixada é `5359861c739e955e79d9a303bcbc70fb988958b1`.
 
 ## Download e Groq
 
 - Large pela Wi-Fi do aparelho: 26 segundos até validação, medição histórica.
-- Small final pela Wi-Fi do aparelho: 13,4 segundos, do toque até o estado instalado e verificado.
+- Small pela Wi-Fi do aparelho: 13,4 segundos, do toque até o estado instalado e verificado.
+- Base: download de produção ainda não cronometrado; o arquivo fixado possui 59.707.625 bytes.
 - Groq com a chave cifrada já configurada pelo usuário: 901 ms para a mesma gravação e texto equivalente.
 
 O teste Groq não registrou nem alterou a chave. As medições variam com rede, temperatura e carga do aparelho.

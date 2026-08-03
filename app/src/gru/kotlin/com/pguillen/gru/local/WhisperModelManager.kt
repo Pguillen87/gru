@@ -31,7 +31,7 @@ fun interface WhisperModelProvider {
 class WhisperModelManager private constructor(context: Context) : WhisperModelProvider {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val spec = GruWhisperModel.SMALL_Q5_1
+    private val spec = GruWhisperModel.BASE_Q5_1
     private val modelDir = File(appContext.filesDir, "whisper-models")
     private val modelFile = File(modelDir, spec.fileName)
     private val partialFile = File(modelDir, "${spec.fileName}.part")
@@ -146,7 +146,10 @@ class WhisperModelManager private constructor(context: Context) : WhisperModelPr
 
     companion object {
         private const val FREE_SPACE_MARGIN_BYTES = 128L * 1024L * 1024L
-        private val OBSOLETE_MODEL_FILES = listOf("ggml-large-v3-turbo-q5_0.bin")
+        private val OBSOLETE_MODEL_FILES = listOf(
+            "ggml-large-v3-turbo-q5_0.bin",
+            "ggml-small-q5_1.bin",
+        )
 
         @Volatile private var instance: WhisperModelManager? = null
 
