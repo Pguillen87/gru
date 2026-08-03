@@ -23,6 +23,8 @@ O pet aparece somente quando há um campo editável focado e o teclado está vis
 - `ONLINE_GROQ`: exige internet e chave; envia o áudio temporário à Groq.
 - `PRIVATE_LOCAL`: exige modelo verificado; processa offline e proíbe fallback automático para Groq.
 - A escolha fica centralizada no `TranscriptionEngineRouter` e é capturada no início de cada sessão.
+- A troca é transacional: um destino pronto é ativado em uma única operação; Online sem chave mantém o Privado atual até a configuração terminar.
+- Solicitar Privado desativa imediatamente qualquer Online quando o modelo local ainda não estiver pronto.
 - Uma única máquina de estados atende aos dois motores.
 
 ## Capabilities and Constraints

@@ -34,6 +34,9 @@ Gru é uma ferramenta Android cuja interface principal desaparece depois da conf
 - Privado usa o ícone de cadeado e a promessa “Seu áudio não sai do celular”.
 - Solicitar Privado não o ativa antes de existir um modelo válido.
 - Solicitar Online não o ativa antes de existir uma chave salva.
+- Com ambos preparados, tocar em Online ou Privado conclui a troca sem confirmação adicional.
+- Enquanto Online aguarda uma chave, o Privado já ativo continua disponível e o pet não desaparece.
+- Privado solicitado nunca mantém Online ativo durante download, erro ou configuração incompleta.
 - A chave Groq pode ser criada pelo link oficial e lida do clipboard somente após toque explícito em `Colar chave`.
 - Progresso de download é determinado por bytes reais; não há progresso inventado.
 - Movimento é reservado ao progresso indeterminado, progresso determinado e mudança de estado.
