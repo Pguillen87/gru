@@ -72,7 +72,12 @@ api_image = (
     )
 )
 gpu_image = api_image.pip_install(
-    "torch>=2.6,<3", "diffusers>=0.35", "transformers>=4.51", "accelerate>=1.6", "safetensors>=0.5"
+    "torch>=2.6,<3",
+    "torchvision>=0.21,<1",
+    "diffusers>=0.35",
+    "transformers>=4.51",
+    "accelerate>=1.6",
+    "safetensors>=0.5",
 )
 app = modal.App(APP_NAME)
 assets = modal.Volume.from_name("gru-mascot-assets", create_if_missing=True)
