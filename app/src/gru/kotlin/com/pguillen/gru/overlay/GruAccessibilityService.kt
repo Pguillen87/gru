@@ -44,6 +44,7 @@ class GruAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        GruOverlayHealth.serviceConnected()
         createNotificationChannel()
         bubble = GruPetOverlayController(this).also(GruPetOverlayController::start)
         refreshEditorStateAfterImeSettles()
@@ -282,6 +283,7 @@ class GruAccessibilityService : AccessibilityService() {
         bubble?.destroy()
         bubble = null
         stopMicForeground()
+        GruOverlayHealth.serviceDisconnected()
         Log.d(TAG, "Accessibility service disconnected")
     }
 
@@ -309,5 +311,12 @@ class GruAccessibilityService : AccessibilityService() {
         val foregroundPackage: StateFlow<String?> = mutableForegroundPackage.asStateFlow()
 
         fun injectText(text: String): Boolean = instance?.insertText(text) ?: false
+
+        fun retryOverlay(): Boolean {
+            val service = instance ?: return false
+            service.bubble?.retry()
+            service.refreshEditorStateAfterImeSettles()
+            return true
+        }
     }
 }

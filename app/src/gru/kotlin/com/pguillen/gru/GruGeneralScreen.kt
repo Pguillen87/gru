@@ -59,6 +59,10 @@ import androidx.compose.ui.unit.dp
 import com.pguillen.gru.dictation.TranscriptionEngine
 import com.pguillen.gru.local.WhisperModelManager
 import com.pguillen.gru.local.WhisperModelState
+import com.pguillen.gru.overlay.GruAccessibilityService
+import com.pguillen.gru.overlay.GruOverlayHealth
+import com.pguillen.gru.overlay.GruOverlayHealthState
+import com.pguillen.gru.overlay.OverlayAttachmentState
 
 @Composable
 internal fun GruGeneralScreen(
@@ -75,6 +79,8 @@ internal fun GruGeneralScreen(
     val engine by prefs.engine.collectAsState()
     val key by prefs.groqApiKeyState.collectAsState()
     val modelState by WhisperModelManager.get(context).state.collectAsState()
+    val overlayHealth by GruOverlayHealth.state.collectAsState()
+    val serviceConnected = overlayHealth.serviceConnected
     val accessibilityReady = remember(permissionRefresh) { isGruAccessibilityEnabled(context) }
     val microphoneReady = remember(permissionRefresh) { hasPermission(context, Manifest.permission.RECORD_AUDIO) }
     val notificationsReady = remember(permissionRefresh) { notificationsAllowed(context) }
@@ -83,15 +89,16 @@ internal fun GruGeneralScreen(
         TranscriptionEngine.PRIVATE_LOCAL -> modelState is WhisperModelState.Installed
         null -> false
     }
-    val setupReady = accessibilityReady && microphoneReady && engineReady
+    val setupReady = accessibilityReady && serviceConnected && microphoneReady && engineReady
 
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        StatusSummary(enabled, accessibilityReady, microphoneReady, engineReady)
+        StatusSummary(enabled, accessibilityReady, serviceConnected, microphoneReady, engineReady, overlayHealth)
         PermissionSection(accessibilityReady, microphoneReady, notificationsReady, onPermissionChanged)
+        PetRuntimeStatus(accessibilityReady, serviceConnected, overlayHealth)
         PetPreview(pet, opacity)
         MasterToggle(enabled, setupReady, prefs::setEnabled)
         PetPicker(pet, prefs::setPet)
@@ -101,21 +108,71 @@ internal fun GruGeneralScreen(
 }
 
 @Composable
-private fun StatusSummary(enabled: Boolean, accessibility: Boolean, microphone: Boolean, engine: Boolean) {
+private fun StatusSummary(
+    enabled: Boolean,
+    accessibility: Boolean,
+    serviceConnected: Boolean,
+    microphone: Boolean,
+    engine: Boolean,
+    overlay: GruOverlayHealthState,
+) {
     val title = when {
         !engine -> R.string.gru__status_transcription
         !accessibility -> R.string.gru__status_accessibility
+        !serviceConnected -> R.string.gru__status_service_disconnected
         !microphone -> R.string.gru__status_microphone
         !enabled -> R.string.gru__status_enable_pet
+        overlay.attachment == OverlayAttachmentState.Failed -> R.string.gru__status_pet_failed
+        !overlay.hasRenderedFrame -> R.string.gru__status_pet_testing
         else -> R.string.gru__status_ready
+    }
+    val summary = when {
+        enabled && overlay.attachment == OverlayAttachmentState.Failed -> R.string.gru__pet_runtime_failed
+        enabled && overlay.attachment == OverlayAttachmentState.Visible -> R.string.gru__pet_runtime_visible
+        enabled && overlay.hasRenderedFrame -> R.string.gru__ready_message
+        enabled && accessibility && serviceConnected -> R.string.gru__pet_runtime_ready
+        else -> R.string.gru__status_pending_summary
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(stringResource(title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         Text(
-            stringResource(if (enabled && accessibility && microphone && engine) R.string.gru__ready_message else R.string.gru__status_pending_summary),
+            stringResource(summary),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun PetRuntimeStatus(accessibility: Boolean, serviceConnected: Boolean, health: GruOverlayHealthState) {
+    val status = when {
+        !accessibility -> R.string.gru__pet_runtime_permission
+        !serviceConnected -> R.string.gru__pet_runtime_disconnected
+        health.attachment == OverlayAttachmentState.Attaching -> R.string.gru__pet_runtime_attaching
+        health.attachment == OverlayAttachmentState.Visible -> R.string.gru__pet_runtime_visible
+        health.attachment == OverlayAttachmentState.Failed -> R.string.gru__pet_runtime_failed
+        health.hasRenderedFrame -> R.string.gru__pet_runtime_verified
+        else -> R.string.gru__pet_runtime_ready
+    }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle(R.string.gru__pet_runtime_title)
+        Text(
+            stringResource(status),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (health.attachment == OverlayAttachmentState.Failed) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+        if (health.attachment == OverlayAttachmentState.Failed) {
+            Button(
+                onClick = { GruAccessibilityService.retryOverlay() },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.gru__pet_retry))
+            }
+        }
     }
 }
 
