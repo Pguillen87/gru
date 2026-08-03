@@ -9,6 +9,7 @@ package com.pguillen.gru
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import com.pguillen.gru.dictation.TranscriptionEngine
 import com.pguillen.gru.dictation.TranscriptionSelectionPolicy
 import com.pguillen.gru.security.GroqApiKeyStore
@@ -35,15 +36,14 @@ class GruPreferences private constructor(context: Context) {
     private val storedEngine = store.nullableEnumValue<TranscriptionEngine>(KEY_ENGINE)
     private val storedRequestedEngine =
         store.nullableEnumValue<TranscriptionEngine>(KEY_REQUESTED_ENGINE) ?: storedEngine
-    private val initialEngine = storedRequestedEngine?.let { requested ->
-        TranscriptionSelectionPolicy.engineAfterRequest(storedEngine, requested)
-    }
+    private val initialEngine = storedEngine
 
     private val mutableEngine = MutableStateFlow(initialEngine)
     val engine: StateFlow<TranscriptionEngine?> = mutableEngine.asStateFlow()
 
     private val mutableRequestedEngine = MutableStateFlow(storedRequestedEngine)
     val requestedEngine: StateFlow<TranscriptionEngine?> = mutableRequestedEngine.asStateFlow()
+    private var legacySelectionRecoveryPending = !store.getBoolean(KEY_TRANSACTIONAL_SELECTION_MIGRATED, false)
 
     private val mutableGroqApiKey = MutableStateFlow(migrateLegacyApiKey())
     val groqApiKeyState: StateFlow<String> = mutableGroqApiKey.asStateFlow()
@@ -86,22 +86,71 @@ class GruPreferences private constructor(context: Context) {
         store.edit().putInt(KEY_OPACITY, normalized).apply()
     }
 
-    fun setEngine(value: TranscriptionEngine?) {
-        mutableEngine.value = value
-        val edit = store.edit()
-        if (value == null) edit.remove(KEY_ENGINE) else edit.putString(KEY_ENGINE, value.name)
-        edit.apply()
+    fun selectEngine(value: TranscriptionEngine, hasLocalModel: Boolean): Boolean {
+        val previous = mutableEngine.value
+        val targetReady = TranscriptionSelectionPolicy.canActivate(
+            engine = value,
+            hasGroqKey = mutableGroqApiKey.value.isNotBlank(),
+            hasLocalModel = hasLocalModel,
+        )
+        val active = TranscriptionSelectionPolicy.engineAfterSelection(previous, value, targetReady)
+        if (!persistSelection(requested = value, active = active)) return false
+        logSelection("requested", previous, value, active, targetReady)
+        return active == value
     }
 
-    fun requestEngine(value: TranscriptionEngine) {
-        val retainedEngine = TranscriptionSelectionPolicy.engineAfterRequest(mutableEngine.value, value)
-        mutableRequestedEngine.value = value
-        mutableEngine.value = retainedEngine
-        store.edit().putString(KEY_REQUESTED_ENGINE, value.name).apply {
-            if (retainedEngine == null) {
-                remove(KEY_ENGINE)
-            }
-        }.apply()
+    fun reconcileEngine(hasLocalModel: Boolean): Boolean {
+        val previous = mutableEngine.value
+        val requested = mutableRequestedEngine.value
+        val active = TranscriptionSelectionPolicy.recoverPendingSelection(
+            current = previous,
+            requested = requested,
+            hasGroqKey = mutableGroqApiKey.value.isNotBlank(),
+            hasLocalModel = hasLocalModel,
+            allowLegacyPrivateRecovery = legacySelectionRecoveryPending,
+        )
+        if (active != previous) {
+            if (!persistSelection(requested = requested, active = active)) return false
+            logSelection("reconciled", previous, requested, active, active == requested)
+        }
+        if (legacySelectionRecoveryPending) {
+            legacySelectionRecoveryPending = false
+            store.edit().putBoolean(KEY_TRANSACTIONAL_SELECTION_MIGRATED, true).apply()
+        }
+        return active != null && active == requested
+    }
+
+    fun clearActiveEngine(reason: String) {
+        val previous = mutableEngine.value
+        if (persistSelection(requested = mutableRequestedEngine.value, active = null)) {
+            Log.i(TAG, "event=engine_cleared previous=$previous requested=${mutableRequestedEngine.value} reason=$reason")
+        }
+    }
+
+    private fun persistSelection(requested: TranscriptionEngine?, active: TranscriptionEngine?): Boolean {
+        val editor = store.edit()
+        if (requested == null) editor.remove(KEY_REQUESTED_ENGINE) else editor.putString(KEY_REQUESTED_ENGINE, requested.name)
+        if (active == null) editor.remove(KEY_ENGINE) else editor.putString(KEY_ENGINE, active.name)
+        if (!editor.commit()) {
+            Log.e(TAG, "event=engine_persist_failed requested=$requested active=$active")
+            return false
+        }
+        mutableRequestedEngine.value = requested
+        mutableEngine.value = active
+        return true
+    }
+
+    private fun logSelection(
+        event: String,
+        previous: TranscriptionEngine?,
+        requested: TranscriptionEngine?,
+        active: TranscriptionEngine?,
+        targetReady: Boolean,
+    ) {
+        Log.i(
+            TAG,
+            "event=engine_$event previous=$previous requested=$requested active=$active targetReady=$targetReady",
+        )
     }
 
     fun removeGroqApiKey() {
@@ -129,6 +178,7 @@ class GruPreferences private constructor(context: Context) {
 
     companion object {
         const val DEFAULT_GROQ_MODEL = "whisper-large-v3-turbo"
+        private const val TAG = "GruEngine"
 
         private const val FILE_NAME = "gru_preferences"
         private const val KEY_ENABLED = "pet_enabled"
@@ -139,6 +189,7 @@ class GruPreferences private constructor(context: Context) {
         private const val KEY_GROQ_MODEL = "groq_model"
         private const val KEY_ENGINE = "transcription_engine"
         private const val KEY_REQUESTED_ENGINE = "requested_transcription_engine"
+        private const val KEY_TRANSACTIONAL_SELECTION_MIGRATED = "transactional_selection_migrated"
 
         @Volatile private var instance: GruPreferences? = null
 

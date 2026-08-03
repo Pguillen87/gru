@@ -41,7 +41,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import com.pguillen.gru.overlay.GruAccessibilityService
-import com.pguillen.gru.dictation.TranscriptionEngine
 import com.pguillen.gru.local.WhisperModelManager
 import com.pguillen.gru.local.WhisperModelState
 
@@ -84,12 +83,8 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
         mutableIntStateOf(GruDestination.GENERAL.ordinal)
     }
     LaunchedEffect(engine, modelState) {
-        if (
-            engine == TranscriptionEngine.PRIVATE_LOCAL &&
-            (modelState is WhisperModelState.NotInstalled || modelState is WhisperModelState.Error)
-        ) {
-            prefs.setEngine(null)
-            prefs.requestEngine(TranscriptionEngine.PRIVATE_LOCAL)
+        if (modelState !is WhisperModelState.Preparing && modelState !is WhisperModelState.Verifying) {
+            prefs.reconcileEngine(modelState is WhisperModelState.Installed)
         }
     }
     Scaffold(topBar = {

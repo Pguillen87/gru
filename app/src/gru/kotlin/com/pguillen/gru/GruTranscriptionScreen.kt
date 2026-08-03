@@ -62,7 +62,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.pguillen.gru.dictation.GruDictation
 import com.pguillen.gru.dictation.TranscriptionEngine
-import com.pguillen.gru.dictation.TranscriptionSelectionPolicy
 import com.pguillen.gru.local.WhisperModelError
 import com.pguillen.gru.local.WhisperModelManager
 import com.pguillen.gru.local.WhisperModelState
@@ -107,8 +106,11 @@ internal fun GruTranscriptionScreen(
             configuring = requested == TranscriptionEngine.ONLINE_GROQ && current != TranscriptionEngine.ONLINE_GROQ,
             action = R.string.gru__use_online,
         ) {
-            prefs.requestEngine(TranscriptionEngine.ONLINE_GROQ)
-            if (apiKey.isBlank()) editKey = true else prefs.setEngine(TranscriptionEngine.ONLINE_GROQ)
+            val activated = prefs.selectEngine(
+                TranscriptionEngine.ONLINE_GROQ,
+                hasLocalModel = modelState is WhisperModelState.Installed,
+            )
+            if (activated) onConfigured() else editKey = true
         }
         EngineChoice(
             icon = { Icon(Icons.Default.Lock, null) },
@@ -124,17 +126,17 @@ internal fun GruTranscriptionScreen(
                 R.string.gru__use_private
             },
         ) {
-            prefs.requestEngine(TranscriptionEngine.PRIVATE_LOCAL)
-            if (TranscriptionSelectionPolicy.canActivate(TranscriptionEngine.PRIVATE_LOCAL, apiKey.isNotBlank(), modelState is WhisperModelState.Installed)) {
-                prefs.setEngine(TranscriptionEngine.PRIVATE_LOCAL)
-                onConfigured()
-            }
+            if (prefs.selectEngine(
+                    TranscriptionEngine.PRIVATE_LOCAL,
+                    hasLocalModel = modelState is WhisperModelState.Installed,
+                )
+            ) onConfigured()
         }
         if (requested == TranscriptionEngine.ONLINE_GROQ || current == TranscriptionEngine.ONLINE_GROQ) {
             GroqSettings(apiKey, onEdit = { editKey = true }, onRemove = {
                 prefs.removeGroqApiKey()
                 if (current == TranscriptionEngine.ONLINE_GROQ) {
-                    prefs.setEngine(null)
+                    prefs.clearActiveEngine("groq_key_removed")
                 }
             })
         }
@@ -145,12 +147,11 @@ internal fun GruTranscriptionScreen(
                 onCancel = manager::cancelDownload,
                 isActive = current == TranscriptionEngine.PRIVATE_LOCAL,
                 onActivate = {
-                    prefs.setEngine(TranscriptionEngine.PRIVATE_LOCAL)
-                    onConfigured()
+                    if (prefs.selectEngine(TranscriptionEngine.PRIVATE_LOCAL, hasLocalModel = true)) onConfigured()
                 },
                 onRemove = {
                     if (current == TranscriptionEngine.PRIVATE_LOCAL) {
-                        prefs.setEngine(null)
+                        prefs.clearActiveEngine("local_model_removed")
                     }
                     manager.removeModel(GruDictation::releaseLocalModel)
                 },
@@ -162,8 +163,10 @@ internal fun GruTranscriptionScreen(
         onSave = { value ->
             prefs.groqApiKey = value
             if (prefs.groqApiKey == value) {
-                prefs.requestEngine(TranscriptionEngine.ONLINE_GROQ)
-                prefs.setEngine(TranscriptionEngine.ONLINE_GROQ)
+                prefs.selectEngine(
+                    TranscriptionEngine.ONLINE_GROQ,
+                    hasLocalModel = modelState is WhisperModelState.Installed,
+                )
                 editKey = false
                 onConfigured()
             }
