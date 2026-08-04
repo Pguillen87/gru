@@ -33,4 +33,4 @@ Não há router paralelo. A segurança da troca de motor continua em `GruPrefere
 
 ## Verificação
 
-Executados com sucesso: `:app:compileDebugKotlin`, `:app:testReleaseUnitTest` e `git diff --check`. Builds release/debug completos, lint, validação 16 KB e teste físico devem ser executados no ambiente de auditoria antes da publicação final.
+Executados com sucesso: `:app:compileDebugKotlin`, `:app:testReleaseUnitTest`, `:app:assembleDebug`, `:app:assembleRelease`, `:app:lintDebug`, `git diff --check` e `zipalign -c -P 16 -v 4` no APK release. O APK debug foi instalado e aberto no Samsung conectado (`RQCX901D1AN`); Acessibilidade não foi habilitada pelo agente.
