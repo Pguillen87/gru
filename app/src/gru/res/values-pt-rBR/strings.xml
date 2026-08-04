@@ -1,5 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+  <string name="gru__nav_permissions">Permissões</string>
+  <string name="gru__nav_voice">Voz</string>
+  <string name="gru__nav_control">Ligar/Desligar</string>
+  <string name="gru__nav_mascots">Mascotes</string>
+  <string name="gru__nav_create_mascot">Criar mascote</string>
+  <string name="gru__mascots_title">Mascotes</string>
+  <string name="gru__control_title">Ligar/Desligar</string>
+  <string name="gru__control_on">Gru ligado</string>
+  <string name="gru__control_off">Gru desligado</string>
+  <string name="gru__control_needs_setup">Precisamos corrigir uma configuração</string>
+  <string name="gru__control_mascot_description">Coruja do Gru acompanhando o estado do pet</string>
+  <string name="gru__control_blocked_summary">O Gru ainda precisa de uma configuração antes de ficar ligado.</string>
+  <string name="gru__resolve_now">Resolver agora</string>
+  <string name="gru__turn_on">Ligar</string>
+  <string name="gru__turn_off">Desligar</string>
+  <string name="gru__control_reversible">Você pode mudar esse estado quando quiser.</string>
+  <string name="gru__permissions_title">Permissões</string>
+  <string name="gru__permissions_progress">%1$d de %2$d concluído</string>
+  <string name="gru__voice_title">Voz</string>
   <string name="gru__accessibility_service_label">Pet flutuante do Gru</string>
   <string name="gru__error_no_api_key">Adicione sua chave da Groq nas configurações do Gru.</string>
   <string name="gru__error_engine_not_selected">Escolha a transcrição Online ou Privada nas configurações do Gru.</string>

@@ -87,6 +87,7 @@ internal fun GruTranscriptionScreen(
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
+        Text(stringResource(R.string.gru__voice_title), style = MaterialTheme.typography.headlineMedium)
         if (!firstUse) CurrentEngine(current)
         if (firstUse) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

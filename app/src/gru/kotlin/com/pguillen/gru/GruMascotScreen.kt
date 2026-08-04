@@ -82,8 +82,15 @@ import com.pguillen.gru.mascot.MascotTelemetry
 import com.pguillen.gru.mascot.prepareMascotPhoto
 import com.pguillen.gru.mascot.normalizeDisplayName
 
+internal enum class MascotFocus { LIBRARY, CREATE }
+
 @Composable
-internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modifier: Modifier = Modifier) {
+internal fun GruMascotScreen(
+    prefs: GruPreferences,
+    permissionRefresh: Int,
+    focus: MascotFocus = MascotFocus.LIBRARY,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val source by prefs.mascotSource.collectAsState()
     val enabled by prefs.enabled.collectAsState()
@@ -180,38 +187,34 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         modifier.clipToBounds().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        Text(stringResource(R.string.gru__my_mascot), style = MaterialTheme.typography.headlineSmall)
-        MascotPreview(
-            source, size, opacity, customStore,
-            customMascots.firstOrNull { it.poseSetId == selectedCustom?.poseSetId }?.displayName,
-        )
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.gru__pet_enabled), style = MaterialTheme.typography.titleMedium)
-                Text(stringResource(R.string.gru__pet_enabled_summary), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Switch(enabled, prefs::setEnabled, enabled = ready)
-        }
-        Text(stringResource(R.string.gru__my_mascots), style = MaterialTheme.typography.titleLarge)
-        if (customMascots.isEmpty()) {
-            Text(stringResource(R.string.gru__my_mascots_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            Text(stringResource(R.string.gru__my_mascots_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            CustomMascotGallery(
-                selected = source,
-                customMascots = customMascots,
-                selectCustom = { entry -> prefs.selectCustomMascot(entry.poseSetId, entry.masterId) },
-                editCustom = { entry ->
-                    editTarget = entry
-                    editName = entry.displayName.orEmpty()
-                },
+        if (focus == MascotFocus.LIBRARY) {
+            Text(stringResource(R.string.gru__mascots_title), style = MaterialTheme.typography.headlineSmall)
+            MascotPreview(
+                source, size, opacity, customStore,
+                customMascots.firstOrNull { it.poseSetId == selectedCustom?.poseSetId }?.displayName,
             )
+            Text(stringResource(R.string.gru__my_mascots), style = MaterialTheme.typography.titleLarge)
+            if (customMascots.isEmpty()) {
+                Text(stringResource(R.string.gru__my_mascots_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Text(stringResource(R.string.gru__my_mascots_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                CustomMascotGallery(
+                    selected = source,
+                    customMascots = customMascots,
+                    selectCustom = { entry -> prefs.selectCustomMascot(entry.poseSetId, entry.masterId) },
+                    editCustom = { entry ->
+                        editTarget = entry
+                        editName = entry.displayName.orEmpty()
+                    },
+                )
+            }
+            Text(stringResource(R.string.gru__gru_mascots), style = MaterialTheme.typography.titleLarge)
+            BuiltInPicker(source, prefs::setPet)
+        } else {
+            Text(stringResource(R.string.gru__create_mascot), style = MaterialTheme.typography.headlineSmall)
+            Text(stringResource(R.string.gru__create_mascot_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text(stringResource(R.string.gru__gru_mascots), style = MaterialTheme.typography.titleLarge)
-        BuiltInPicker(source, prefs::setPet)
-        Text(stringResource(R.string.gru__create_mascot), style = MaterialTheme.typography.titleLarge)
-        Text(stringResource(R.string.gru__create_mascot_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        MascotCreationPanel(
+        if (focus == MascotFocus.CREATE) MascotCreationPanel(
             photo = photo,
             state = creation,
             onPick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
@@ -283,15 +286,17 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
                     .onFailure { creation = MascotCreationState.CancelPending(jobId) }
             } },
         )
-        Text(stringResource(R.string.gru__appearance), style = MaterialTheme.typography.titleLarge)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GruPetSize.entries.forEach { option -> FilterChip(option == size, { prefs.setSize(option) }, { Text(stringResource(sizeLabel(option))) }) }
-        }
-        Text(stringResource(R.string.gru__opacity, opacity))
-        Slider(opacity.toFloat(), { prefs.setOpacity(it.toInt()) }, valueRange = 40f..100f, steps = 5)
-        if (source is MascotSource.Custom) {
-            Text(stringResource(R.string.gru__poses), style = MaterialTheme.typography.titleLarge)
-            Text(stringResource(R.string.gru__poses_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (focus == MascotFocus.LIBRARY) {
+            Text(stringResource(R.string.gru__appearance), style = MaterialTheme.typography.titleLarge)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GruPetSize.entries.forEach { option -> FilterChip(option == size, { prefs.setSize(option) }, { Text(stringResource(sizeLabel(option))) }) }
+            }
+            Text(stringResource(R.string.gru__opacity, opacity))
+            Slider(opacity.toFloat(), { prefs.setOpacity(it.toInt()) }, valueRange = 40f..100f, steps = 5)
+            if (source is MascotSource.Custom) {
+                Text(stringResource(R.string.gru__poses), style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.gru__poses_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         Spacer(Modifier.height(12.dp))
     }

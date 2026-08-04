@@ -22,13 +22,24 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddCircle
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Pets
+import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -40,6 +51,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -75,9 +91,11 @@ class GruActivity : ComponentActivity() {
 }
 
 internal enum class GruDestination(val label: Int) {
-    GENERAL(R.string.gru__general_tab),
-    TRANSCRIPTION(R.string.gru__transcription_tab),
-    MASCOT(R.string.gru__mascot_tab),
+    PERMISSIONS(R.string.gru__nav_permissions),
+    VOICE(R.string.gru__nav_voice),
+    CONTROL(R.string.gru__nav_control),
+    MASCOTS(R.string.gru__nav_mascots),
+    CREATE_MASCOT(R.string.gru__nav_create_mascot),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,53 +105,104 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
     val modelManager = remember { WhisperModelManager.get(context) }
     val engine by prefs.engine.collectAsState()
     val modelState by modelManager.state.collectAsState()
-    var destination by remember {
-        mutableIntStateOf(GruDestination.GENERAL.ordinal)
-    }
+    var destination by remember { mutableIntStateOf(GruDestination.PERMISSIONS.ordinal) }
     LaunchedEffect(engine, modelState) {
         if (modelState !is WhisperModelState.Preparing && modelState !is WhisperModelState.Verifying) {
             prefs.reconcileEngine(modelState is WhisperModelState.Installed)
         }
     }
-    Scaffold(topBar = {
-        Column {
-            TopAppBar(title = { GruBrandTitle() })
+    Scaffold(
+        topBar = { TopAppBar(title = { GruBrandTitle() }) },
+        bottomBar = {
             if (engine != null) {
-                PrimaryTabRow(selectedTabIndex = destination) {
-                    GruDestination.entries.forEachIndexed { index, item ->
-                        Tab(
-                            selected = destination == index,
-                            onClick = { destination = index },
-                            text = { Text(stringResource(item.label)) },
-                        )
-                    }
-                }
+                GruBottomNavigation(
+                    selected = GruDestination.entries[destination],
+                    onSelect = { destination = it.ordinal },
+                )
             }
-        }
-    }) { padding ->
+        },
+    ) { padding ->
         if (engine == null) {
             GruTranscriptionScreen(
                 prefs = prefs,
                 firstUse = true,
-                onConfigured = { destination = GruDestination.GENERAL.ordinal },
+                onConfigured = { destination = GruDestination.PERMISSIONS.ordinal },
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
         } else when (GruDestination.entries[destination]) {
-            GruDestination.GENERAL -> GruGeneralScreen(
+            GruDestination.PERMISSIONS -> GruGeneralScreen(
                 prefs = prefs,
                 permissionRefresh = permissionRefresh,
                 onPermissionChanged = onPermissionChanged,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
-            GruDestination.TRANSCRIPTION -> GruTranscriptionScreen(
+            GruDestination.VOICE -> GruTranscriptionScreen(
                 prefs = prefs,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
-            GruDestination.MASCOT -> GruMascotScreen(
+            GruDestination.CONTROL -> GruControlScreen(
+                prefs = prefs,
+                permissionRefresh = permissionRefresh,
+                onResolvePermissions = { destination = GruDestination.PERMISSIONS.ordinal },
+                onResolveVoice = { destination = GruDestination.VOICE.ordinal },
+                modifier = Modifier.fillMaxSize().padding(padding),
+            )
+            GruDestination.MASCOTS -> GruMascotScreen(
                 prefs = prefs,
                 permissionRefresh = permissionRefresh,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
+            GruDestination.CREATE_MASCOT -> GruMascotScreen(
+                prefs = prefs,
+                permissionRefresh = permissionRefresh,
+                focus = MascotFocus.CREATE,
+                modifier = Modifier.fillMaxSize().padding(padding),
+            )
+        }
+    }
+}
+
+@Composable
+private fun GruBottomNavigation(selected: GruDestination, onSelect: (GruDestination) -> Unit) {
+    val items = listOf(
+        GruDestination.PERMISSIONS to Icons.Default.CheckCircle,
+        GruDestination.VOICE to Icons.Default.GraphicEq,
+        GruDestination.CONTROL to Icons.Default.PowerSettingsNew,
+        GruDestination.MASCOTS to Icons.Default.Pets,
+        GruDestination.CREATE_MASCOT to Icons.Default.AddCircle,
+    )
+    NavigationBar(modifier = Modifier.navigationBarsPadding()) {
+        items.forEach { (destination, icon) ->
+            val isCentral = destination == GruDestination.CONTROL
+            if (isCentral) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .clip(MaterialTheme.shapes.large)
+                            .semantics {
+                                this.selected = selected == destination
+                                role = Role.Tab
+                            }
+                            .clickable { onSelect(destination) }
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(icon, contentDescription = null, modifier = Modifier.size(36.dp))
+                        Text(stringResource(destination.label), maxLines = 2, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            } else {
+                NavigationBarItem(
+                    selected = selected == destination,
+                    onClick = { onSelect(destination) },
+                    icon = { Icon(icon, contentDescription = null) },
+                    label = { Text(stringResource(destination.label), maxLines = 2) },
+                    modifier = Modifier.semantics { role = Role.Tab },
+                )
+            }
         }
     }
 }
@@ -145,8 +214,9 @@ private fun GruBrandTitle() {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Image(
-            painter = painterResource(R.drawable.gru_brand_gro),
+            painter = painterResource(R.drawable.gru_brand_master),
             contentDescription = stringResource(R.string.gru__brand_logo),
+            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
             modifier = Modifier.size(48.dp),
         )
         Text(stringResource(R.string.gru__app_name))

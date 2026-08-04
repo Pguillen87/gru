@@ -85,12 +85,20 @@ internal fun GruGeneralScreen(
         TranscriptionEngine.PRIVATE_LOCAL -> modelState is WhisperModelState.Installed
         null -> false
     }
+    val completed = listOf(accessibilityReady, microphoneReady, notificationsReady).count { it }
+    val total = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 3 else 2
 
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
+        Text(stringResource(R.string.gru__permissions_title), style = MaterialTheme.typography.headlineMedium)
+        Text(
+            stringResource(R.string.gru__permissions_progress, completed, total),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
         StatusSummary(false, accessibilityReady, serviceConnected, microphoneReady, engineReady, overlayHealth)
         PermissionSection(accessibilityReady, microphoneReady, notificationsReady, onPermissionChanged)
         Spacer(Modifier.height(8.dp))
