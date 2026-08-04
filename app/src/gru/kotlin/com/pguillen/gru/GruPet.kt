@@ -16,7 +16,7 @@ enum class GruPet {
 }
 
 enum class GruPetSize(val scale: Float) {
-    SMALL(0.82f),
+    SMALL(0.78f),
     MEDIUM(1f),
-    LARGE(1.18f),
+    LARGE(1.24f),
 }

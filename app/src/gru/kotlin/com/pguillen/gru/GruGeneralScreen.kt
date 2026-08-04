@@ -215,14 +215,14 @@ private fun PermissionRow(title: Int, summary: Int, granted: Boolean, actionLabe
 }
 
 @Composable
-private fun PetPreview(design: GruPet, opacity: Int) {
+private fun PetPreview(design: GruPet, size: GruPetSize, opacity: Int) {
     val pet = petFor(design)
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Image(
             painterResource(pet.drawable),
             stringResource(R.string.gru__preview_description, stringResource(pet.name)),
             contentScale = ContentScale.Fit,
-            modifier = Modifier.size(132.dp).alpha(opacity.coerceIn(40, 100) / 100f),
+            modifier = Modifier.size(132.dp * size.scale).alpha(opacity.coerceIn(40, 100) / 100f),
         )
         Text(stringResource(R.string.gru__tagline), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
     }

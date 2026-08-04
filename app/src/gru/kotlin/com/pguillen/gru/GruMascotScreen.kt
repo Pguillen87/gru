@@ -182,7 +182,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     ) {
         Text(stringResource(R.string.gru__my_mascot), style = MaterialTheme.typography.headlineSmall)
         MascotPreview(
-            source, opacity, customStore,
+            source, size, opacity, customStore,
             customMascots.firstOrNull { it.poseSetId == selectedCustom?.poseSetId }?.displayName,
         )
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -311,17 +311,17 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     }
 }
 
-@Composable private fun MascotPreview(source: MascotSource, opacity: Int, store: CustomMascotStore, customName: String?) {
+@Composable private fun MascotPreview(source: MascotSource, size: GruPetSize, opacity: Int, store: CustomMascotStore, customName: String?) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         when (source) {
             is MascotSource.BuiltIn -> {
                 val option = petOption(source.pet)
-                Image(painterResource(option.drawable), stringResource(R.string.gru__preview_description, stringResource(option.name)), contentScale = ContentScale.Fit, modifier = Modifier.size(144.dp).alpha(opacity / 100f))
+                Image(painterResource(option.drawable), stringResource(R.string.gru__preview_description, stringResource(option.name)), contentScale = ContentScale.Fit, modifier = Modifier.size(144.dp * size.scale).alpha(opacity / 100f))
                 Text(stringResource(option.name), style = MaterialTheme.typography.titleMedium)
             }
             is MascotSource.Custom -> {
                 val preview = rememberFileBitmap(store.previewFile(source.poseSetId)?.absolutePath)
-                if (preview != null) Image(preview, stringResource(R.string.gru__custom_mascot), contentScale = ContentScale.Fit, modifier = Modifier.size(144.dp).alpha(opacity / 100f))
+                if (preview != null) Image(preview, stringResource(R.string.gru__custom_mascot), contentScale = ContentScale.Fit, modifier = Modifier.size(144.dp * size.scale).alpha(opacity / 100f))
                 Text(customName ?: stringResource(R.string.gru__custom_mascot), style = MaterialTheme.typography.titleMedium)
             }
         }

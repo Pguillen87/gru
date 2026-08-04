@@ -243,8 +243,8 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     }
 
     private fun createView(): FrameLayout {
-        val viewSize = scaledDp(96)
-        val petSize = scaledDp(86)
+        val viewSize = scaledDp(BASE_VIEW_DP)
+        val petSize = scaledDp(BASE_PET_DP)
         val accent = ContextCompat.getColor(context, R.color.gru_pet_accent)
         val signal = PetSignalView(
             context = context,
@@ -501,7 +501,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     }
 
     private fun createParams(): WindowManager.LayoutParams {
-        val width = scaledDp(96)
+        val width = scaledDp(BASE_VIEW_DP)
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -574,8 +574,8 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private fun scaledDp(value: Int): Int =
         (value * currentSize.scale * context.resources.displayMetrics.density).toInt()
 
-    private fun rootWidth(): Int = rootView?.width?.takeIf { it > 0 } ?: scaledDp(96)
-    private fun rootHeight(): Int = rootView?.height?.takeIf { it > 0 } ?: scaledDp(96)
+    private fun rootWidth(): Int = rootView?.width?.takeIf { it > 0 } ?: scaledDp(BASE_VIEW_DP)
+    private fun rootHeight(): Int = rootView?.height?.takeIf { it > 0 } ?: scaledDp(BASE_VIEW_DP)
     private fun screenWidth(): Int = context.resources.displayMetrics.widthPixels
     private fun screenHeight(): Int = context.resources.displayMetrics.heightPixels
     private fun maxX(): Int = (screenWidth() - rootWidth()).coerceAtLeast(0)
@@ -595,6 +595,8 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         const val EDGE_MARGIN = 12
         const val FIRST_FRAME_TIMEOUT_MILLIS = 750L
         const val RECOVERY_DELAY_MILLIS = 120L
+        const val BASE_VIEW_DP = 120
+        const val BASE_PET_DP = 108
     }
 
     private class PetOverlayLayout(context: Context) : FrameLayout(context) {
