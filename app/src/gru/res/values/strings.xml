@@ -128,6 +128,9 @@
   <string name="gru__mascot_tab">Mascot</string>
   <string name="gru__my_mascot">My mascot</string>
   <string name="gru__gru_mascots">Gru mascots</string>
+  <string name="gru__my_mascots">My mascots</string>
+  <string name="gru__my_mascots_summary">Your personalized mascots are saved here.</string>
+  <string name="gru__my_mascots_empty">You have not created a personalized mascot yet.</string>
   <string name="gru__create_mascot">Create my mascot</string>
   <string name="gru__create_mascot_summary">Turn a person or animal into a Gru mascot with one photo.</string>
   <string name="gru__choose_photo">Create with a photo</string>
@@ -139,6 +142,11 @@
   <string name="gru__create_another_mascot">Create another mascot</string>
   <string name="gru__mascot_name">Mascot name</string>
   <string name="gru__save_mascot_name">Save name</string>
+  <string name="gru__edit_mascot_name">Edit mascot name</string>
+  <string name="gru__save_name">Save</string>
+  <string name="gru__mascot_name_hint">Use up to 32 characters.</string>
+  <string name="gru__mascot_name_required">Required to save a new mascot.</string>
+  <string name="gru__mascot_name_save_failed">Could not save this name. Try again.</string>
   <string name="gru__mascot_name_saved">Name saved.</string>
   <string name="gru__mascot_name_optional">Optional: you can change it later.</string>
   <string name="gru__discard_master_options">Discard these options</string>

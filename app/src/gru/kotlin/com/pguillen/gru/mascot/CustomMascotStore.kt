@@ -90,7 +90,7 @@ class CustomMascotStore internal constructor(private val root: File) {
     }.getOrElse { false }
 
     fun rename(poseSetId: String, name: String): Boolean {
-        val normalized = name.trim().replace(Regex("\\s+"), " ").take(32)
+        val normalized = normalizeDisplayName(name)
         if (normalized.isBlank()) return false
         val manifest = read(poseSetId) ?: return false
         val folder = directory(poseSetId)
@@ -153,11 +153,15 @@ class CustomMascotStore internal constructor(private val root: File) {
             .takeIf { file -> file.isFile && file.readBytes().matchesSha256(checksum) }
     }
 
-    private companion object {
-        const val MANIFEST = "manifest.json"
-        const val MASTER = "master.png"
+    companion object {
+        private const val MANIFEST = "manifest.json"
+        private const val MASTER = "master.png"
+        const val MAX_DISPLAY_NAME_LENGTH = 32
     }
 }
+
+internal fun normalizeDisplayName(value: String): String =
+    value.trim().replace(Regex("\\s+"), " ").take(CustomMascotStore.MAX_DISPLAY_NAME_LENGTH)
 
 private fun CustomMascotManifest.isSafe(): Boolean {
     val poseIds = poses.map(MascotPose::poseId)

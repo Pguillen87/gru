@@ -23,6 +23,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,6 +34,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -74,6 +80,7 @@ import com.pguillen.gru.mascot.CustomMascotStore
 import com.pguillen.gru.mascot.CustomMascotEntry
 import com.pguillen.gru.mascot.MascotTelemetry
 import com.pguillen.gru.mascot.prepareMascotPhoto
+import com.pguillen.gru.mascot.normalizeDisplayName
 
 @Composable
 internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modifier: Modifier = Modifier) {
@@ -94,8 +101,9 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     var creation by remember { mutableStateOf<MascotCreationState>(MascotCreationState.Idle) }
     var selectedMasterId by remember { mutableStateOf<String?>(null) }
     var masterPreviews by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
-    var customMascotName by remember { mutableStateOf("") }
-    var nameSaved by remember { mutableStateOf(false) }
+    var creationMascotName by remember { mutableStateOf("") }
+    var editTarget by remember { mutableStateOf<CustomMascotEntry?>(null) }
+    var editName by remember { mutableStateOf("") }
     val customStore = remember { CustomMascotStore(context) }
     var customMascots by remember { mutableStateOf(customStore.entries()) }
     val scope = rememberCoroutineScope()
@@ -103,10 +111,6 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) {
         photo = it
         creation = if (it == null) MascotCreationState.Idle else MascotCreationState.PhotoSelected
-    }
-    LaunchedEffect(source, customMascots) {
-        val selected = source as? MascotSource.Custom ?: return@LaunchedEffect
-        customMascotName = customMascots.firstOrNull { it.poseSetId == selected.poseSetId }?.displayName.orEmpty()
     }
     LaunchedEffect(Unit) {
         runCatching { repository.resume() }.onSuccess { job ->
@@ -139,8 +143,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         val masters = job.masters
         selectedMasterId = if (awaiting != null) null else job.masterId
         if (awaiting != null) {
-            customMascotName = ""
-            nameSaved = false
+            creationMascotName = ""
         }
         masterPreviews = emptyMap()
         masterPreviews = masters.mapNotNull { reference ->
@@ -189,33 +192,23 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             }
             Switch(enabled, prefs::setEnabled, enabled = ready)
         }
-        Text(stringResource(R.string.gru__gru_mascots), style = MaterialTheme.typography.titleLarge)
-        MascotGallery(
-            selected = source,
-            customMascots = customMascots,
-            selectBuiltIn = prefs::setPet,
-            selectCustom = { entry -> prefs.selectCustomMascot(entry.poseSetId, entry.masterId) },
-        )
-        if (selectedCustom != null) {
-            OutlinedTextField(
-                value = customMascotName,
-                onValueChange = { customMascotName = it.take(32); nameSaved = false },
-                label = { Text(stringResource(R.string.gru__mascot_name)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Button(
-                onClick = {
-                    if (customStore.rename(selectedCustom.poseSetId, customMascotName)) {
-                        customMascots = customStore.entries()
-                        nameSaved = true
-                    }
+        Text(stringResource(R.string.gru__my_mascots), style = MaterialTheme.typography.titleLarge)
+        if (customMascots.isEmpty()) {
+            Text(stringResource(R.string.gru__my_mascots_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            Text(stringResource(R.string.gru__my_mascots_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            CustomMascotGallery(
+                selected = source,
+                customMascots = customMascots,
+                selectCustom = { entry -> prefs.selectCustomMascot(entry.poseSetId, entry.masterId) },
+                editCustom = { entry ->
+                    editTarget = entry
+                    editName = entry.displayName.orEmpty()
                 },
-                enabled = customMascotName.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(stringResource(R.string.gru__save_mascot_name)) }
-            if (nameSaved) Text(stringResource(R.string.gru__mascot_name_saved), color = MaterialTheme.colorScheme.primary)
+            )
         }
+        Text(stringResource(R.string.gru__gru_mascots), style = MaterialTheme.typography.titleLarge)
+        BuiltInPicker(source, prefs::setPet)
         Text(stringResource(R.string.gru__create_mascot), style = MaterialTheme.typography.titleLarge)
         Text(stringResource(R.string.gru__create_mascot_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
         MascotCreationPanel(
@@ -251,8 +244,8 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             selectedMasterId = selectedMasterId,
             masterPreviews = masterPreviews,
             onSelectMaster = { selectedMasterId = it },
-            mascotName = customMascotName,
-            onMascotNameChange = { customMascotName = it.take(32) },
+            mascotName = creationMascotName,
+            onMascotNameChange = { creationMascotName = it.take(32) },
             onApprove = { masterId, name -> scope.launch {
                 val awaiting = creation as? MascotCreationState.AwaitingMasterApproval ?: return@launch
                 creation = MascotCreationState.Submitting
@@ -302,6 +295,20 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         }
         Spacer(Modifier.height(12.dp))
     }
+    editTarget?.let { target ->
+        MascotNameEditorDialog(
+            initialName = editName,
+            onDismiss = { editTarget = null },
+            onSave = { name ->
+                customStore.rename(target.poseSetId, name).also { saved ->
+                    if (saved) {
+                        customMascots = customStore.entries()
+                        editTarget = null
+                    }
+                }
+            },
+        )
+    }
 }
 
 @Composable private fun MascotPreview(source: MascotSource, opacity: Int, store: CustomMascotStore, customName: String?) {
@@ -321,46 +328,101 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     }
 }
 
-@Composable private fun MascotGallery(
+@Composable private fun BuiltInPicker(selected: MascotSource, select: (GruPet) -> Unit) {
+    PET_OPTIONS.chunked(3).forEach { row ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            row.forEach { option ->
+                MascotGalleryCard(
+                    selected = selected == MascotSource.BuiltIn(option.pet),
+                    onClick = { select(option.pet) },
+                    image = { Image(painterResource(option.drawable), null, modifier = Modifier.size(64.dp)) },
+                    label = stringResource(option.name),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+        }
+    }
+}
+
+@Composable private fun CustomMascotGallery(
     selected: MascotSource,
     customMascots: List<CustomMascotEntry>,
-    selectBuiltIn: (GruPet) -> Unit,
     selectCustom: (CustomMascotEntry) -> Unit,
+    editCustom: (CustomMascotEntry) -> Unit,
 ) {
-    val cards = PET_OPTIONS.map { MascotGalleryItem.BuiltIn(it) } +
-        customMascots.mapIndexed { index, entry -> MascotGalleryItem.Custom(entry, index + 1) }
+    val cards = customMascots.mapIndexed { index, entry -> entry to (index + 1) }
     cards.chunked(3).forEach { row ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            row.forEach { card ->
-                when (card) {
-                    is MascotGalleryItem.BuiltIn -> MascotGalleryCard(
-                        selected = selected == MascotSource.BuiltIn(card.option.pet),
-                        onClick = { selectBuiltIn(card.option.pet) },
-                        image = { Image(painterResource(card.option.drawable), null, modifier = Modifier.size(64.dp)) },
-                        label = stringResource(card.option.name),
-                        modifier = Modifier.weight(1f),
-                    )
-                    is MascotGalleryItem.Custom -> MascotGalleryCard(
-                        selected = selected == MascotSource.Custom(card.entry.poseSetId, card.entry.masterId),
-                        onClick = { selectCustom(card.entry) },
-                        image = {
-                            rememberFileBitmap(card.entry.previewPath)?.let {
-                                Image(
-                                    it, null,
-                                    modifier = Modifier.size(72.dp).clip(RoundedCornerShape(8.dp)),
-                                    contentScale = ContentScale.Crop,
-                                    alignment = Alignment.TopCenter,
-                                )
+            row.forEach { (entry, number) ->
+                Box(Modifier.weight(1f)) {
+                        MascotGalleryCard(
+                            selected = selected == MascotSource.Custom(entry.poseSetId, entry.masterId),
+                            onClick = { selectCustom(entry) },
+                            image = {
+                                rememberFileBitmap(entry.previewPath)?.let {
+                                    Image(
+                                        it, null,
+                                        modifier = Modifier.size(72.dp).clip(RoundedCornerShape(8.dp)),
+                                        contentScale = ContentScale.Crop,
+                                        alignment = Alignment.TopCenter,
+                                    )
+                                }
+                            },
+                            label = entry.displayName ?: stringResource(R.string.gru__personalized_mascot_number, number),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                            IconButton(
+                                onClick = { editCustom(entry) },
+                                modifier = Modifier.align(Alignment.TopEnd).size(36.dp),
+                            ) {
+                                Icon(Icons.Default.Edit, stringResource(R.string.gru__edit_mascot_name))
                             }
-                        },
-                        label = card.entry.displayName ?: stringResource(R.string.gru__personalized_mascot_number, card.number),
-                        modifier = Modifier.weight(1f),
-                    )
                 }
             }
             repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
         }
     }
+}
+
+@Composable private fun MascotNameEditorDialog(
+    initialName: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Boolean,
+) {
+    var draft by remember(initialName) { mutableStateOf(initialName) }
+    var saveFailed by remember { mutableStateOf(false) }
+    val normalized = normalizeDisplayName(draft)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.gru__edit_mascot_name)) },
+        text = {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = {
+                    draft = it.take(CustomMascotStore.MAX_DISPLAY_NAME_LENGTH)
+                    saveFailed = false
+                },
+                label = { Text(stringResource(R.string.gru__mascot_name)) },
+                supportingText = {
+                    Text(
+                        if (saveFailed) stringResource(R.string.gru__mascot_name_save_failed)
+                        else stringResource(R.string.gru__mascot_name_hint),
+                        color = if (saveFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
+                isError = saveFailed,
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { saveFailed = !onSave(normalized) },
+                enabled = normalized.isNotBlank(),
+            ) { Text(stringResource(R.string.gru__save_name)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } },
+    )
 }
 
 @Composable private fun MascotGalleryCard(
@@ -529,11 +591,15 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             value = mascotName,
             onValueChange = onMascotNameChange,
             label = { Text(stringResource(R.string.gru__mascot_name)) },
-            supportingText = { Text(stringResource(R.string.gru__mascot_name_optional)) },
+                        supportingText = { Text(stringResource(R.string.gru__mascot_name_required)) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        Button(onClick = { selectedId?.let { onApprove(it, mascotName) } }, enabled = selectedId != null, modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = { selectedId?.let { onApprove(it, mascotName) } },
+            enabled = selectedId != null && mascotName.trim().isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text(stringResource(R.string.gru__choose_this_mascot))
         }
     }
@@ -558,10 +624,6 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
 }
 
 private data class BuiltInOption(val pet: GruPet, val drawable: Int, val name: Int)
-private sealed interface MascotGalleryItem {
-    data class BuiltIn(val option: BuiltInOption) : MascotGalleryItem
-    data class Custom(val entry: CustomMascotEntry, val number: Int) : MascotGalleryItem
-}
 private fun petOption(pet: GruPet) = PET_OPTIONS.first { it.pet == pet }
 private fun sizeLabel(size: GruPetSize) = when (size) { GruPetSize.SMALL -> R.string.gru__size_small; GruPetSize.MEDIUM -> R.string.gru__size_medium; GruPetSize.LARGE -> R.string.gru__size_large }
 private val PET_OPTIONS = listOf(

@@ -47,6 +47,17 @@ class CustomMascotStoreTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun `custom mascot editor rejects blank names and bounds long names`() {
+        val root = Files.createTempDirectory("gru-name-validation-test").toFile()
+        try {
+            val store = CustomMascotStore(root)
+            assertTrue(store.promoteMaster("job-1", "master_1", "image".encodeToByteArray()))
+            assertFalse(store.rename("job-1", "   "))
+            assertTrue(store.rename("job-1", "  ${"A".repeat(80)}  "))
+            assertEquals(CustomMascotStore.MAX_DISPLAY_NAME_LENGTH, store.entries().single().displayName?.length)
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun `valid package is promoted and resolves every runtime state`() {
         val root = Files.createTempDirectory("gru-mascot-test").toFile()
         try {
