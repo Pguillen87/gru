@@ -74,8 +74,13 @@ class MascotRepository(
         }
     }
 
-    suspend fun approve(jobId: String, masterId: String): MascotJobResponse =
-        ensureApprovedMaster(api.approveMaster(jobId, masterId, "approve:$jobId:$masterId"))
+    suspend fun approve(jobId: String, masterId: String, displayName: String? = null): MascotJobResponse {
+        val job = ensureApprovedMaster(api.approveMaster(jobId, masterId, "approve:$jobId:$masterId"))
+        displayName?.takeIf { it.isNotBlank() }?.let { name ->
+            check(requireNotNull(customStore).rename(jobId, name)) { "Unable to save the mascot name." }
+        }
+        return job
+    }
 
     suspend fun startMasterGeneration(jobId: String): MascotJobResponse =
         api.startMasterGeneration(jobId, "generate-master:$jobId")

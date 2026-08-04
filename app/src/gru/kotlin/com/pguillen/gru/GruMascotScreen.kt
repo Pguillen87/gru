@@ -95,6 +95,7 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
     var selectedMasterId by remember { mutableStateOf<String?>(null) }
     var masterPreviews by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
     var customMascotName by remember { mutableStateOf("") }
+    var nameSaved by remember { mutableStateOf(false) }
     val customStore = remember { CustomMascotStore(context) }
     var customMascots by remember { mutableStateOf(customStore.entries()) }
     val scope = rememberCoroutineScope()
@@ -137,6 +138,10 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         val job = previewJob ?: return@LaunchedEffect
         val masters = job.masters
         selectedMasterId = if (awaiting != null) null else job.masterId
+        if (awaiting != null) {
+            customMascotName = ""
+            nameSaved = false
+        }
         masterPreviews = emptyMap()
         masterPreviews = masters.mapNotNull { reference ->
             runCatching {
@@ -194,18 +199,22 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
         if (selectedCustom != null) {
             OutlinedTextField(
                 value = customMascotName,
-                onValueChange = { customMascotName = it.take(32) },
+                onValueChange = { customMascotName = it.take(32); nameSaved = false },
                 label = { Text(stringResource(R.string.gru__mascot_name)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             Button(
                 onClick = {
-                    if (customStore.rename(selectedCustom.poseSetId, customMascotName)) customMascots = customStore.entries()
+                    if (customStore.rename(selectedCustom.poseSetId, customMascotName)) {
+                        customMascots = customStore.entries()
+                        nameSaved = true
+                    }
                 },
                 enabled = customMascotName.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(stringResource(R.string.gru__save_mascot_name)) }
+            if (nameSaved) Text(stringResource(R.string.gru__mascot_name_saved), color = MaterialTheme.colorScheme.primary)
         }
         Text(stringResource(R.string.gru__create_mascot), style = MaterialTheme.typography.titleLarge)
         Text(stringResource(R.string.gru__create_mascot_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -242,10 +251,12 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             selectedMasterId = selectedMasterId,
             masterPreviews = masterPreviews,
             onSelectMaster = { selectedMasterId = it },
-            onApprove = { masterId -> scope.launch {
+            mascotName = customMascotName,
+            onMascotNameChange = { customMascotName = it.take(32) },
+            onApprove = { masterId, name -> scope.launch {
                 val awaiting = creation as? MascotCreationState.AwaitingMasterApproval ?: return@launch
                 creation = MascotCreationState.Submitting
-                runCatching { repository.approve(awaiting.job.jobId, masterId) }
+                runCatching { repository.approve(awaiting.job.jobId, masterId, name) }
                     .onSuccess {
                         customMascots = repository.customMascots()
                         creation = it.toCreationState()
@@ -377,7 +388,8 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
 @Composable private fun MascotCreationPanel(
     photo: Uri?, state: MascotCreationState, onPick: () -> Unit, onDiscardPhoto: () -> Unit,
     onUsePhoto: (Uri) -> Unit, selectedMasterId: String?, masterPreviews: Map<String, ImageBitmap>,
-    onSelectMaster: (String) -> Unit, onApprove: (String) -> Unit, onRetryTracking: () -> Unit,
+    onSelectMaster: (String) -> Unit, mascotName: String, onMascotNameChange: (String) -> Unit,
+    onApprove: (String, String) -> Unit, onRetryTracking: () -> Unit,
     onStartGeneration: (String) -> Unit,
     onRetryInstall: (String) -> Unit,
     onCreateAnother: () -> Unit,
@@ -404,7 +416,10 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             }
             OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
         }
-        is MascotCreationState.AwaitingMasterApproval -> MasterChoices(state.job.masters, masterPreviews, selectedMasterId, onSelectMaster, onApprove)
+        is MascotCreationState.AwaitingMasterApproval -> {
+            MasterChoices(state.job.masters, masterPreviews, selectedMasterId, mascotName, onSelectMaster, onMascotNameChange, onApprove)
+            OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__discard_master_options)) }
+        }
         is MascotCreationState.PosePreparationPending -> {
             ApprovedMasterPending(state.job, masterPreviews)
             OutlinedButton(onClick = onCreateAnother, modifier = Modifier.fillMaxWidth()) {
@@ -480,7 +495,8 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
 
 @Composable private fun MasterChoices(
     masters: List<MasterReference>, previews: Map<String, ImageBitmap>, selectedId: String?,
-    onSelect: (String) -> Unit, onApprove: (String) -> Unit,
+    mascotName: String, onSelect: (String) -> Unit, onMascotNameChange: (String) -> Unit,
+    onApprove: (String, String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.gru__choose_master), style = MaterialTheme.typography.titleMedium)
@@ -509,7 +525,15 @@ internal fun GruMascotScreen(prefs: GruPreferences, permissionRefresh: Int, modi
             }
             if (row.size == 1) Spacer(Modifier.weight(1f))
         } }
-        Button(onClick = { selectedId?.let(onApprove) }, enabled = selectedId != null, modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = mascotName,
+            onValueChange = onMascotNameChange,
+            label = { Text(stringResource(R.string.gru__mascot_name)) },
+            supportingText = { Text(stringResource(R.string.gru__mascot_name_optional)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(onClick = { selectedId?.let { onApprove(it, mascotName) } }, enabled = selectedId != null, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.gru__choose_this_mascot))
         }
     }

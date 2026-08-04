@@ -5,21 +5,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-MASTER_PROMPT_VERSION = "master-v1"
-POSE_PROMPT_VERSION = "pose-v1"
+MASTER_PROMPT_VERSION = "master-v2"
+POSE_PROMPT_VERSION = "pose-v2"
 POSE_TEMPLATE_VERSION = "poses-v1"
 
 MASTER_PROMPT = (
-    "Create a clean, friendly 2D cartoon mascot from the supplied pet photo. "
-    "Preserve coat colors, markings, eye shape, ears, facial proportions, and identity. "
-    "Single centered character, clear silhouette for small Android sizes, neutral background, "
-    "no text, no watermark, no accessories, no extra animals."
+    "Create a clean, friendly, full-body 2D cartoon mascot from the supplied reference photo. "
+    "First identify the primary subject and preserve its category exactly: a human remains a human; "
+    "an animal remains its exact species. Preserve the subject's distinctive identity, natural anatomy, "
+    "colors, markings, facial proportions, and visible clothing when present. "
+    "For a human, use normal human ears and anatomy only: never add animal ears, tail, muzzle, paws, fur, "
+    "horns, or hybrid features. For an animal, preserve its real species, body plan, coat or feather colors, "
+    "markings, ears where naturally applicable, and face. Never turn one species into another. "
+    "Single centered character, clear silhouette for small Android sizes, transparent background when supported, "
+    "otherwise a plain neutral background; no text, watermark, accessories not present in the reference, or extra subjects."
 )
 
 POSE_PROMPT = (
-    "Preserve exactly the same GRU mascot identity from the master reference: same coat markings, "
-    "colors, eyes, ears, facial proportions, and graphic style. Apply only the posture and expression "
-    "shown by the pose reference. Single character, clean anatomy, no text, watermark, or extra objects."
+    "Preserve exactly the same GRU mascot identity and subject category from the master reference: "
+    "same human or animal species, natural anatomy, colors, markings, face, proportions, and graphic style. "
+    "A human must remain fully human with no animal ears, tail, muzzle, paws, fur, horns, or hybrid features. "
+    "Apply only the posture and expression shown by the pose reference. Single character, clean anatomy, "
+    "transparent background when supported, no text, watermark, or extra objects."
 )
 
 

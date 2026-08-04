@@ -96,7 +96,7 @@ class JobRecord:
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
     model_version: str = "qwen-image-edit-2511"
-    prompt_version: str = "master-v1"
+    prompt_version: str = "master-v2"
     template_version: str = "poses-v1"
     attempts: int = 0
     error_code: str | None = None

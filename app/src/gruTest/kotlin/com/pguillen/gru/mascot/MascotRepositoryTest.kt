@@ -221,8 +221,26 @@ class MascotRepositoryTest {
             assertEquals(2, remote.resultCalls)
             assertEquals(0, remote.createCalls)
         } finally { root.deleteRecursively() }
+        }
     }
-}
+
+    @Test fun `approved Master saves the chosen local display name`() = runTest {
+        val root = Files.createTempDirectory("gru-approved-master-name-test").toFile()
+        try {
+            val bytes = "master".encodeToByteArray()
+            val checksum = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            val job = MascotJobResponse(
+                "job-1", "CONSISTENCY_TEST",
+                masters = listOf(MasterReference("master_2", "/masters/master_2", checksum)),
+                masterId = "master_2",
+            )
+            val repository = MascotRepository(FakeRemote(jobResponse = job, downloadBytes = bytes), FakePending("job-1"), CustomMascotStore(root))
+
+            repository.approve("job-1", "master_2", "  Cerginho   Azul ")
+
+            assertEquals("Cerginho Azul", CustomMascotStore(root).entries().single().displayName)
+        } finally { root.deleteRecursively() }
+    }
 
 private class FakePending(initialJobId: String? = null) : MascotPendingState {
     var selectedMascot: Pair<String, String>? = null
