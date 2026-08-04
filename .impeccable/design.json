@@ -1,0 +1,13 @@
+{
+  "name": "Gru",
+  "platform": "android",
+  "direction": "operational companion",
+  "tokens": {
+    "semantic": ["success", "attention", "error", "neutral", "surface", "onSurface", "outline"],
+    "themes": ["Light", "Dark"],
+    "spacingDp": [8, 16, 24, 32],
+    "minimumTouchTargetDp": 48
+  },
+  "components": ["NavigationCentral", "PermissionCard", "VoiceSelector", "MascotCard", "StepProgress", "RecoverableError", "TutorialDialog"],
+  "accessibility": ["talkback", "rtl", "fontScale200", "reducedMotion", "stateNotColorOnly"]
+}
