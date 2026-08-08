@@ -40,6 +40,33 @@ modal deploy -m modal_service.app
 
 After deploy, `/health` must report `generation_enabled: false`. If it does not, stop and roll back before any write test.
 
+## Model cache administration
+
+The persistent worker never downloads Hugging Face artifacts during a user generation. Prepare the pinned cache as a separate CPU-only operation while generation remains disabled:
+
+```powershell
+modal run -m modal_service.app::prepare_model_cache
+modal run -m modal_service.app::model_cache_status
+```
+
+The first command can transfer approximately 54–55 GiB when the Volume is empty. It does not request a GPU, but it can consume network, CPU, storage and execution time. Inspect the returned revision, file count and expected size before enabling generation.
+
+`MODEL_CACHE_NOT_READY` means the active pointer, READY marker, manifest or expected file inventory failed validation. Do not bypass this guard or enable Hugging Face downloads inside `QwenMasterWorker`.
+
+Previous manifests and artifacts are retained. A rollback pointer can be selected administratively:
+
+```powershell
+modal run -m modal_service.app::activate_model_cache_revision --cache-revision <audited-revision>
+```
+
+The deployed code must recognize the selected model/LoRA revisions. Prefer rolling back the Modal App version together with its matching cache revision.
+
+## Persistent worker policy
+
+Development uses H100, `min_containers=0`, `max_containers=1`, `buffer_containers=0`, `scaledown_window=45` and one input per container. Do not increase capacity or keep a permanent warm container before the benchmark and economic review.
+
+Logs use `modal_inference` JSON with a sanitized `trace_id`. Correlate `job_queued`, `job_started`, `worker_ready`, `master_generated` and `job_completed`. Modal billing and queue metrics remain authoritative for billed GPU seconds and platform queue depth.
+
 ## Smoke without GPU
 
 Using a registered Debug Android app and Firebase App Check debug token:

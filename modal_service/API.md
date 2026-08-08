@@ -30,3 +30,6 @@ Master entries contain `id`, `download_path`, and `sha256`. Result poses contain
 ## Errors
 
 Errors use `{"detail":{"code":"...","message":"..."}}`. Relevant codes include `UNAUTHENTICATED`, `APP_CHECK_REQUIRED`, `INVALID_IMAGE`, `JOB_NOT_FOUND`, `RATE_LIMITED`, `COST_LIMIT_REACHED`, `GENERATION_DISABLED`, and `TEMPLATE_ASSETS_UNAVAILABLE`.
+## Cache readiness
+
+When GPU generation is enabled, creation can return the structured code `MODEL_CACHE_NOT_READY` before any GPU reservation or scheduling. This is a recoverable server-operations condition. Existing clients remain compatible because the error uses the established structured error envelope; no Android request field changed.
