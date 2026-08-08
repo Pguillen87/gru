@@ -11,6 +11,7 @@ from enum import StrEnum
 from modal_service.config import RuntimeLimits
 from modal_service.costs import generation_reservation, require_job_quota
 from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, TERMINAL_STATES
+from modal_service.catalog import DEFAULT_POSE_CHOICES, validate_pose_choices
 
 
 class JobOperation(StrEnum):
@@ -21,6 +22,9 @@ class JobOperation(StrEnum):
     FAIL_MASTER = "FAIL_MASTER"
     RECORD_GPU_CALL = "RECORD_GPU_CALL"
     APPROVE_MASTER = "APPROVE_MASTER"
+    START_POSES = "START_POSES"
+    COMMIT_POSES = "COMMIT_POSES"
+    FAIL_POSES = "FAIL_POSES"
     CANCEL = "CANCEL"
 
 
@@ -59,13 +63,22 @@ class JobCoordinator:
         if job.user_id != user_id:
             raise JobNotFound("Job was not found.")
 
-    def register(self, user_id: str, key: str, source_key: str) -> tuple[JobRecord, bool]:
+    def register(
+        self,
+        user_id: str,
+        key: str,
+        source_key: str,
+        pose_choices: dict[str, str] | None = None,
+    ) -> tuple[JobRecord, bool]:
+        selected_poses = validate_pose_choices(pose_choices or dict(DEFAULT_POSE_CHOICES))
         request_key = f"create:{user_id}:{key}"
         existing_id = self.idempotency.get(request_key)
         if existing_id:
             existing = self.get(str(existing_id))
             if existing.source_key != source_key:
                 raise DomainError("Idempotency key was already used with different input.")
+            if existing.pose_choices != selected_poses:
+                raise DomainError("Idempotency key was already used with different pose choices.")
             return existing, False
 
         job_id = deterministic_job_id(user_id, key)
@@ -73,6 +86,8 @@ class JobCoordinator:
             existing = self.get(job_id)
             if existing.source_key != source_key:
                 raise DomainError("Idempotency key was already used with different input.")
+            if existing.pose_choices != selected_poses:
+                raise DomainError("Idempotency key was already used with different pose choices.")
             self.idempotency[request_key] = existing.job_id
             return existing, False
         except JobNotFound:
@@ -90,6 +105,7 @@ class JobCoordinator:
             idempotency_key=key,
             source_key=source_key,
             model_version="Qwen-Image-Edit-2511",
+            pose_choices=selected_poses,
         )
         job.transition_to(JobState.VALIDATING_INPUT)
         job.transition_to(JobState.READY_FOR_GENERATION)
@@ -174,6 +190,24 @@ class JobCoordinator:
         if changed:
             job.prompt_version = prompt_version
             self.save(job)
+        return job, changed
+
+    def start_pose_generation(self, job_id: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state in TERMINAL_STATES:
+            return job, False
+        changed = job.start_pose_generation()
+        if changed:
+            self.save(job)
+        return job, changed
+
+    def commit_pose_outputs(self, job_id: str, persist: Callable[[JobRecord], None]) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state in TERMINAL_STATES or job.state is not JobState.GENERATING_POSES:
+            return job, False
+        persist(job)
+        changed = job.complete_pose_generation(job.job_id)
+        self.save(job)
         return job, changed
 
     def cancel(self, job_id: str, user_id: str) -> tuple[JobRecord, bool]:

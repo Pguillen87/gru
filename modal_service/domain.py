@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Mapping
 
+from modal_service.catalog import DEFAULT_POSE_CHOICES, MASTER_PROMPT_VERSION, POSE_TEMPLATE_VERSION
+
 
 class JobState(StrEnum):
     QUEUED = "QUEUED"
@@ -96,8 +98,9 @@ class JobRecord:
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
     model_version: str = "qwen-image-edit-2511"
-    prompt_version: str = "master-v2"
-    template_version: str = "poses-v1"
+    prompt_version: str = MASTER_PROMPT_VERSION
+    template_version: str = POSE_TEMPLATE_VERSION
+    pose_choices: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_POSE_CHOICES))
     attempts: int = 0
     error_code: str | None = None
     generation_reserved: bool = False
@@ -117,6 +120,24 @@ class JobRecord:
             raise DomainError("Master approval is not available for this job.")
         self.master_id = master_id
         self.transition_to(JobState.CONSISTENCY_TEST)
+        return True
+
+    def start_pose_generation(self) -> bool:
+        if self.state is JobState.GENERATING_POSES:
+            return False
+        if self.state is not JobState.CONSISTENCY_TEST:
+            raise DomainError("Pose generation is not available for this job.")
+        self.transition_to(JobState.READY_FOR_POSES)
+        self.transition_to(JobState.GENERATING_POSES)
+        return True
+
+    def complete_pose_generation(self, pose_set_id: str) -> bool:
+        if self.state is JobState.COMPLETED:
+            return False
+        if self.state is not JobState.GENERATING_POSES:
+            raise DomainError("Pose generation is not active for this job.")
+        self.pose_set_id = pose_set_id
+        self.transition_to(JobState.COMPLETED)
         return True
 
     def cancel(self) -> bool:

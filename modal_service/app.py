@@ -20,7 +20,16 @@ from pathlib import Path
 import modal
 from pydantic import BaseModel, Field
 
-from modal_service.catalog import MASTER_PROMPT, POSE_PROMPT_VERSION
+from modal_service.catalog import (
+    DEFAULT_POSE_CHOICES,
+    MASTER_PROMPT,
+    MASTER_PROMPT_VERSION,
+    POSE_PROMPT,
+    POSE_PROMPT_VERSION,
+    POSE_TEMPLATE_VERSION,
+    pose_option,
+    validate_pose_choices,
+)
 from modal_service.config import Environment, generation_enabled, limits_for
 from modal_service.coordinator import JobCoordinator, JobOperation
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
@@ -103,6 +112,7 @@ def inference_config_hash() -> str:
 class CreateJobRequest(BaseModel):
     image_base64: str = Field(min_length=1, max_length=14_000_000)
     content_type: str | None = None
+    pose_choices: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_POSE_CHOICES))
 
 
 class ApproveMasterRequest(BaseModel):
@@ -312,10 +322,15 @@ def _endpoint_name(request) -> str:
 
 @app.function(image=api_image, max_containers=1)
 @modal.concurrent(max_inputs=1)
-def register_job(user_id: str, idempotency_key: str, source_key: str) -> dict[str, object]:
+def register_job(
+    user_id: str,
+    idempotency_key: str,
+    source_key: str,
+    pose_choices: dict[str, str] | None = None,
+) -> dict[str, object]:
     try:
         coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
-        job, created = coordinator.register(user_id, idempotency_key, source_key)
+        job, created = coordinator.register(user_id, idempotency_key, source_key, pose_choices)
         return {"job": _serialize(job), "created": created}
     except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
         return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
@@ -391,6 +406,15 @@ def job_control(
             job, changed = coordinator.record_gpu_call(job_id, call_id)
         elif command is JobOperation.APPROVE_MASTER:
             job, changed = coordinator.approve_master(job_id, user_id, master_id, POSE_PROMPT_VERSION)
+        elif command is JobOperation.START_POSES:
+            job, changed = coordinator.start_pose_generation(job_id)
+        elif command is JobOperation.COMMIT_POSES:
+            assets.reload()
+            job, changed = coordinator.commit_pose_outputs(job_id, _verify_pose_outputs)
+        elif command is JobOperation.FAIL_POSES:
+            job, changed = coordinator.transition_if_active(
+                job_id, JobState.GENERATING_POSES, JobState.FAILED, "POSE_GENERATION_FAILED"
+            )
         elif command is JobOperation.CANCEL:
             job, changed = coordinator.cancel(job_id, user_id)
         else:  # StrEnum exhaustiveness guard.
@@ -563,6 +587,48 @@ class QwenMasterWorker:
             if bool(failed["changed"]):
                 raise error
 
+    @modal.method()
+    def generate_poses(self, job_id: str) -> None:
+        """Generate the three user-selected runtime poses from the approved Master."""
+        observer = InferenceObserver(trace_id_for_job(job_id))
+        worker_started = observer.mark()
+        if not GPU_GENERATION_ENABLED:
+            observer.event("pose_job_failed", {"error_code": "GENERATION_DISABLED", "outcome": "blocked"})
+            return
+        started = job_control.remote(JobOperation.START_POSES.value, job_id)
+        _raise_guard_error(started)
+        if not bool(started["changed"]):
+            return
+        job = _deserialize(dict(started["job"]))
+        try:
+            assets.reload()
+            outputs = self.runtime.run(lambda pipeline: _generate_qwen_poses(job, pipeline, observer))
+            _persist_pose_outputs(job, outputs)
+            committed = job_control.remote(JobOperation.COMMIT_POSES.value, job_id)
+            _raise_guard_error(committed)
+            observer.event(
+                "pose_job_completed",
+                {
+                    "outputs": len(outputs),
+                    "total_worker_ms": observer.elapsed_ms(worker_started),
+                    "outcome": "success",
+                },
+            )
+        except Exception as error:
+            observer.event(
+                "pose_job_failed",
+                {
+                    "error_code": "POSE_GENERATION_FAILED",
+                    "error_type": type(error).__name__[:96],
+                    "total_worker_ms": observer.elapsed_ms(worker_started),
+                    "outcome": "failure",
+                },
+            )
+            failed = job_control.remote(JobOperation.FAIL_POSES.value, job_id)
+            _raise_guard_error(failed)
+            if bool(failed["changed"]):
+                raise error
+
     @modal.exit()
     def shutdown(self) -> None:
         jobs = getattr(getattr(self, "runtime", None), "jobs_processed", 0)
@@ -670,6 +736,56 @@ def _generate_qwen_masters(job: JobRecord, pipeline, observer: InferenceObserver
         source.close()
 
 
+def _generate_qwen_poses(
+    job: JobRecord,
+    pipeline,
+    observer: InferenceObserver,
+) -> dict[str, bytes]:
+    from io import BytesIO
+
+    import torch
+    from PIL import Image
+
+    if job.master_id is None:
+        raise DomainError("An approved Master is required for pose generation.")
+    master_bytes = _asset_path(job.job_id, "masters", f"{job.master_id}.png").read_bytes()
+    master = Image.open(BytesIO(master_bytes)).convert("RGB")
+    master.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+    role_seeds = {"normal": 100, "listening": 101, "transcribing": 102}
+    outputs: dict[str, bytes] = {}
+    try:
+        for role in ("normal", "listening", "transcribing"):
+            option = pose_option(job.pose_choices[role])
+            started = observer.mark()
+            observer.event("pose_generation_started", {"pose_role": role, "pose_option": option.option_id})
+            generated = pipeline(
+                image=[master],
+                prompt=f"{POSE_PROMPT} Runtime role: {role}. Requested pose: {option.instruction}.",
+                negative_prompt=" ",
+                true_cfg_scale=1.0,
+                generator=torch.Generator("cuda").manual_seed(role_seeds[role]),
+                num_inference_steps=4,
+            ).images[0]
+            try:
+                buffer = BytesIO()
+                generated.save(buffer, format="PNG")
+                outputs[role] = buffer.getvalue()
+            finally:
+                generated.close()
+            observer.event(
+                "pose_generated",
+                {
+                    "generation_ms": observer.elapsed_ms(started),
+                    "pose_role": role,
+                    "pose_option": option.option_id,
+                    "result_bytes": len(outputs[role]),
+                },
+            )
+        return outputs
+    finally:
+        master.close()
+
+
 def _master_prompt() -> str:
     return MASTER_PROMPT
 
@@ -706,6 +822,67 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
             "result_write_ms": observer.elapsed_ms(write_started),
         },
     )
+
+
+def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
+    from modal_service.image_processing import remove_connected_flat_background
+
+    expected_roles = ("normal", "listening", "transcribing")
+    if set(outputs) != set(expected_roles) or job.master_id is None:
+        raise DomainError("Pose generation returned an incomplete result.")
+    staging = Path(ASSET_ROOT, "temporary", job.job_id, "poses")
+    target = Path(ASSET_ROOT, "poses", job.job_id)
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    poses: list[dict[str, object]] = []
+    pose_ids = {"normal": "pose_01", "listening": "pose_02", "transcribing": "pose_03"}
+    for role in expected_roles:
+        pose_id = pose_ids[role]
+        filename = f"{pose_id}.png"
+        content = remove_connected_flat_background(outputs[role])
+        (staging / filename).write_bytes(content)
+        option = pose_option(job.pose_choices[role])
+        poses.append(
+            {
+                "poseId": pose_id,
+                "runtimeRole": role,
+                "optionId": option.option_id,
+                "name": option.label,
+                "fileName": filename,
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        )
+    manifest = {
+        "poseSetId": job.job_id,
+        "masterId": job.master_id,
+        "version": POSE_TEMPLATE_VERSION,
+        "modelVersion": job.model_version,
+        "promptVersion": POSE_PROMPT_VERSION,
+        "idlePoseId": pose_ids["normal"],
+        "listeningPoseId": pose_ids["listening"],
+        "transcribingPoseId": pose_ids["transcribing"],
+        "poses": poses,
+    }
+    (staging / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    shutil.rmtree(target, ignore_errors=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging.replace(target)
+    assets.commit()
+
+
+def _verify_pose_outputs(job: JobRecord) -> None:
+    manifest = _asset_path(job.job_id, "poses", "manifest.json")
+    if not manifest.is_file():
+        raise DomainError("Pose result metadata is unavailable.")
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    expected = {"pose_01", "pose_02", "pose_03"}
+    actual = {str(item.get("poseId")) for item in payload.get("poses", [])}
+    if actual != expected:
+        raise DomainError("Pose outputs are incomplete.")
+    for item in payload["poses"]:
+        path = _asset_path(job.job_id, "poses", Path(str(item["fileName"])).name)
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item.get("sha256"):
+            raise DomainError("Pose output checksum is invalid.")
 
 
 def _master_outputs_ready(job: JobRecord) -> bool:
@@ -860,10 +1037,11 @@ def api():
     async def create_job(request: CreateJobRequest, context: tuple[str, str] = Depends(cost_context)):
         user_id, key = context
         try:
+            pose_choices = validate_pose_choices(request.pose_choices)
             content = _decode_image(request.image_base64)
             _, _, _ = validate_image(content, request.content_type)
             digest = hashlib.sha256(content).hexdigest()
-            registration = register_job.remote(user_id, key, f"original/{digest}")
+            registration = register_job.remote(user_id, key, f"original/{digest}", pose_choices)
             _raise_guard_error(registration)
             job_data = dict(registration["job"])
             destination = _asset_path(str(job_data["job_id"]), "original", "source.bin")
@@ -875,6 +1053,8 @@ def api():
             return job_data | {"idempotent_replay": not bool(registration["created"])}
         except (ImageValidationError, DomainError, CostLimitExceeded, RateLimitExceeded) as error:
             raise _api_error(error) from error
+        except ValueError as error:
+            raise _api_error(DomainError("Invalid pose selection.")) from error
 
     @service.get("/v1/mascot/jobs/{job_id}")
     async def read_job(job_id: str, user_id: str = Depends(secure_user)):
@@ -938,8 +1118,18 @@ def api():
                 JobOperation.APPROVE_MASTER.value, job_id, context[0], master_id=request.master_id
             )
             _raise_guard_error(approval)
+            approved_job = _deserialize(dict(approval["job"]))
+            if bool(approval["changed"]):
+                pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
+                recorded = job_control.remote(
+                    JobOperation.RECORD_GPU_CALL.value,
+                    job_id,
+                    call_id=pose_call.object_id,
+                )
+                _raise_guard_error(recorded)
+                idempotency[_operation_key(context[0], f"generate-poses:{job_id}")] = job_id
             idempotency[operation_key] = job.job_id
-            return dict(approval["job"])
+            return _serialize(approved_job)
         except DomainError as error:
             raise _api_error(error) from error
 
@@ -1014,7 +1204,25 @@ def api():
 
     @service.post("/v1/mascot/jobs/{job_id}/generate-poses", status_code=202)
     async def generate_poses(job_id: str, context: tuple[str, str] = Depends(cost_context)):
-        return _template_assets_required(job_id, context[0])
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, context[0])
+            if job.state in {JobState.GENERATING_POSES, JobState.COMPLETED}:
+                return _serialize(job)
+            if job.state is not JobState.CONSISTENCY_TEST:
+                raise DomainError("Pose generation is not available for this job.")
+            if not GPU_GENERATION_ENABLED:
+                raise GuardRejected("GENERATION_DISABLED", "GPU generation is disabled.")
+            operation_key = _operation_key(context[0], f"generate-poses:{job_id}")
+            if operation_key in idempotency:
+                return _serialize(_get_job(job_id))
+            pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
+            recorded = job_control.remote(JobOperation.RECORD_GPU_CALL.value, job_id, call_id=pose_call.object_id)
+            _raise_guard_error(recorded)
+            idempotency[operation_key] = job.job_id
+            return _serialize(job)
+        except DomainError as error:
+            raise _api_error(error) from error
 
     @service.post("/v1/mascot/jobs/{job_id}/retry-pose", status_code=202)
     async def retry_pose(

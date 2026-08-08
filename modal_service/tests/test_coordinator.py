@@ -40,6 +40,16 @@ def test_replay_rejects_a_different_image_for_the_same_key():
         service.register("uid-a", "key-x", "original/second")
 
 
+def test_replay_rejects_different_pose_choices_for_the_same_key():
+    service, _ = coordinator()
+    first = {"normal": "normal_attentive", "listening": "listening_focus", "transcribing": "transcribing_fast"}
+    second = first | {"normal": "normal_relaxed"}
+    service.register("uid-a", "key-x", "original/first", first)
+
+    with pytest.raises(DomainError, match="different pose choices"):
+        service.register("uid-a", "key-x", "original/first", second)
+
+
 def test_different_uid_cannot_read_job_metadata():
     service, _ = coordinator()
     job, _ = service.register("uid-a", "key-x", "original/hash")
