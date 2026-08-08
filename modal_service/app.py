@@ -518,6 +518,7 @@ class QwenMasterWorker:
             return
         job = _deserialize(dict(started["job"]))
         try:
+            assets.reload()
             outputs = self.runtime.run(lambda pipeline: _generate_qwen_masters(job, pipeline, observer))
             _persist_master_outputs(job, outputs)
             committed = job_control.remote(JobOperation.COMMIT_MASTER.value, job_id)

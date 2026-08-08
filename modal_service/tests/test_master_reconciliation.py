@@ -67,3 +67,4 @@ def test_gpu_worker_persists_before_small_commit():
 
     assert "_persist_master_outputs(job, outputs)" in generate_body
     assert "outputs=outputs" not in generate_body
+    assert generate_body.index("assets.reload()") < generate_body.index("_generate_qwen_masters")

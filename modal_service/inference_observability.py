@@ -58,6 +58,8 @@ class InferenceObserver:
     ) -> None:
         self.trace_id = trace_id
         self._logger = logger or logging.getLogger("gru.modal.inference")
+        if logger is None:
+            self._logger.setLevel(logging.INFO)
         self._clock = clock
 
     def mark(self) -> float:
