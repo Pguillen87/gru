@@ -24,6 +24,12 @@ val projectVersionName: String by project
 val projectVersionNameSuffix = projectVersionName.substringAfter("-", "").let { suffix ->
     if (suffix.isNotEmpty()) "-$suffix" else suffix
 }
+val mascotApiBaseUrl = providers.gradleProperty("gruMascotApiBaseUrl")
+    .orElse("https://automacao-guillenia--gru-mascot-api.modal.run")
+    .get()
+require(mascotApiBaseUrl.startsWith("https://") && '"' !in mascotApiBaseUrl && '\n' !in mascotApiBaseUrl) {
+    "gruMascotApiBaseUrl must be a safe HTTPS URL"
+}
 
 kotlin {
     compilerOptions {
@@ -50,7 +56,7 @@ configure<ApplicationExtension> {
         targetSdk = projectTargetSdk.toInt()
         versionCode = projectVersionCode.toInt()
         versionName = projectVersionName.substringBefore("-")
-        buildConfigField("String", "MASCOT_API_BASE_URL", "\"https://automacao-guillenia--gru-mascot-api.modal.run\"")
+        buildConfigField("String", "MASCOT_API_BASE_URL", "\"$mascotApiBaseUrl\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
