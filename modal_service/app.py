@@ -43,6 +43,7 @@ FIREBASE_PROJECT_NUMBER = "816774877835"
 ASSET_ROOT = "/gru-assets"
 MODEL_ROOT = "/gru-models"
 ENVIRONMENT = Environment(os.getenv("GRU_MASCOT_ENV", Environment.DEVELOPMENT))
+FIREBASE_SECRET_ENVIRONMENT = os.getenv("GRU_FIREBASE_SECRET_ENVIRONMENT") or None
 LIMITS = limits_for(ENVIRONMENT)
 GPU_GENERATION_ENABLED = generation_enabled(ENVIRONMENT, os.getenv("GPU_GENERATION_ENABLED"))
 MASTER_GPU = "H100"
@@ -143,7 +144,10 @@ models = modal.Volume.from_name("gru-mascot-models", create_if_missing=True)
 jobs = modal.Dict.from_name("gru-mascot-jobs", create_if_missing=True)
 idempotency = modal.Dict.from_name("gru-mascot-idempotency", create_if_missing=True)
 usage = modal.Dict.from_name("gru-mascot-usage", create_if_missing=True)
-firebase_admin_secret = modal.Secret.from_name("gru-mascot-firebase-admin")
+firebase_admin_secret = modal.Secret.from_name(
+    "gru-mascot-firebase-admin",
+    environment_name=FIREBASE_SECRET_ENVIRONMENT,
+)
 
 
 def _record_key(user_id: str, idempotency_key: str) -> str:
@@ -301,6 +305,37 @@ def register_job(user_id: str, idempotency_key: str, source_key: str) -> dict[st
         return {"job": _serialize(job), "created": created}
     except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
         return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
+
+
+@app.function(image=api_image, max_containers=1, volumes={ASSET_ROOT: assets})
+def prepare_benchmark_job(benchmark_key: str) -> dict[str, object]:
+    """Create a non-personal synthetic development job without bypassing coordination."""
+    if ENVIRONMENT is not Environment.DEVELOPMENT:
+        raise RuntimeError("Synthetic benchmark jobs are development-only.")
+    from io import BytesIO
+    from PIL import Image, ImageDraw
+
+    canvas = Image.new("RGB", (1024, 1024), (225, 210, 180))
+    draw = ImageDraw.Draw(canvas)
+    draw.ellipse((220, 100, 804, 840), fill=(126, 91, 61), outline=(48, 38, 30), width=18)
+    draw.ellipse((320, 260, 500, 440), fill=(250, 244, 220), outline=(48, 38, 30), width=12)
+    draw.ellipse((524, 260, 704, 440), fill=(250, 244, 220), outline=(48, 38, 30), width=12)
+    draw.ellipse((385, 315, 445, 375), fill=(30, 28, 25))
+    draw.ellipse((579, 315, 639, 375), fill=(30, 28, 25))
+    draw.polygon(((512, 390), (450, 490), (574, 490)), fill=(214, 154, 42))
+    output = BytesIO()
+    canvas.save(output, format="PNG", optimize=True)
+    content = output.getvalue()
+    digest = hashlib.sha256(content).hexdigest()
+    coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
+    job, created = coordinator.register("modal-benchmark", benchmark_key, f"synthetic/{digest}")
+    if created:
+        destination = _asset_path(job.job_id, "original", "source.bin")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+        assets.commit()
+    coordinator.authorize_generation(job.job_id, "modal-benchmark", GPU_GENERATION_ENABLED)
+    return {"job_id": job.job_id, "created": created, "source_bytes": len(content)}
 
 
 @app.function(image=api_image, max_containers=1, volumes={ASSET_ROOT: assets})
