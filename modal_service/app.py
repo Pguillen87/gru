@@ -19,11 +19,20 @@ from pathlib import Path
 import modal
 from pydantic import BaseModel, Field
 
-from modal_service.catalog import POSE_PROMPT_VERSION
+from modal_service.catalog import MASTER_PROMPT, POSE_PROMPT_VERSION
 from modal_service.config import Environment, generation_enabled, limits_for
 from modal_service.coordinator import JobCoordinator, JobOperation
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
 from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState
+from modal_service.inference_observability import InferenceObserver, trace_id_for_job
+from modal_service.model_cache import (
+    ModelCacheNotReady,
+    ModelCacheSpec,
+    activate_cached_revision,
+    prepare_model_cache as prepare_cache,
+    validate_active_cache,
+)
+from modal_service.persistent_runtime import PersistentPipelineRuntime
 from modal_service.security import AuthenticationRejected, app_check_token, bearer_token, may_schedule_gpu, valid_firebase_claims
 from modal_service.validation import ImageValidationError, validate_image
 
@@ -41,6 +50,50 @@ QWEN_MODEL_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
 LIGHTNING_MODEL_ID = "lightx2v/Qwen-Image-Edit-2511-Lightning"
 LIGHTNING_MODEL_REVISION = "d74eba145674fd7e31b949324e148e21e7118abd"
 LIGHTNING_WEIGHT = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors"
+MASTER_SEEDS = (0, 1, 2)
+SCHEDULER_CONFIG = {
+    "base_image_seq_len": 256,
+    "base_shift": 1.0986122886681098,
+    "invert_sigmas": False,
+    "max_image_seq_len": 8192,
+    "max_shift": 1.0986122886681098,
+    "num_train_timesteps": 1000,
+    "shift": 1.0,
+    "shift_terminal": None,
+    "stochastic_sampling": False,
+    "time_shift_type": "exponential",
+    "use_beta_sigmas": False,
+    "use_dynamic_shifting": True,
+    "use_exponential_sigmas": False,
+    "use_karras_sigmas": False,
+}
+WORKER_SCALEDOWN_SECONDS = 45
+PERSISTENT_WORKER_MAX_CONTAINERS = 1
+MODEL_CACHE_SPEC = ModelCacheSpec(
+    model_id=QWEN_MODEL_ID,
+    model_revision=QWEN_MODEL_REVISION,
+    lora_id=LIGHTNING_MODEL_ID,
+    lora_revision=LIGHTNING_MODEL_REVISION,
+    lora_weight=LIGHTNING_WEIGHT,
+)
+
+
+def inference_config_hash() -> str:
+    payload = {
+        "model_id": QWEN_MODEL_ID,
+        "model_revision": QWEN_MODEL_REVISION,
+        "lora_id": LIGHTNING_MODEL_ID,
+        "lora_revision": LIGHTNING_MODEL_REVISION,
+        "lora_weight": LIGHTNING_WEIGHT,
+        "dtype": "bfloat16",
+        "steps": 4,
+        "seeds": MASTER_SEEDS,
+        "true_cfg_scale": 1.0,
+        "negative_prompt": " ",
+        "prompt": MASTER_PROMPT,
+        "scheduler": SCHEDULER_CONFIG,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
 
 
 class CreateJobRequest(BaseModel):
@@ -80,6 +133,7 @@ gpu_image = api_image.pip_install(
     "peft>=0.17,<1",
     "safetensors>=0.5",
 )
+cache_image = api_image.pip_install("huggingface_hub>=0.34,<1")
 app = modal.App(APP_NAME)
 assets = modal.Volume.from_name("gru-mascot-assets", create_if_missing=True)
 models = modal.Volume.from_name("gru-mascot-models", create_if_missing=True)
@@ -287,126 +341,274 @@ def job_control(
 
 
 def _schedule_master(job_id: str, user_id: str) -> dict[str, object]:
+    if GPU_GENERATION_ENABLED:
+        cache = model_cache_status.remote()
+        _raise_guard_error(cache)
     authorization = job_control.remote(JobOperation.AUTHORIZE_GENERATION.value, job_id, user_id)
     _raise_guard_error(authorization)
     job_data = dict(authorization["job"])
     if not may_schedule_gpu(GPU_GENERATION_ENABLED, bool(authorization["changed"])):
         return job_data
-    function_call = generate_master.spawn(job_id)
+    InferenceObserver(trace_id_for_job(job_id)).event(
+        "job_queued",
+        {"cache_revision": MODEL_CACHE_SPEC.cache_revision, "gpu_type": MASTER_GPU},
+    )
+    function_call = QwenMasterWorker().generate.spawn(job_id)
     recorded = job_control.remote(JobOperation.RECORD_GPU_CALL.value, job_id, call_id=function_call.object_id)
     _raise_guard_error(recorded)
     return dict(recorded["job"])
 
 
-@app.function(
+@app.function(image=api_image, volumes={MODEL_ROOT: models}, max_containers=1)
+def model_cache_status() -> dict[str, object]:
+    started = time.perf_counter()
+    observer = InferenceObserver("cache_status")
+    observer.event("model_cache_validation_start")
+    try:
+        cache = validate_active_cache(Path(MODEL_ROOT), MODEL_CACHE_SPEC)
+        observer.event(
+            "model_cache_validated",
+            {
+                "cache_revision": cache.cache_revision,
+                "cache_validation_ms": observer.elapsed_ms(started),
+                "outcome": "ready",
+            },
+        )
+        return {"cache_revision": cache.cache_revision, "ready": True}
+    except ModelCacheNotReady as error:
+        observer.event(
+            "model_cache_validated",
+            {
+                "cache_validation_ms": observer.elapsed_ms(started),
+                "error_code": error.code,
+                "outcome": "not_ready",
+            },
+        )
+        return {"error_code": error.code, "error_message": "The model cache is not ready."}
+
+
+@app.function(image=cache_image, volumes={MODEL_ROOT: models}, max_containers=1, timeout=3_600)
+def prepare_model_cache() -> dict[str, object]:
+    """Administrative CPU operation. It never requests a GPU."""
+    from huggingface_hub import hf_hub_download, snapshot_download
+
+    cache = prepare_cache(
+        Path(MODEL_ROOT),
+        MODEL_CACHE_SPEC,
+        snapshot_download=snapshot_download,
+        hf_hub_download=hf_hub_download,
+    )
+    models.commit()
+    return {
+        "cache_revision": cache.cache_revision,
+        "expected_files": len(cache.expected_files),
+        "expected_size": cache.expected_size,
+        "ready": True,
+    }
+
+
+@app.function(image=api_image, volumes={MODEL_ROOT: models}, max_containers=1)
+def activate_model_cache_revision(cache_revision: str) -> dict[str, object]:
+    """Administrative rollback pointer. Previous cache artifacts remain intact."""
+    activate_cached_revision(Path(MODEL_ROOT), cache_revision)
+    models.commit()
+    return {"cache_revision": cache_revision, "active": True}
+
+
+@app.cls(
     image=gpu_image,
     gpu=MASTER_GPU,
     timeout=LIMITS.model_timeout_seconds,
     min_containers=0,
-    max_containers=LIMITS.max_containers,
-    scaledown_window=30,
+    max_containers=PERSISTENT_WORKER_MAX_CONTAINERS,
+    buffer_containers=0,
+    scaledown_window=WORKER_SCALEDOWN_SECONDS,
     volumes={ASSET_ROOT: assets, MODEL_ROOT: models},
 )
-def generate_master(job_id: str) -> None:
-    """GPU boundary. The Qwen provider is enabled only after a smoke fixture exists."""
-    if not GPU_GENERATION_ENABLED:
-        logging.warning("generation_blocked job_id=%s", job_id)
-        return
-    started = job_control.remote(JobOperation.START_MASTER.value, job_id)
-    _raise_guard_error(started)
-    if not bool(started["changed"]):
-        return
-    job = _deserialize(dict(started["job"]))
-    try:
-        outputs = _generate_qwen_masters(job)
-        committed = job_control.remote(JobOperation.COMMIT_MASTER.value, job_id, outputs=outputs)
-        _raise_guard_error(committed)
-    except Exception as error:  # GPU libraries expose unstable exception classes.
-        logging.exception("master_generation_failed job_id=%s", job.job_id)
-        failed = job_control.remote(JobOperation.FAIL_MASTER.value, job_id)
-        _raise_guard_error(failed)
-        if bool(failed["changed"]):
-            raise error
+@modal.concurrent(max_inputs=1)
+class QwenMasterWorker:
+    @modal.enter()
+    def startup(self) -> None:
+        self.loaded_at = time.perf_counter()
+        self.container_observer = InferenceObserver(secrets.token_hex(6))
+        self.container_observer.event("container_start", {"cold_start": True, "gpu_type": MASTER_GPU})
+        self.runtime = PersistentPipelineRuntime(lambda: _load_qwen_pipeline(self.container_observer))
+        self.runtime.start()
+        self.container_observer.event(
+            "worker_ready",
+            {
+                "cache_revision": MODEL_CACHE_SPEC.cache_revision,
+                "container_start_ms": self.container_observer.elapsed_ms(self.loaded_at),
+                "gpu_type": MASTER_GPU,
+                "jobs_in_container": 0,
+            },
+        )
+
+    @modal.method()
+    def generate(self, job_id: str) -> None:
+        """GPU boundary. One method call owns one job; the pipeline remains container-scoped."""
+        observer = InferenceObserver(trace_id_for_job(job_id))
+        worker_started = observer.mark()
+        next_job = self.runtime.jobs_processed + 1
+        observer.event(
+            "job_started",
+            {
+                "cold_start": next_job == 1,
+                "container_reused": next_job > 1,
+                "gpu_type": MASTER_GPU,
+                "inference_config_hash": inference_config_hash(),
+                "jobs_in_container": next_job,
+                "worker_age_ms": observer.elapsed_ms(self.loaded_at),
+            },
+        )
+        if next_job > 1:
+            observer.event("container_reused", {"container_reused": True, "jobs_in_container": next_job})
+        if not GPU_GENERATION_ENABLED:
+            observer.event("job_failed", {"error_code": "GENERATION_DISABLED", "outcome": "blocked"})
+            return
+        started = job_control.remote(JobOperation.START_MASTER.value, job_id)
+        _raise_guard_error(started)
+        if not bool(started["changed"]):
+            return
+        job = _deserialize(dict(started["job"]))
+        try:
+            outputs = self.runtime.run(lambda pipeline: _generate_qwen_masters(job, pipeline, observer))
+            committed = job_control.remote(JobOperation.COMMIT_MASTER.value, job_id, outputs=outputs)
+            _raise_guard_error(committed)
+            observer.event(
+                "job_completed",
+                {
+                    "jobs_in_container": self.runtime.jobs_processed,
+                    "outputs": len(outputs),
+                    "result_bytes": sum(len(output) for output in outputs),
+                    "total_worker_ms": observer.elapsed_ms(worker_started),
+                    "outcome": "success",
+                },
+            )
+        except Exception as error:  # GPU libraries expose unstable exception classes.
+            code = "WORKER_CORRUPTED" if not self.runtime.healthy else "JOB_LOCAL_FAILURE"
+            observer.event(
+                "job_failed",
+                {
+                    "error_code": code,
+                    "error_type": type(error).__name__[:96],
+                    "total_worker_ms": observer.elapsed_ms(worker_started),
+                    "outcome": "failure",
+                },
+            )
+            failed = job_control.remote(JobOperation.FAIL_MASTER.value, job_id)
+            _raise_guard_error(failed)
+            if bool(failed["changed"]):
+                raise error
+
+    @modal.exit()
+    def shutdown(self) -> None:
+        jobs = getattr(getattr(self, "runtime", None), "jobs_processed", 0)
+        observer = getattr(self, "container_observer", InferenceObserver("container_exit"))
+        observer.event("container_shutdown", {"jobs_in_container": jobs})
 
 
-def _generate_qwen_masters(job: JobRecord) -> list[bytes]:
-    """Generate exactly three Lightning Masters from the approved source."""
-    from io import BytesIO
-    import math
-
+def _load_qwen_pipeline(observer: InferenceObserver):
+    """Load the pinned local cache once during container startup."""
     import torch
     from diffusers import FlowMatchEulerDiscreteScheduler, QwenImageEditPlusPipeline
     from diffusers.models import QwenImageTransformer2DModel
-    from huggingface_hub import hf_hub_download
-    from PIL import Image
 
-    source = Image.open(_asset_path(job.job_id, "original", "source.bin")).convert("RGB")
-    source.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-    load_started = time.monotonic()
+    cache_started = observer.mark()
+    observer.event("model_cache_validation_start")
+    cache = validate_active_cache(Path(MODEL_ROOT), MODEL_CACHE_SPEC)
+    observer.event(
+        "model_cache_validated",
+        {"cache_revision": cache.cache_revision, "cache_validation_ms": observer.elapsed_ms(cache_started)},
+    )
+    model_started = observer.mark()
+    observer.event("model_load_start", {"cache_revision": cache.cache_revision})
     transformer = QwenImageTransformer2DModel.from_pretrained(
-        QWEN_MODEL_ID,
+        str(cache.model_snapshot),
         subfolder="transformer",
-        revision=QWEN_MODEL_REVISION,
         torch_dtype=torch.bfloat16,
-        cache_dir=MODEL_ROOT,
+        local_files_only=True,
     )
-    scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-        {
-            "base_image_seq_len": 256,
-            "base_shift": math.log(3),
-            "invert_sigmas": False,
-            "max_image_seq_len": 8192,
-            "max_shift": math.log(3),
-            "num_train_timesteps": 1000,
-            "shift": 1.0,
-            "shift_terminal": None,
-            "stochastic_sampling": False,
-            "time_shift_type": "exponential",
-            "use_beta_sigmas": False,
-            "use_dynamic_shifting": True,
-            "use_exponential_sigmas": False,
-            "use_karras_sigmas": False,
-        }
-    )
+    model_read_ms = observer.elapsed_ms(model_started)
+    observer.event("model_load_completed", {"cache_revision": cache.cache_revision, "model_read_ms": model_read_ms})
+    pipeline_started = observer.mark()
+    observer.event("pipeline_build_start")
+    scheduler = FlowMatchEulerDiscreteScheduler.from_config(SCHEDULER_CONFIG)
     pipeline = QwenImageEditPlusPipeline.from_pretrained(
-        QWEN_MODEL_ID,
+        str(cache.model_snapshot),
         transformer=transformer,
         scheduler=scheduler,
-        revision=QWEN_MODEL_REVISION,
         torch_dtype=torch.bfloat16,
-        cache_dir=MODEL_ROOT,
+        local_files_only=True,
     )
-    lora_path = hf_hub_download(
-        LIGHTNING_MODEL_ID,
-        LIGHTNING_WEIGHT,
-        revision=LIGHTNING_MODEL_REVISION,
-        cache_dir=MODEL_ROOT,
-    )
-    pipeline.load_lora_weights(lora_path)
+    observer.event("pipeline_build_completed", {"pipeline_build_ms": observer.elapsed_ms(pipeline_started)})
+    lora_started = observer.mark()
+    pipeline.load_lora_weights(str(cache.lora_file))
+    observer.event("lora_load_completed", {"lora_load_ms": observer.elapsed_ms(lora_started)})
+    cuda_started = observer.mark()
+    observer.event("cuda_transfer_start", {"gpu_type": MASTER_GPU})
     pipeline = pipeline.to("cuda")
-    models.commit()
-    logging.info("event=model_loaded model=qwen-image-edit-2511-lightning duration_ms=%d", _elapsed_ms(load_started))
+    observer.event(
+        "cuda_transfer_completed",
+        {"cuda_transfer_ms": observer.elapsed_ms(cuda_started), "gpu_type": MASTER_GPU},
+    )
+    return pipeline
+
+
+def _generate_qwen_masters(job: JobRecord, pipeline, observer: InferenceObserver) -> list[bytes]:
+    """Generate the same three Lightning Masters without rebuilding the pipeline."""
+    from io import BytesIO
+
+    import torch
+    from PIL import Image
+
+    source_bytes = _asset_path(job.job_id, "original", "source.bin").read_bytes()
+    source = Image.open(BytesIO(source_bytes)).convert("RGB")
+    source.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+    torch.cuda.reset_peak_memory_stats()
     outputs: list[bytes] = []
-    for seed in range(3):
-        inference_started = time.monotonic()
-        generated = pipeline(
-            image=[source],
-            prompt=_master_prompt(),
-            negative_prompt=" ",
-            true_cfg_scale=1.0,
-            generator=torch.Generator("cuda").manual_seed(seed),
-            num_inference_steps=4,
-        ).images[0]
-        buffer = BytesIO()
-        generated.save(buffer, format="PNG")
-        outputs.append(buffer.getvalue())
-        logging.info("event=master_generated index=%d duration_ms=%d", seed + 1, _elapsed_ms(inference_started))
-    return outputs
+    try:
+        for seed in MASTER_SEEDS:
+            inference_started = observer.mark()
+            observer.event("master_generation_started", {"master_index": seed})
+            generated = pipeline(
+                image=[source],
+                prompt=_master_prompt(),
+                negative_prompt=" ",
+                true_cfg_scale=1.0,
+                generator=torch.Generator("cuda").manual_seed(seed),
+                num_inference_steps=4,
+            ).images[0]
+            try:
+                buffer = BytesIO()
+                generated.save(buffer, format="PNG")
+                outputs.append(buffer.getvalue())
+            finally:
+                generated.close()
+            observer.event(
+                "master_generated",
+                {
+                    "generation_ms": observer.elapsed_ms(inference_started),
+                    "master_index": seed,
+                    "result_bytes": len(outputs[-1]),
+                },
+            )
+        observer.event(
+            "generation_completed",
+            {
+                "gpu_peak_memory_bytes": int(torch.cuda.max_memory_allocated()),
+                "outputs": len(outputs),
+                "source_bytes": len(source_bytes),
+                "source_height": source.height,
+                "source_width": source.width,
+            },
+        )
+        return outputs
+    finally:
+        source.close()
 
 
 def _master_prompt() -> str:
-    from modal_service.catalog import MASTER_PROMPT
-
     return MASTER_PROMPT
 
 
@@ -415,17 +617,33 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
 
     if not outputs:
         raise DomainError("Master generation returned no images.")
+    observer = InferenceObserver(trace_id_for_job(job.job_id))
+    postprocess_started = observer.mark()
+    normalized = [remove_connected_flat_background(content) for content in outputs]
+    observer.event(
+        "postprocess_completed",
+        {"outputs": len(normalized), "postprocess_ms": observer.elapsed_ms(postprocess_started)},
+    )
+    write_started = observer.mark()
     staging = Path(ASSET_ROOT, "temporary", job.job_id, "masters")
     target = Path(ASSET_ROOT, "masters", job.job_id)
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True, exist_ok=True)
-    for index, content in enumerate(outputs, start=1):
+    for index, content in enumerate(normalized, start=1):
         destination = staging / f"master_{index}.png"
-        destination.write_bytes(remove_connected_flat_background(content))
+        destination.write_bytes(content)
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     staging.replace(target)
     assets.commit()
+    observer.event(
+        "result_write_completed",
+        {
+            "outputs": len(normalized),
+            "result_bytes": sum(len(content) for content in normalized),
+            "result_write_ms": observer.elapsed_ms(write_started),
+        },
+    )
 
 
 @app.function(image=api_image, volumes={ASSET_ROOT: assets}, max_containers=1)
