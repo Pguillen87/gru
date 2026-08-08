@@ -18,11 +18,11 @@ O warm foi 73,99% mais rápido que o cold pelo tempo de parede do worker. A meta
 
 Custos faturados no relatório horário do Modal:
 
-- app `gru-mascot-development`: `US$ 0,23414625`;
+- app `gru-mascot-development`: `US$ 0,33819917`;
 - preparação efêmera CPU/cache: `US$ 0,02362190`;
-- total development observado: `US$ 0,25776815`.
+- total development consolidado: `US$ 0,36182107`.
 
-O teto estimado informado era `US$ 0,20`. Ele foi ultrapassado em `US$ 0,05776815` porque a primeira tentativa consumiu o carregamento H100 antes de falhar por falta de `assets.reload()`. Nenhum teste adicional foi executado depois da confirmação do custo.
+O teto estimado informado era `US$ 0,20`. Ele foi ultrapassado em `US$ 0,16182107` porque a primeira tentativa consumiu o carregamento H100 antes de falhar por falta de `assets.reload()` e a cobrança das inicializações H100 consolidou com atraso no relatório horário. Nenhum teste adicional foi executado depois da confirmação do custo.
 
 Os valores abaixo marcados como históricos vieram do benchmark anterior e servem apenas para comparação.
 
