@@ -81,6 +81,7 @@ import com.pguillen.gru.mascot.CustomMascotEntry
 import com.pguillen.gru.mascot.MascotTelemetry
 import com.pguillen.gru.mascot.prepareMascotPhoto
 import com.pguillen.gru.mascot.normalizeDisplayName
+import com.pguillen.gru.mascot.MascotPoseChoices
 
 internal enum class MascotFocus { LIBRARY, CREATE }
 
@@ -106,6 +107,8 @@ internal fun GruMascotScreen(
     }
     var photo by remember { mutableStateOf<Uri?>(null) }
     var creation by remember { mutableStateOf<MascotCreationState>(MascotCreationState.Idle) }
+    var draftStep by remember { mutableStateOf(MascotDraftStep.START) }
+    var poseChoices by remember { mutableStateOf(MascotPoseChoices()) }
     var selectedMasterId by remember { mutableStateOf<String?>(null) }
     var masterPreviews by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
     var creationMascotName by remember { mutableStateOf("") }
@@ -118,6 +121,15 @@ internal fun GruMascotScreen(
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) {
         photo = it
         creation = if (it == null) MascotCreationState.Idle else MascotCreationState.PhotoSelected
+        draftStep = if (it == null) MascotDraftStep.PHOTO else MascotDraftStep.CONFIRM
+    }
+    val submitSelected: (Uri) -> Unit = { selected ->
+        scope.launch {
+            creation = MascotCreationState.Submitting
+            submitMascotPhoto(context, repository, selected, poseChoices)
+                .onSuccess { creation = it.toCreationState() }
+                .onFailure { creation = it.toMascotFailure(prefs.pendingMascotJobId.value) }
+        }
     }
     LaunchedEffect(Unit) {
         runCatching { repository.resume() }.onSuccess { job ->
@@ -149,9 +161,6 @@ internal fun GruMascotScreen(
         val job = previewJob ?: return@LaunchedEffect
         val masters = job.masters
         selectedMasterId = if (awaiting != null) null else job.masterId
-        if (awaiting != null) {
-            creationMascotName = ""
-        }
         masterPreviews = emptyMap()
         masterPreviews = masters.mapNotNull { reference ->
             runCatching {
@@ -213,55 +222,36 @@ internal fun GruMascotScreen(
             BuiltInPicker(source, prefs::setPet)
         } else {
             GruBrandBar()
-            if (creation == MascotCreationState.Idle) {
-                Image(
-                    painter = painterResource(R.drawable.gru_brand_master),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxWidth().height(220.dp),
-                )
-            }
-            Text(
-                stringResource(R.string.gru__create_mascot),
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-            Text(
-                stringResource(R.string.gru__create_mascot_summary),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
         }
-        if (focus == MascotFocus.CREATE) MascotCreationPanel(
+        if (focus == MascotFocus.CREATE && creation in setOf(MascotCreationState.Idle, MascotCreationState.PhotoSelected)) {
+            MascotDraftFlow(
+                step = draftStep,
+                photo = photo,
+                choices = poseChoices,
+                name = creationMascotName,
+                onStart = { draftStep = MascotDraftStep.PHOTO },
+                onPickPhoto = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onConfirmPhoto = { draftStep = MascotDraftStep.NORMAL },
+                onSelectPose = { role, optionId -> poseChoices = poseChoices.select(role, optionId) },
+                onNameChange = { creationMascotName = it.take(32) },
+                onNext = { draftStep = draftStep.next() },
+                onBack = { draftStep = draftStep.previous() },
+                onSubmit = {
+                    photo?.let(submitSelected)
+                },
+                onCancel = {
+                    photo = null
+                    creation = MascotCreationState.Idle
+                    draftStep = MascotDraftStep.PHOTO
+                    repository.clearPending()
+                },
+            )
+        } else if (focus == MascotFocus.CREATE) MascotCreationPanel(
             photo = photo,
             state = creation,
             onPick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onDiscardPhoto = { photo = null; creation = MascotCreationState.Idle; repository.clearPending() },
-            onUsePhoto = { selected -> scope.launch {
-                creation = MascotCreationState.Submitting
-                val started = MascotTelemetry.mark()
-                runCatching {
-                    val originalContentType = context.contentResolver.getType(selected) ?: "unknown"
-                    val photo = context.prepareMascotPhoto(selected)
-                    MascotTelemetry.info(
-                        "photo_prepare", started,
-                        mapOf(
-                            "outcome" to "success",
-                            "original_content_type" to originalContentType,
-                            "upload_content_type" to photo.contentType,
-                            "image_bytes" to photo.bytes.size,
-                            "width" to photo.width,
-                            "height" to photo.height,
-                        ),
-                    )
-                    repository.create(photo.bytes, photo.contentType)
-                }
-                    .onSuccess { creation = it.toCreationState() }
-                    .onFailure {
-                        MascotTelemetry.failure("submit_flow", started, it)
-                        creation = it.toMascotFailure(prefs.pendingMascotJobId.value)
-                    }
-            } },
+            onUsePhoto = submitSelected,
             selectedMasterId = selectedMasterId,
             masterPreviews = masterPreviews,
             onSelectMaster = { selectedMasterId = it },
@@ -294,7 +284,9 @@ internal fun GruMascotScreen(
                 repository.clearPending()
                 photo = null
                 creation = MascotCreationState.Idle
-                picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                poseChoices = MascotPoseChoices()
+                creationMascotName = ""
+                draftStep = MascotDraftStep.START
             },
             onCancelCreation = { scope.launch {
                 val jobId = prefs.pendingMascotJobId.value ?: return@launch
@@ -332,6 +324,52 @@ internal fun GruMascotScreen(
             },
         )
     }
+}
+
+internal fun MascotDraftStep.next(): MascotDraftStep = when (this) {
+    MascotDraftStep.START -> MascotDraftStep.PHOTO
+    MascotDraftStep.PHOTO -> MascotDraftStep.CONFIRM
+    MascotDraftStep.CONFIRM -> MascotDraftStep.NORMAL
+    MascotDraftStep.NORMAL -> MascotDraftStep.LISTENING
+    MascotDraftStep.LISTENING -> MascotDraftStep.TRANSCRIBING
+    MascotDraftStep.TRANSCRIBING -> MascotDraftStep.NAME
+    MascotDraftStep.NAME -> MascotDraftStep.REVIEW
+    MascotDraftStep.REVIEW -> MascotDraftStep.REVIEW
+}
+
+internal fun MascotDraftStep.previous(): MascotDraftStep = when (this) {
+    MascotDraftStep.START, MascotDraftStep.PHOTO -> MascotDraftStep.START
+    MascotDraftStep.CONFIRM -> MascotDraftStep.PHOTO
+    MascotDraftStep.NORMAL -> MascotDraftStep.CONFIRM
+    MascotDraftStep.LISTENING -> MascotDraftStep.NORMAL
+    MascotDraftStep.TRANSCRIBING -> MascotDraftStep.LISTENING
+    MascotDraftStep.NAME -> MascotDraftStep.TRANSCRIBING
+    MascotDraftStep.REVIEW -> MascotDraftStep.NAME
+}
+
+private suspend fun submitMascotPhoto(
+    context: Context,
+    repository: MascotRepository,
+    selected: Uri,
+    poseChoices: MascotPoseChoices,
+): Result<com.pguillen.gru.mascot.MascotJobResponse> {
+    val started = MascotTelemetry.mark()
+    return runCatching {
+        val originalContentType = context.contentResolver.getType(selected) ?: "unknown"
+        val prepared = context.prepareMascotPhoto(selected)
+        MascotTelemetry.info(
+            "photo_prepare", started,
+            mapOf(
+                "outcome" to "success",
+                "original_content_type" to originalContentType,
+                "upload_content_type" to prepared.contentType,
+                "image_bytes" to prepared.bytes.size,
+                "width" to prepared.width,
+                "height" to prepared.height,
+            ),
+        )
+        repository.create(prepared.bytes, prepared.contentType, poseChoices)
+    }.onFailure { MascotTelemetry.failure("submit_flow", started, it) }
 }
 
 @Composable private fun MascotPreview(source: MascotSource, size: GruPetSize, opacity: Int, store: CustomMascotStore, customName: String?) {
@@ -610,14 +648,20 @@ internal fun GruMascotScreen(
             }
             if (row.size == 1) Spacer(Modifier.weight(1f))
         } }
-        OutlinedTextField(
-            value = mascotName,
-            onValueChange = onMascotNameChange,
-            label = { Text(stringResource(R.string.gru__mascot_name)) },
-                        supportingText = { Text(stringResource(R.string.gru__mascot_name_required)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (mascotName.isBlank()) {
+            OutlinedTextField(
+                value = mascotName,
+                onValueChange = onMascotNameChange,
+                label = { Text(stringResource(R.string.gru__mascot_name)) },
+                supportingText = { Text(stringResource(R.string.gru__mascot_name_required)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            GruPanel(accent = GruColors.Gold) {
+                Text(mascotName.trim(), style = MaterialTheme.typography.titleMedium)
+            }
+        }
         Button(
             onClick = { selectedId?.let { onApprove(it, mascotName) } },
             enabled = selectedId != null && mascotName.trim().isNotBlank(),

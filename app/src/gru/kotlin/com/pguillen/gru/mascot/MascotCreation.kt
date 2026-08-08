@@ -41,14 +41,18 @@ class MascotRepository(
         api, GruMascotPendingState(preferences), customStore,
     )
 
-    suspend fun create(image: ByteArray, mimeType: String): MascotJobResponse {
+    suspend fun create(
+        image: ByteArray,
+        mimeType: String,
+        poseChoices: MascotPoseChoices = MascotPoseChoices(),
+    ): MascotJobResponse {
         resume()?.let { existing ->
             if (!existing.isTerminal()) return existing
             clearPending()
         }
         val key = pending.requestId.value
             ?: UUID.randomUUID().toString().also(pending::setRequestId)
-        val job = api.createJob(image, mimeType, key)
+        val job = api.createJob(image, mimeType, key, poseChoices)
         pending.setJobId(job.jobId)
         pending.setRequestId(null)
         return job
@@ -57,7 +61,13 @@ class MascotRepository(
     suspend fun resume(): MascotJobResponse? {
         val jobId = pending.jobId.value ?: return recoverUnacknowledgedCreate()
         if (pending.cancelPending.value) return cancel(jobId)
-        return ensureApprovedMaster(api.job(jobId))
+        return try {
+            ensureApprovedMaster(api.job(jobId))
+        } catch (error: MascotApiException) {
+            if (error.apiError.code != "JOB_NOT_FOUND") throw error
+            clearPending()
+            null
+        }
     }
 
     private suspend fun recoverUnacknowledgedCreate(): MascotJobResponse? {
@@ -100,11 +110,12 @@ class MascotRepository(
         val store = requireNotNull(customStore)
         val result = api.result(jobId)
         val images = result.poses.associate { pose -> pose.poseId to api.download(requireNotNull(pose.downloadPath)) }
-        val defaults = result.poses.take(3).map(MascotPose::poseId)
-        if (defaults.size < 3) return false
+        val poseIds = result.poses.map(MascotPose::poseId).toSet()
+        val selected = listOf(result.idlePoseId, result.listeningPoseId, result.transcribingPoseId)
+        if (!selected.all(poseIds::contains)) return false
         val manifest = CustomMascotManifest(
             result.poseSetId, result.masterId, result.version, result.modelVersion, result.poses,
-            defaults[0], defaults[1], defaults[2],
+            result.idlePoseId, result.listeningPoseId, result.transcribingPoseId,
         )
         if (!store.promote(manifest, images)) return false
         if (result.poseSetId != jobId) store.remove(jobId)

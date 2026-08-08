@@ -14,12 +14,19 @@ class MascotApiTest {
         val server = MockWebServer().apply { enqueue(MockResponse().setResponseCode(202).setBody("{\"job_id\":\"job_1\",\"state\":\"QUEUED\"}")); start() }
         try {
             val api = MascotApi(FakeAuth, FakeAppCheck, OkHttpClient(), server.url("/").toString())
-            assertEquals("job_1", api.createJob(byteArrayOf(1, 2), "image/png", "request-1").jobId)
+            assertEquals(
+                "job_1",
+                api.createJob(byteArrayOf(1, 2), "image/png", "request-1", MascotPoseChoices()).jobId,
+            )
             val request = server.takeRequest()
             assertEquals("Bearer test-id-token", request.getHeader("Authorization"))
             assertEquals("test-app-check", request.getHeader("X-Firebase-AppCheck"))
             assertEquals("request-1", request.getHeader("X-Idempotency-Key"))
-            assertTrue(request.body.readUtf8().contains("image_base64"))
+            val body = request.body.readUtf8()
+            assertTrue(body.contains("image_base64"))
+            assertTrue(body.contains("\"normal\":\"normal_attentive\""))
+            assertTrue(body.contains("\"listening\":\"listening_focus\""))
+            assertTrue(body.contains("\"transcribing\":\"transcribing_fast\""))
         } finally { server.shutdown() }
     }
 

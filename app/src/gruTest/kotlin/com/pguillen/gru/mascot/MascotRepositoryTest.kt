@@ -12,6 +12,16 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class MascotRepositoryTest {
+    @Test fun `missing persisted job is cleared and returns to a fresh flow`() = runTest {
+        val pending = FakePending(initialJobId = "job-missing")
+        val remote = FakeRemote(
+            jobFailure = MascotApiException(ApiError("JOB_NOT_FOUND", "missing"), 404),
+        )
+
+        assertEquals(null, MascotRepository(remote, pending).resume())
+        assertEquals(null, pending.jobId.value)
+    }
+
     @Test fun `active pending job blocks a second create`() = runTest {
         val remote = FakeRemote(jobResponse = MascotJobResponse("job-existing", "READY_FOR_GENERATION"))
         val pending = FakePending("job-existing")
@@ -267,7 +277,12 @@ private class FakeRemote(
     val cancelKeys = mutableListOf<String>()
     val recoveryKeys = mutableListOf<String>()
 
-    override suspend fun createJob(image: ByteArray, mimeType: String, key: String): MascotJobResponse {
+    override suspend fun createJob(
+        image: ByteArray,
+        mimeType: String,
+        key: String,
+        poseChoices: MascotPoseChoices,
+    ): MascotJobResponse {
         createCalls += 1
         return jobResponse
     }
@@ -301,5 +316,8 @@ private fun resultFixture(bytes: ByteArray): MascotResultResponse {
         val id = "pose_%02d".format(index)
         MascotPose(id, "Pose $index", "$id.png", checksum, "/v1/mascot/jobs/job-1/poses/$id")
     }
-    return MascotResultResponse("set-1", "master_1", "v1", "model", poses)
+    return MascotResultResponse(
+        "set-1", "master_1", "v1", "model", poses,
+        "pose_01", "pose_02", "pose_03",
+    )
 }

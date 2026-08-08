@@ -17,10 +17,17 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-data class CreateMascotJobRequest(val imageBase64: String, val contentType: String) {
+data class CreateMascotJobRequest(
+    val imageBase64: String,
+    val contentType: String,
+    val poseChoices: MascotPoseChoices,
+) {
     fun json(): JsonObject = buildJsonObject {
         put("image_base64", JsonPrimitive(imageBase64))
         put("content_type", JsonPrimitive(contentType))
+        put("pose_choices", buildJsonObject {
+            poseChoices.asMap().forEach { (role, option) -> put(role, JsonPrimitive(option)) }
+        })
     }
 }
 
@@ -59,6 +66,9 @@ data class MascotResultResponse(
     val version: String,
     val modelVersion: String?,
     val poses: List<MascotPose>,
+    val idlePoseId: String,
+    val listeningPoseId: String,
+    val transcribingPoseId: String,
 ) {
     companion object {
         fun from(json: JsonObject) = MascotResultResponse(
@@ -70,6 +80,9 @@ data class MascotResultResponse(
                     pose.requiredString("sha256"), pose.requiredString("downloadPath"),
                 )
             } }.orEmpty(),
+            idlePoseId = json.requiredString("idlePoseId"),
+            listeningPoseId = json.requiredString("listeningPoseId"),
+            transcribingPoseId = json.requiredString("transcribingPoseId"),
         )
     }
 }
@@ -94,7 +107,12 @@ data class ApiError(
 }
 
 interface MascotRemoteApi {
-    suspend fun createJob(image: ByteArray, mimeType: String, key: String): MascotJobResponse
+    suspend fun createJob(
+        image: ByteArray,
+        mimeType: String,
+        key: String,
+        poseChoices: MascotPoseChoices,
+    ): MascotJobResponse
     suspend fun job(jobId: String): MascotJobResponse
     suspend fun recoverJob(idempotencyKey: String): MascotJobResponse
     suspend fun startMasterGeneration(jobId: String, key: String): MascotJobResponse
@@ -110,7 +128,12 @@ class MascotApi(
     private val client: OkHttpClient = mascotHttpClient(),
     private val baseUrl: String = BuildConfig.MASCOT_API_BASE_URL,
 ) : MascotRemoteApi {
-    override suspend fun createJob(image: ByteArray, mimeType: String, key: String): MascotJobResponse {
+    override suspend fun createJob(
+        image: ByteArray,
+        mimeType: String,
+        key: String,
+        poseChoices: MascotPoseChoices,
+    ): MascotJobResponse {
         val started = MascotTelemetry.mark()
         MascotTelemetry.info(
             "create_prepare",
@@ -119,7 +142,11 @@ class MascotApi(
         return runCatching {
             requestJob(
                 "/v1/mascot/jobs", "POST", key,
-                CreateMascotJobRequest(Base64.getEncoder().encodeToString(image), mimeType).json(),
+                CreateMascotJobRequest(
+                    Base64.getEncoder().encodeToString(image),
+                    mimeType,
+                    poseChoices,
+                ).json(),
             )
         }.onSuccess { job ->
             MascotTelemetry.info("create_complete", started, mapOf("remote_state" to job.state))
