@@ -17,6 +17,7 @@ class JobOperation(StrEnum):
     AUTHORIZE_GENERATION = "AUTHORIZE_GENERATION"
     START_MASTER = "START_MASTER"
     COMMIT_MASTER = "COMMIT_MASTER"
+    RECONCILE_MASTER = "RECONCILE_MASTER"
     FAIL_MASTER = "FAIL_MASTER"
     RECORD_GPU_CALL = "RECORD_GPU_CALL"
     APPROVE_MASTER = "APPROVE_MASTER"
@@ -151,6 +152,10 @@ class JobCoordinator:
         job.transition_to(JobState.AWAITING_MASTER_APPROVAL)
         self.save(job)
         return job, True
+
+    def fail_stale_master(self, job_id: str, error_code: str) -> tuple[JobRecord, bool]:
+        """Fail only a still-running Master job; terminal/newer states win."""
+        return self.transition_if_active(job_id, JobState.GENERATING_MASTER, JobState.FAILED, error_code)
 
     def record_gpu_call(self, job_id: str, call_id: str) -> tuple[JobRecord, bool]:
         job = self.get(job_id)

@@ -15,6 +15,7 @@ import shutil
 import secrets
 import time
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 import modal
 from pydantic import BaseModel, Field
@@ -68,6 +69,8 @@ SCHEDULER_CONFIG = {
     "use_karras_sigmas": False,
 }
 WORKER_SCALEDOWN_SECONDS = 45
+MASTER_RECONCILE_AFTER_SECONDS = 15
+MASTER_STALE_AFTER_SECONDS = 300
 PERSISTENT_WORKER_MAX_CONTAINERS = 1
 MODEL_CACHE_SPEC = ModelCacheSpec(
     model_id=QWEN_MODEL_ID,
@@ -320,9 +323,17 @@ def job_control(
         elif command is JobOperation.START_MASTER:
             job, changed = coordinator.transition_if_active(job_id, JobState.VALIDATING_INPUT, JobState.GENERATING_MASTER)
         elif command is JobOperation.COMMIT_MASTER:
-            job, changed = coordinator.commit_master_outputs(
-                job_id, lambda current: _persist_master_outputs(current, outputs or [])
-            )
+            assets.reload()
+            job, changed = coordinator.commit_master_outputs(job_id, _verify_master_outputs)
+        elif command is JobOperation.RECONCILE_MASTER:
+            job = coordinator.get(job_id)
+            changed = False
+            if job.state is JobState.GENERATING_MASTER:
+                assets.reload()
+                if _master_outputs_ready(job):
+                    job, changed = coordinator.commit_master_outputs(job_id, _verify_master_outputs)
+                elif _job_age_seconds(job) >= MASTER_STALE_AFTER_SECONDS:
+                    job, changed = coordinator.fail_stale_master(job_id, "MASTER_WORKER_STALE")
         elif command is JobOperation.FAIL_MASTER:
             job, changed = coordinator.transition_if_active(
                 job_id, JobState.GENERATING_MASTER, JobState.FAILED, "MASTER_GENERATION_FAILED"
@@ -473,7 +484,8 @@ class QwenMasterWorker:
         job = _deserialize(dict(started["job"]))
         try:
             outputs = self.runtime.run(lambda pipeline: _generate_qwen_masters(job, pipeline, observer))
-            committed = job_control.remote(JobOperation.COMMIT_MASTER.value, job_id, outputs=outputs)
+            _persist_master_outputs(job, outputs)
+            committed = job_control.remote(JobOperation.COMMIT_MASTER.value, job_id)
             _raise_guard_error(committed)
             observer.event(
                 "job_completed",
@@ -646,6 +658,28 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
     )
 
 
+def _master_outputs_ready(job: JobRecord) -> bool:
+    target = Path(ASSET_ROOT, "masters", job.job_id)
+    expected = tuple(target / f"master_{index}.png" for index in range(1, len(MASTER_SEEDS) + 1))
+    return all(path.is_file() and path.stat().st_size > 0 for path in expected)
+
+
+def _verify_master_outputs(job: JobRecord) -> None:
+    if not _master_outputs_ready(job):
+        raise DomainError("Master outputs are incomplete.")
+
+
+def _job_age_seconds(job: JobRecord) -> float:
+    updated = datetime.fromisoformat(job.updated_at)
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=UTC)
+    return max(0.0, (datetime.now(UTC) - updated).total_seconds())
+
+
+def _should_reconcile_master(job: JobRecord) -> bool:
+    return job.state is JobState.GENERATING_MASTER and _job_age_seconds(job) >= MASTER_RECONCILE_AFTER_SECONDS
+
+
 @app.function(image=api_image, volumes={ASSET_ROOT: assets}, max_containers=1)
 def normalize_master_assets(job_id: str) -> dict[str, object]:
     """Administrative CPU-only migration for Masters created before alpha cleanup."""
@@ -797,6 +831,10 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, user_id)
+            if _should_reconcile_master(job):
+                reconciled = job_control.remote(JobOperation.RECONCILE_MASTER.value, job_id)
+                _raise_guard_error(reconciled)
+                job = _deserialize(dict(reconciled["job"]))
             return _serialize(job)
         except DomainError as error:
             raise _api_error(error) from error
