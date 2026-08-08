@@ -54,6 +54,21 @@ def test_deserialize_ignores_master_references_added_for_api_responses(tmp_path,
     assert restored == job
 
 
+def test_result_asset_refresh_only_runs_for_states_that_expose_worker_outputs(monkeypatch):
+    reload_calls = 0
+
+    def reload_assets():
+        nonlocal reload_calls
+        reload_calls += 1
+
+    monkeypatch.setattr(app.assets, "reload", reload_assets)
+
+    app._refresh_result_assets(_job(JobState.GENERATING_MASTER))
+    app._refresh_result_assets(_job(JobState.AWAITING_MASTER_APPROVAL))
+
+    assert reload_calls == 1
+
+
 def test_stale_worker_failure_is_idempotent():
     job = _job(age_seconds=301)
     store = {job.job_id: {**job.__dict__, "state": job.state.value}}

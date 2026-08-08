@@ -212,6 +212,15 @@ def _serialize(job: JobRecord) -> dict[str, object]:
     return payload
 
 
+def _refresh_result_assets(job: JobRecord) -> None:
+    """Refresh a long-lived API container before exposing worker artifacts."""
+    if job.state in {
+        JobState.AWAITING_MASTER_APPROVAL,
+        JobState.COMPLETED,
+    } or job.master_id is not None:
+        assets.reload()
+
+
 def _master_references(job: JobRecord) -> list[dict[str, str]]:
     references: list[dict[str, str]] = []
     for index in range(1, 5):
@@ -876,6 +885,7 @@ def api():
                 reconciled = job_control.remote(JobOperation.RECONCILE_MASTER.value, job_id)
                 _raise_guard_error(reconciled)
                 job = _deserialize(dict(reconciled["job"]))
+            _refresh_result_assets(job)
             return _serialize(job)
         except DomainError as error:
             raise _api_error(error) from error
@@ -886,6 +896,7 @@ def api():
             job_id = str(idempotency[_record_key(user_id, idempotency_key)])
             job = _get_job(job_id)
             _ensure_owner(job, user_id)
+            _refresh_result_assets(job)
             return _serialize(job)
         except KeyError as error:
             raise _api_error(JobNotFound("Job was not found.")) from error
@@ -917,6 +928,7 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, context[0])
+            _refresh_result_assets(job)
             operation_key = _operation_key(context[0], f"approve:{job_id}:{request.master_id}")
             if operation_key in idempotency:
                 return _serialize(job)
@@ -956,6 +968,7 @@ def api():
             _ensure_owner(job, user_id)
             if job.state is not JobState.COMPLETED:
                 raise DomainError("Mascot result is not ready.")
+            _refresh_result_assets(job)
             return _result_payload(job)
         except DomainError as error:
             raise _api_error(error) from error
@@ -967,6 +980,7 @@ def api():
             raise _api_error(JobNotFound("Master was not found."))
         job = _get_job(job_id)
         _ensure_owner(job, user_id)
+        _refresh_result_assets(job)
         path = _asset_path(job_id, "masters", f"{master_id}.png")
         if not path.is_file():
             raise _api_error(JobNotFound("Master was not found."))
