@@ -42,6 +42,18 @@ def test_reconciliation_waits_before_checking_worker_result():
     )
 
 
+def test_deserialize_ignores_master_references_added_for_api_responses(tmp_path, monkeypatch):
+    monkeypatch.setattr(app, "ASSET_ROOT", str(tmp_path))
+    job = _job(JobState.AWAITING_MASTER_APPROVAL)
+    target = tmp_path / "masters" / job.job_id
+    target.mkdir(parents=True)
+    (target / "master_1.png").write_bytes(b"png")
+
+    restored = app._deserialize(app._serialize(job))
+
+    assert restored == job
+
+
 def test_stale_worker_failure_is_idempotent():
     job = _job(age_seconds=301)
     store = {job.job_id: {**job.__dict__, "state": job.state.value}}

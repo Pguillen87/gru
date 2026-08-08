@@ -14,7 +14,7 @@ import os
 import shutil
 import secrets
 import time
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from datetime import UTC, datetime
 from pathlib import Path
 import modal
@@ -229,7 +229,12 @@ def _master_references(job: JobRecord) -> list[dict[str, str]]:
 
 
 def _deserialize(record: dict[str, object]) -> JobRecord:
-    return JobRecord(**(record | {"state": JobState(record["state"])}))
+    # API responses may include presentation-only fields (for example, the
+    # signed master references). Persisted JobRecord data must remain the sole
+    # input to the domain object when a response is reconciled back into state.
+    record_fields = {field.name for field in fields(JobRecord)}
+    persisted = {key: value for key, value in record.items() if key in record_fields}
+    return JobRecord(**(persisted | {"state": JobState(str(persisted["state"]))}))
 
 
 def _get_job(job_id: str) -> JobRecord:
