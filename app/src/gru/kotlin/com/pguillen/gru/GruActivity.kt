@@ -16,18 +16,22 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.clickable
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddCircle
@@ -35,13 +39,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -52,12 +53,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -77,7 +79,10 @@ class GruActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             GruTheme {
-                Surface(color = MaterialTheme.colorScheme.background) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
                     GruApp(permissionRefresh, prefs) { permissionRefresh++ }
                 }
             }
@@ -98,7 +103,6 @@ internal enum class GruDestination(val label: Int) {
     CREATE_MASCOT(R.string.gru__nav_create_mascot),
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionChanged: () -> Unit) {
     val context = LocalContext.current
@@ -112,7 +116,6 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
         }
     }
     Scaffold(
-        topBar = { TopAppBar(title = { GruBrandTitle() }) },
         bottomBar = {
             if (engine != null) {
                 GruBottomNavigation(
@@ -171,55 +174,66 @@ private fun GruBottomNavigation(selected: GruDestination, onSelect: (GruDestinat
         GruDestination.MASCOTS to Icons.Default.Pets,
         GruDestination.CREATE_MASCOT to Icons.Default.AddCircle,
     )
-    NavigationBar(modifier = Modifier.navigationBarsPadding()) {
-        items.forEach { (destination, icon) ->
-            val isCentral = destination == GruDestination.CONTROL
-            if (isCentral) {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    contentAlignment = Alignment.Center,
-                ) {
+    Box(
+        Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+            shape = RoundedCornerShape(28.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.fillMaxWidth().height(72.dp).shadow(18.dp, RoundedCornerShape(28.dp)),
+        ) {
+            Row(
+                Modifier.fillMaxSize().padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                items.forEach { (destination, icon) ->
+                    val active = selected == destination
+                    val central = destination == GruDestination.CONTROL
+                    val label = stringResource(destination.label)
                     Column(
                         modifier = Modifier
-                            .clip(MaterialTheme.shapes.large)
+                            .weight(1f)
+                            .clip(RoundedCornerShape(20.dp))
                             .semantics {
-                                this.selected = selected == destination
+                                this.selected = active
                                 role = Role.Tab
                             }
                             .clickable { onSelect(destination) }
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                            .padding(vertical = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Icon(icon, contentDescription = null, modifier = Modifier.size(36.dp))
-                        Text(stringResource(destination.label), maxLines = 2, style = MaterialTheme.typography.labelSmall)
+                        if (central) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = androidx.compose.foundation.BorderStroke(2.dp, GruColors.Cyan),
+                                modifier = Modifier.size(48.dp).offset(y = (-6).dp),
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(icon, contentDescription = null, tint = GruColors.Cyan, modifier = Modifier.size(26.dp))
+                                }
+                            }
+                        } else {
+                            Icon(
+                                icon,
+                                contentDescription = null,
+                                tint = if (active) GruColors.Cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                        Text(
+                            label,
+                            color = if (active) GruColors.Cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2,
+                            modifier = if (central) Modifier.offset(y = (-5).dp) else Modifier,
+                        )
                     }
                 }
-            } else {
-                NavigationBarItem(
-                    selected = selected == destination,
-                    onClick = { onSelect(destination) },
-                    icon = { Icon(icon, contentDescription = null) },
-                    label = { Text(stringResource(destination.label), maxLines = 2) },
-                    modifier = Modifier.semantics { role = Role.Tab },
-                )
             }
         }
-    }
-}
-
-@Composable
-private fun GruBrandTitle() {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Image(
-            painter = painterResource(R.drawable.gru_brand_master),
-            contentDescription = stringResource(R.string.gru__brand_logo),
-            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-            modifier = Modifier.size(48.dp),
-        )
-        Text(stringResource(R.string.gru__app_name))
     }
 }
 

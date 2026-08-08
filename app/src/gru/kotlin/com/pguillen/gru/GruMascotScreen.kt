@@ -184,11 +184,12 @@ internal fun GruMascotScreen(
     }
     val selectedCustom = source as? MascotSource.Custom
     Column(
-        modifier.clipToBounds().verticalScroll(rememberScrollState()).padding(20.dp),
+        modifier.clipToBounds().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         if (focus == MascotFocus.LIBRARY) {
-            Text(stringResource(R.string.gru__mascots_title), style = MaterialTheme.typography.headlineSmall)
+            GruBrandBar()
+            Text(stringResource(R.string.gru__mascots_title), style = MaterialTheme.typography.headlineMedium)
             MascotPreview(
                 source, size, opacity, customStore,
                 customMascots.firstOrNull { it.poseSetId == selectedCustom?.poseSetId }?.displayName,
@@ -211,8 +212,25 @@ internal fun GruMascotScreen(
             Text(stringResource(R.string.gru__gru_mascots), style = MaterialTheme.typography.titleLarge)
             BuiltInPicker(source, prefs::setPet)
         } else {
-            Text(stringResource(R.string.gru__create_mascot), style = MaterialTheme.typography.headlineSmall)
-            Text(stringResource(R.string.gru__create_mascot_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            GruBrandBar()
+            if (creation == MascotCreationState.Idle) {
+                Image(
+                    painter = painterResource(R.drawable.gru_brand_master),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                )
+            }
+            Text(
+                stringResource(R.string.gru__create_mascot),
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
+            Text(
+                stringResource(R.string.gru__create_mascot_summary),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
         }
         if (focus == MascotFocus.CREATE) MascotCreationPanel(
             photo = photo,

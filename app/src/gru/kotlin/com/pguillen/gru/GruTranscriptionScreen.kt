@@ -42,6 +42,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -79,6 +80,7 @@ internal fun GruTranscriptionScreen(
     val requested by prefs.requestedEngine.collectAsState()
     val apiKey by prefs.groqApiKeyState.collectAsState()
     val modelState by manager.state.collectAsState()
+    val selected = requested ?: current ?: TranscriptionEngine.ONLINE_GROQ
     var editKey by remember { mutableStateOf(false) }
     val scrollState = if (firstUse) remember { ScrollState(0) } else rememberScrollState()
 
@@ -87,18 +89,17 @@ internal fun GruTranscriptionScreen(
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        Text(stringResource(R.string.gru__voice_title), style = MaterialTheme.typography.headlineMedium)
-        if (!firstUse) CurrentEngine(current)
-        if (firstUse) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(stringResource(R.string.gru__choose_engine_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                Text(stringResource(R.string.gru__choose_engine_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            SectionTitle(R.string.gru__change_engine)
+        GruScreenHeader(
+            title = stringResource(R.string.gru__voice_header),
+            summary = stringResource(R.string.gru__voice_header_summary),
+        )
+        VoiceModeSelector(selected = selected) { engine ->
+            val activated = prefs.selectEngine(engine, modelState is WhisperModelState.Installed)
+            if (engine == TranscriptionEngine.ONLINE_GROQ && !activated) editKey = true
+            if (activated) onConfigured()
         }
-        EngineChoice(
-            icon = { Icon(Icons.Default.Cloud, null) },
+        if (selected == TranscriptionEngine.ONLINE_GROQ) EngineChoice(
+            icon = { Icon(Icons.Default.Cloud, null, tint = GruColors.Success) },
             title = R.string.gru__online_title,
             subtitle = R.string.gru__online_subtitle,
             details = R.string.gru__online_details,
@@ -113,7 +114,7 @@ internal fun GruTranscriptionScreen(
             )
             if (activated) onConfigured() else editKey = true
         }
-        EngineChoice(
+        if (selected == TranscriptionEngine.PRIVATE_LOCAL) EngineChoice(
             icon = { Icon(Icons.Default.Lock, null) },
             title = R.string.gru__private_title,
             subtitle = R.string.gru__private_subtitle,
@@ -176,6 +177,40 @@ internal fun GruTranscriptionScreen(
 }
 
 @Composable
+private fun VoiceModeSelector(selected: TranscriptionEngine, onSelect: (TranscriptionEngine) -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(28.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf(
+                TranscriptionEngine.ONLINE_GROQ to R.string.gru__voice_online_short,
+                TranscriptionEngine.PRIVATE_LOCAL to R.string.gru__voice_private_short,
+            ).forEach { (engine, label) ->
+                val active = selected == engine
+                Surface(
+                    onClick = { onSelect(engine) },
+                    color = if (active) GruColors.Success.copy(alpha = 0.14f) else androidx.compose.ui.graphics.Color.Transparent,
+                    contentColor = if (active) GruColors.Success else MaterialTheme.colorScheme.onSurfaceVariant,
+                    shape = RoundedCornerShape(22.dp),
+                    border = if (active) BorderStroke(1.dp, GruColors.Success.copy(alpha = 0.65f)) else null,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        stringResource(label),
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CurrentEngine(engine: TranscriptionEngine?) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(stringResource(R.string.gru__current_engine), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -205,8 +240,8 @@ private fun EngineChoice(
 ) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, if (active) GruColors.Success.copy(alpha = 0.7f) else MaterialTheme.colorScheme.outlineVariant),
     ) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             icon()

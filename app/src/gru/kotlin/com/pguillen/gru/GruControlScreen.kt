@@ -4,15 +4,22 @@ import android.Manifest
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -25,6 +32,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.dp
 import com.pguillen.gru.dictation.TranscriptionEngine
 import com.pguillen.gru.local.WhisperModelManager
@@ -59,28 +68,32 @@ internal fun GruControlScreen(
         else -> null
     }
     val stateText = when {
-        enabled -> R.string.gru__control_on
         !ready -> R.string.gru__control_needs_setup
+        enabled -> R.string.gru__control_on
         else -> R.string.gru__control_off
     }
     val stateDescription = stringResource(stateText)
 
     Column(
-        modifier = modifier.verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(stringResource(R.string.gru__control_title), style = MaterialTheme.typography.headlineMedium)
+        GruBrandBar()
         Image(
             painter = painterResource(R.drawable.gru_brand_master),
             contentDescription = stringResource(R.string.gru__control_mascot_description),
             contentScale = ContentScale.Fit,
-            modifier = Modifier.size(220.dp),
+            modifier = Modifier.size(232.dp),
         )
         Text(
-            stringResource(stateText),
+            stringResource(stateText).uppercase(),
             style = MaterialTheme.typography.headlineSmall,
-            color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            color = when {
+                !ready -> GruColors.Gold
+                enabled -> GruColors.Success
+                else -> GruColors.Danger
+            },
             modifier = Modifier.semantics { contentDescription = stateDescription },
         )
         if (blockingAction != null) {
@@ -92,11 +105,28 @@ internal fun GruControlScreen(
                 Text(stringResource(R.string.gru__resolve_now))
             }
         } else {
-            Button(
+            Surface(
                 onClick = { prefs.setEnabled(!enabled) },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                shape = CircleShape,
+                color = (if (enabled) GruColors.Success else GruColors.Danger).copy(alpha = 0.09f),
+                border = androidx.compose.foundation.BorderStroke(2.dp, if (enabled) GruColors.Success else GruColors.Danger),
+                modifier = Modifier.size(132.dp).semantics { role = Role.Button },
             ) {
-                Text(stringResource(if (enabled) R.string.gru__turn_off else R.string.gru__turn_on))
+                Box(contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(
+                            Icons.Default.PowerSettingsNew,
+                            contentDescription = null,
+                            tint = if (enabled) GruColors.Success else GruColors.Danger,
+                            modifier = Modifier.size(40.dp),
+                        )
+                        Text(
+                            stringResource(if (enabled) R.string.gru__turn_off else R.string.gru__turn_on).uppercase(),
+                            color = if (enabled) GruColors.Success else GruColors.Danger,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                }
             }
             Text(
                 stringResource(R.string.gru__control_reversible),

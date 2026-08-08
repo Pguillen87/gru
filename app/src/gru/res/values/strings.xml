@@ -18,7 +18,13 @@
   <string name="gru__control_reversible">Você pode mudar esse estado quando quiser.</string>
   <string name="gru__permissions_title">Permissões</string>
   <string name="gru__permissions_progress">%1$d de %2$d concluído</string>
+  <string name="gru__permissions_header">Configurar acesso</string>
+  <string name="gru__permissions_header_summary">Gerencie as permissões essenciais para o funcionamento inteligente do Gru.</string>
   <string name="gru__voice_title">Voz</string>
+  <string name="gru__voice_header">Motor de voz</string>
+  <string name="gru__voice_header_summary">Configure o processamento de áudio para interação.</string>
+  <string name="gru__voice_online_short">☁ ONLINE</string>
+  <string name="gru__voice_private_short">▣ PRIVADO</string>
   <string name="gru__accessibility_service_label">Pet flutuante do Gru</string>
   <string name="gru__error_no_api_key">Add your Groq API key in Gru settings.</string>
   <string name="gru__error_engine_not_selected">Choose Online or Private transcription in Gru settings.</string>

@@ -37,6 +37,11 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessibilityNew
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -93,13 +98,15 @@ internal fun GruGeneralScreen(
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        Text(stringResource(R.string.gru__permissions_title), style = MaterialTheme.typography.headlineMedium)
+        GruScreenHeader(
+            title = stringResource(R.string.gru__permissions_header),
+            summary = stringResource(R.string.gru__permissions_header_summary),
+        )
         Text(
             stringResource(R.string.gru__permissions_progress, completed, total),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (completed == total) GruColors.Success else GruColors.Gold,
         )
-        StatusSummary(false, accessibilityReady, serviceConnected, microphoneReady, engineReady, overlayHealth)
         PermissionSection(accessibilityReady, microphoneReady, notificationsReady, onPermissionChanged)
         Spacer(Modifier.height(8.dp))
     }
@@ -180,18 +187,15 @@ private fun PermissionSection(accessibility: Boolean, microphone: Boolean, notif
     var disclosure by remember { mutableStateOf(false) }
     val microphoneLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { changed() }
     val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { changed() }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionTitle(R.string.gru__permissions)
-        PermissionRow(R.string.gru__accessibility_title, R.string.gru__accessibility_summary, accessibility, R.string.gru__accessibility_action) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        PermissionRow(Icons.Default.AccessibilityNew, R.string.gru__accessibility_title, R.string.gru__accessibility_summary, accessibility, R.string.gru__accessibility_action) {
             disclosure = true
         }
-        HorizontalDivider()
-        PermissionRow(R.string.gru__microphone_title, R.string.gru__microphone_summary, microphone, R.string.gru__microphone_action) {
+        PermissionRow(Icons.Default.Mic, R.string.gru__microphone_title, R.string.gru__microphone_summary, microphone, R.string.gru__microphone_action) {
             microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            HorizontalDivider()
-            PermissionRow(R.string.gru__notifications_title, R.string.gru__notifications_summary, notifications, R.string.gru__notifications_action) {
+            PermissionRow(Icons.Default.Notifications, R.string.gru__notifications_title, R.string.gru__notifications_summary, notifications, R.string.gru__notifications_action) {
                 notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
@@ -209,16 +213,28 @@ private fun PermissionSection(accessibility: Boolean, microphone: Boolean, notif
 }
 
 @Composable
-private fun PermissionRow(title: Int, summary: Int, granted: Boolean, actionLabel: Int, action: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(title), style = MaterialTheme.typography.titleSmall)
-        Text(
-            stringResource(if (granted) R.string.gru__granted else R.string.gru__pending),
-            color = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Text(stringResource(summary), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (!granted) Button(onClick = action, modifier = Modifier.fillMaxWidth()) { Text(stringResource(actionLabel)) }
+private fun PermissionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: Int, summary: Int, granted: Boolean, actionLabel: Int, action: () -> Unit) {
+    GruPanel(accent = if (granted) GruColors.Success else GruColors.Danger) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = if (granted) GruColors.Success else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(28.dp),
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(title), style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(summary), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    stringResource(if (granted) R.string.gru__granted else R.string.gru__pending),
+                    color = if (granted) GruColors.Success else GruColors.Gold,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
+        if (!granted) Button(onClick = action, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+            Text(stringResource(actionLabel))
+        }
     }
 }
 
