@@ -89,9 +89,11 @@ O fluxo continua usando `JobCoordinator` para transições atômicas. Retry com 
 
 Nenhuma falha habilita fallback, ignora Auth/App Check ou transforma erro em sucesso.
 
+Os Masters agora são pós-processados e gravados diretamente pelo worker no Volume. O coordenador recebe apenas a confirmação e verifica os três arquivos não vazios. O polling reconcilia artefatos gravados após 15 segundos e converte um `GENERATING_MASTER` sem artefatos em `MASTER_WORKER_STALE` após 300 segundos. Isso evita transportar três PNGs pela chamada remota e impede polling infinito após morte do worker.
+
 ## Observabilidade
 
-`InferenceObserver` emite JSON sanitizado com `trace_id` derivado por hash do `job_id`, sem expor job ou UID. Eventos incluem container, cache, load, pipeline, LoRA, CUDA, fila, job, Masters, pós-processamento, escrita, falha e shutdown.
+`InferenceObserver` emite JSON sanitizado em stdout com `trace_id` derivado por hash do `job_id`, sem expor job ou UID. A saída explícita é necessária porque o runtime Modal filtrou `logging.INFO` no primeiro benchmark. Eventos incluem container, cache, load, pipeline, LoRA, CUDA, fila, job, Masters, pós-processamento, escrita, falha e shutdown.
 
 Latências dentro de um processo usam `time.perf_counter()`. O Modal não expõe diretamente no código atual `gpu_billed_seconds`, queue depth ou o instante monotônico comum entre API e worker; esses valores devem vir do painel/telemetria Modal e nunca ser inventados. Os timestamps de `job_queued` e `job_started` permitem calcular espera aproximada no relatório.
 

@@ -41,3 +41,15 @@ def test_observer_emits_only_allowlisted_sanitized_fields():
         "source_bytes": 42,
         "trace_id": "trace123",
     }
+
+
+def test_default_observer_is_visible_on_stdout(capsys):
+    InferenceObserver("trace123").event("worker_ready", {"jobs_in_container": 0})
+
+    line = capsys.readouterr().out.strip()
+    assert line.startswith("modal_inference ")
+    assert json.loads(line.removeprefix("modal_inference ")) == {
+        "event": "worker_ready",
+        "jobs_in_container": 0,
+        "trace_id": "trace123",
+    }

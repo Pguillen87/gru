@@ -2,9 +2,29 @@
 
 ## Estado
 
-**Pronto para planejamento; nenhuma GPU foi executada nesta entrega.**
+**Benchmark development executado em 2026-08-08; staging e production não foram alterados.**
 
-Os valores abaixo marcados como históricos vieram do benchmark anterior e servem apenas para comparação. Eles não são medições do worker persistente.
+Foi usada uma imagem sintética não pessoal de 1024 x 1024, H100, a revisão de cache `64e407a71c14cb60` e o hash de inferência `7ab183e4522e165e`. Modelo, LoRA, scheduler, quatro steps, seeds, prompt, resolução e compressão permaneceram inalterados.
+
+## Resultado real
+
+| Cenário | Cold/Warm | Load + CUDA aproximado | Generate 3 Masters | Worker total | Estado final |
+| --- | --- | ---: | ---: | ---: | --- |
+| Tentativa diagnóstica | Cold | concluído | não iniciado | 96,5 s de chamada | `FAILED`, asset ainda não visível |
+| Benchmark A | Cold | ~40 s | ~7 s | 76,864 s | `AWAITING_MASTER_APPROVAL` |
+| Benchmark B | Warm | 0 s de reload | ~7 s | 19,995 s | `AWAITING_MASTER_APPROVAL` |
+
+O warm foi 73,99% mais rápido que o cold pelo tempo de parede do worker. A meta estrita era `< 20 s`; o resultado de `19,995 s` passou por aproximadamente 5 ms. A inferência consumiu cerca de 7 s nos dois cenários; no warm, aproximadamente 13 s ainda ficam em coordenação, pós-processamento PNG, commit do Volume e atualização de estado.
+
+Custos faturados no relatório horário do Modal:
+
+- app `gru-mascot-development`: `US$ 0,23414625`;
+- preparação efêmera CPU/cache: `US$ 0,02362190`;
+- total development observado: `US$ 0,25776815`.
+
+O teto estimado informado era `US$ 0,20`. Ele foi ultrapassado em `US$ 0,05776815` porque a primeira tentativa consumiu o carregamento H100 antes de falhar por falta de `assets.reload()`. Nenhum teste adicional foi executado depois da confirmação do custo.
+
+Os valores abaixo marcados como históricos vieram do benchmark anterior e servem apenas para comparação.
 
 ## Baseline histórica
 
@@ -13,14 +33,14 @@ Os valores abaixo marcados como históricos vieram do benchmark anterior e serve
 | Primeira tentativa, cache frio e falha | Cold | não segmentado | não concluiu | ~193 s | ~193 s | ~US$ 0,212 estimado histórico |
 | Worker atual, cache preenchido, 3 Masters | Cold por job | ~37–40 s aproximados | ~2–7 s por Master | ~50 s | ~50 s | ~US$ 0,055–0,060 estimado histórico |
 
-## Cenários planejados
+## Cenários restantes
 
 Todos usarão a mesma imagem de benchmark não pessoal e aprovada, exatamente o mesmo hash de configuração e um lote de três Masters.
 
 | Teste | Condição | Jobs | Evidência esperada |
 | --- | --- | ---: | --- |
-| A — Cold | container novo | 1 | cache/load/CUDA/generation/total |
-| B — Warm imediato | mesmo container | 1 | sem novo model load |
+| A — Cold | concluído | 1 | 76,864 s |
+| B — Warm imediato | concluído | 1 | 19,995 s, sem novo model load |
 | C — Warm repetido | mesmo container | 1 | `jobs_in_container=3` e sem reload |
 | D — Scaledown/cold | esperar mais de 45 s | 1 | novo container e novo load |
 
@@ -63,4 +83,4 @@ A tarifa deve ser confirmada no Modal antes do teste. Se a estimativa vigente su
 
 ## Parada obrigatória
 
-O benchmark não deve ser executado até haver autorização explícita do usuário para essa H100, quatro jobs e teto de custo.
+Não executar C, D, staging ou production sem nova autorização explícita. O primeiro lote autorizado terminou e o custo real excedeu a estimativa inicial.

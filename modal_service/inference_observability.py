@@ -58,8 +58,7 @@ class InferenceObserver:
     ) -> None:
         self.trace_id = trace_id
         self._logger = logger or logging.getLogger("gru.modal.inference")
-        if logger is None:
-            self._logger.setLevel(logging.INFO)
+        self._stdout = logger is None
         self._clock = clock
 
     def mark(self) -> float:
@@ -75,10 +74,11 @@ class InferenceObserver:
             if key in ALLOWED_FIELDS and _safe_value(value)
         }
         payload = {"event": _event_name(name), "trace_id": self.trace_id, **safe_fields}
-        self._logger.info(
-            "modal_inference %s",
-            json.dumps(payload, separators=(",", ":"), sort_keys=True),
-        )
+        serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        if self._stdout:
+            print(f"modal_inference {serialized}", flush=True)
+        else:
+            self._logger.info("modal_inference %s", serialized)
 
 
 def _event_name(value: str) -> str:
