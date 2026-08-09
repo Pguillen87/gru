@@ -25,7 +25,9 @@ The Modal app owns asynchronous mascot work only. Android owns the mapping from 
 
 ## Lifecycle
 
-`create -> READY_FOR_GENERATION -> generate Masters -> explicit Master approval -> consistency -> approved six-pose MVP -> result`.
+`create -> READY_FOR_GENERATION -> generate three Masters -> explicit Master approval -> generate twelve-pose visual catalog -> result`.
+
+The catalog contains four immutable options for each Android runtime role: normal, listening, and transcribing. Generation happens once per option. Android downloads and verifies the complete catalog, then atomically promotes only the three user-selected files. The remote job remains the source of truth until that local promotion succeeds.
 
 With the kill switch off, the lifecycle stops honestly at `READY_FOR_GENERATION`. Closing Android does not cancel; it persists `job_id` and resumes polling. Network failure preserves the pending job. Explicit cancellation is confirmed by the server before local state is cleared.
 

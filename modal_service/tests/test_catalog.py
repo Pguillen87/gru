@@ -4,6 +4,7 @@ from modal_service.catalog import (
     MASTER_PROMPT,
     MASTER_PROMPT_VERSION,
     POSE_PROMPT,
+    POSE_OPTIONS,
     validate_pose_choices,
 )
 from modal_service.domain import JobRecord
@@ -41,3 +42,16 @@ def test_pose_choices_require_one_valid_option_per_runtime_role():
     assert validate_pose_choices(choices) == choices
     with pytest.raises(ValueError):
         validate_pose_choices(choices | {"normal": "listening_focus"})
+
+
+def test_visual_catalog_has_four_approved_options_for_each_runtime_role():
+    labels = {
+        role: [option.label for option in POSE_OPTIONS if option.role == role]
+        for role in ("normal", "listening", "transcribing")
+    }
+
+    assert labels == {
+        "normal": ["Pronto e atento", "Relaxado", "Observador", "Espera paciente"],
+        "listening": ["Mão na orelha", "Inclinado para ouvir", "Hang loose ouvindo", "Cabeça inclinada"],
+        "transcribing": ["Escrevendo", "Digitando", "Organizando ideias", "Anotando"],
+    }

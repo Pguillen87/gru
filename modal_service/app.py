@@ -27,7 +27,7 @@ from modal_service.catalog import (
     POSE_PROMPT,
     POSE_PROMPT_VERSION,
     POSE_TEMPLATE_VERSION,
-    pose_option,
+    POSE_OPTIONS,
     validate_pose_choices,
 )
 from modal_service.config import Environment, generation_enabled, limits_for
@@ -751,11 +751,11 @@ def _generate_qwen_poses(
     master_bytes = _asset_path(job.job_id, "masters", f"{job.master_id}.png").read_bytes()
     master = Image.open(BytesIO(master_bytes)).convert("RGB")
     master.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-    role_seeds = {"normal": 100, "listening": 101, "transcribing": 102}
+    option_seeds = {option.option_id: 100 + index for index, option in enumerate(POSE_OPTIONS)}
     outputs: dict[str, bytes] = {}
     try:
-        for role in ("normal", "listening", "transcribing"):
-            option = pose_option(job.pose_choices[role])
+        for option in POSE_OPTIONS:
+            role = option.role
             started = observer.mark()
             observer.event("pose_generation_started", {"pose_role": role, "pose_option": option.option_id})
             generated = pipeline(
@@ -763,13 +763,13 @@ def _generate_qwen_poses(
                 prompt=f"{POSE_PROMPT} Runtime role: {role}. Requested pose: {option.instruction}.",
                 negative_prompt=" ",
                 true_cfg_scale=1.0,
-                generator=torch.Generator("cuda").manual_seed(role_seeds[role]),
+                generator=torch.Generator("cuda").manual_seed(option_seeds[option.option_id]),
                 num_inference_steps=4,
             ).images[0]
             try:
                 buffer = BytesIO()
                 generated.save(buffer, format="PNG")
-                outputs[role] = buffer.getvalue()
+                outputs[option.option_id] = buffer.getvalue()
             finally:
                 generated.close()
             observer.event(
@@ -778,7 +778,7 @@ def _generate_qwen_poses(
                     "generation_ms": observer.elapsed_ms(started),
                     "pose_role": role,
                     "pose_option": option.option_id,
-                    "result_bytes": len(outputs[role]),
+                    "result_bytes": len(outputs[option.option_id]),
                 },
             )
         return outputs
@@ -827,25 +827,25 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
 def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
     from modal_service.image_processing import remove_connected_flat_background
 
-    expected_roles = ("normal", "listening", "transcribing")
-    if set(outputs) != set(expected_roles) or job.master_id is None:
+    expected_options = tuple(POSE_OPTIONS)
+    if set(outputs) != {option.option_id for option in expected_options} or job.master_id is None:
         raise DomainError("Pose generation returned an incomplete result.")
     staging = Path(ASSET_ROOT, "temporary", job.job_id, "poses")
     target = Path(ASSET_ROOT, "poses", job.job_id)
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True, exist_ok=True)
     poses: list[dict[str, object]] = []
-    pose_ids = {"normal": "pose_01", "listening": "pose_02", "transcribing": "pose_03"}
-    for role in expected_roles:
-        pose_id = pose_ids[role]
+    pose_ids: dict[str, str] = {}
+    for index, option in enumerate(expected_options, start=1):
+        pose_id = f"pose_{index:02d}"
+        pose_ids[option.option_id] = pose_id
         filename = f"{pose_id}.png"
-        content = remove_connected_flat_background(outputs[role])
+        content = remove_connected_flat_background(outputs[option.option_id])
         (staging / filename).write_bytes(content)
-        option = pose_option(job.pose_choices[role])
         poses.append(
             {
                 "poseId": pose_id,
-                "runtimeRole": role,
+                "runtimeRole": option.role,
                 "optionId": option.option_id,
                 "name": option.label,
                 "fileName": filename,
@@ -858,9 +858,9 @@ def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
         "version": POSE_TEMPLATE_VERSION,
         "modelVersion": job.model_version,
         "promptVersion": POSE_PROMPT_VERSION,
-        "idlePoseId": pose_ids["normal"],
-        "listeningPoseId": pose_ids["listening"],
-        "transcribingPoseId": pose_ids["transcribing"],
+        "idlePoseId": pose_ids[DEFAULT_POSE_CHOICES["normal"]],
+        "listeningPoseId": pose_ids[DEFAULT_POSE_CHOICES["listening"]],
+        "transcribingPoseId": pose_ids[DEFAULT_POSE_CHOICES["transcribing"]],
         "poses": poses,
     }
     (staging / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
@@ -875,7 +875,7 @@ def _verify_pose_outputs(job: JobRecord) -> None:
     if not manifest.is_file():
         raise DomainError("Pose result metadata is unavailable.")
     payload = json.loads(manifest.read_text(encoding="utf-8"))
-    expected = {"pose_01", "pose_02", "pose_03"}
+    expected = {f"pose_{index:02d}" for index in range(1, len(POSE_OPTIONS) + 1)}
     actual = {str(item.get("poseId")) for item in payload.get("poses", [])}
     if actual != expected:
         raise DomainError("Pose outputs are incomplete.")

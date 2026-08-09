@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 
 MASTER_PROMPT_VERSION = "master-v3-identity"
-POSE_PROMPT_VERSION = "pose-v3-selected-role"
-POSE_TEMPLATE_VERSION = "poses-v2-user-selected"
+POSE_PROMPT_VERSION = "pose-v4-visual-catalog"
+POSE_TEMPLATE_VERSION = "poses-v3-visual-catalog"
 
 MASTER_PROMPT = (
     "Create a clean, friendly, full-body 2D cartoon mascot. Use the supplied photo only as identity evidence, "
@@ -43,18 +43,18 @@ class PoseOption:
 
 
 POSE_OPTIONS = (
-    PoseOption("normal_attentive", "normal", "Atenta", "neutral upright stance, attentive forward gaze, calm confidence"),
-    PoseOption("normal_relaxed", "normal", "Relaxada", "relaxed balanced stance, soft friendly expression"),
-    PoseOption("normal_curious", "normal", "Curiosa", "curious slight head tilt, open friendly expression"),
-    PoseOption("normal_firm", "normal", "Firme", "grounded confident stance, composed determined expression"),
-    PoseOption("listening_focus", "listening", "Foco atento", "lean slightly toward the sound, attentive eyes, clearly listening"),
-    PoseOption("listening_process", "listening", "Processando", "still focused listening pose, subtle thoughtful concentration"),
-    PoseOption("listening_natural", "listening", "Gesto natural", "natural listening gesture with one hand, paw, wing, or ear oriented toward sound as anatomically appropriate"),
-    PoseOption("listening_ready", "listening", "Pronta", "alert forward-facing listening posture, ready to respond"),
-    PoseOption("transcribing_notes", "transcribing", "Anotação", "actively recording information with a focused expression and a simple writing gesture"),
-    PoseOption("transcribing_thought", "transcribing", "Pensamento profundo", "thoughtful processing pose, concentrated gaze, composed body"),
-    PoseOption("transcribing_fast", "transcribing", "Digitação ágil", "energetic but clean transcription gesture, focused and precise"),
-    PoseOption("transcribing_active", "transcribing", "Escuta ativa", "simultaneously listening and transcribing, attentive expression and purposeful gesture"),
+    PoseOption("normal_attentive", "normal", "Pronto e atento", "upright ready stance, attentive forward gaze, calm confidence"),
+    PoseOption("normal_relaxed", "normal", "Relaxado", "relaxed balanced stance, soft friendly expression, resting naturally"),
+    PoseOption("normal_curious", "normal", "Observador", "observing the surroundings with an attentive gaze and composed posture"),
+    PoseOption("normal_firm", "normal", "Espera paciente", "patient waiting pose, calm body, gentle expectant expression"),
+    PoseOption("listening_focus", "listening", "Mão na orelha", "clear listening gesture with hand, paw, wing, or natural ear oriented toward sound, anatomically appropriate"),
+    PoseOption("listening_process", "listening", "Inclinado para ouvir", "leaning the upper body slightly toward the sound with attentive eyes"),
+    PoseOption("listening_natural", "listening", "Hang loose ouvindo", "friendly hang-loose listening gesture adapted naturally to the character anatomy"),
+    PoseOption("listening_ready", "listening", "Cabeça inclinada", "head tilted toward the sound, alert and clearly listening"),
+    PoseOption("transcribing_notes", "transcribing", "Escrevendo", "writing clearly with a simple pencil and note surface, focused expression"),
+    PoseOption("transcribing_fast", "transcribing", "Digitando", "typing with focused energy on a simple compact keyboard, clean silhouette"),
+    PoseOption("transcribing_thought", "transcribing", "Organizando ideias", "organizing ideas thoughtfully with a composed pose and subtle visual planning gesture"),
+    PoseOption("transcribing_active", "transcribing", "Anotando", "taking concise notes with an attentive expression and purposeful writing gesture"),
 )
 
 
