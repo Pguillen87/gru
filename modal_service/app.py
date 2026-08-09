@@ -1031,6 +1031,8 @@ def api():
             "generation_enabled": GPU_GENERATION_ENABLED,
             "templates_installed": _templates_installed(),
             "model_configured": True,
+            "pose_catalog_size": len(POSE_OPTIONS),
+            "pose_catalog_version": POSE_TEMPLATE_VERSION,
         }
 
     @service.post("/v1/mascot/jobs", status_code=202)
