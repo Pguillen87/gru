@@ -6,7 +6,7 @@ Gru é um companheiro Android para ditar texto com clareza operacional, presenç
 
 ## Navigation
 
-Navigation Bar inferior: **Permissões**, **Voz**, **Ligar/Desligar**, **Mascotes** e **Criar mascote**. O item central é maior e abre Controle; nunca alterna o runtime por toque na barra. Em fonte 200%, `Criar mascote` pode reflow em duas linhas, sem abreviar o significado.
+Navigation Bar inferior: **Permissões**, **Voz**, **Ligar/Desligar**, **Mascotes** e **Puleiro do Gru**. O item central é maior e abre Controle; nunca alterna o runtime por toque na barra. Em fonte 200%, `Puleiro do Gru` pode reflow em duas linhas, sem abreviar o significado.
 
 ## Tokens and components
 
@@ -21,7 +21,7 @@ Navigation Bar inferior: **Permissões**, **Voz**, **Ligar/Desligar**, **Mascote
 - Voz: Online — Groq e Privado — no aparelho, com custos/privacidade explícitos e estados reais de chave/modelo.
 - Controle: Gru ligado, desligado, bloqueado ou em configuração; ação deliberada Ligar/Desligar.
 - Mascotes: atual, meus mascotes, oficiais, aparência e arquivados futuro.
-- Criar mascote: jornada de uma decisão por etapa; pagamento e poses prévias são propostas futuras.
+- Puleiro do Gru: entrada simples por código, prévia antes do download e estados honestos. A criação de mascotes acontece futuramente na Web; o Android instala apenas três poses prontas.
 
 ## Mascot, motion and accessibility
 

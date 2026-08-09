@@ -4,6 +4,8 @@ Guia de arquitetura e manutenção do frontend. A referência visual normativa e
 
 ## 1. Escopo
 
+> Direção vigente: o Android não gera mais mascotes. O quinto destino é **Puleiro do Gru** e importa por código um pacote pronto com exatamente três poses. As seções históricas sobre criação por foto permanecem abaixo apenas como registro da integração desacoplada e não descrevem uma rota acessível na interface atual.
+
 O frontend é um app Android em Kotlin/Jetpack Compose com um serviço de acessibilidade que desenha o pet flutuante sobre o teclado. Ele não substitui o teclado e não mantém histórico de ditado.
 
 Responsabilidades da UI:
@@ -11,7 +13,7 @@ Responsabilidades da UI:
 - onboarding e escolha do motor de transcrição;
 - permissões, status operacional e configuração;
 - seleção de mascote built-in ou personalizado;
-- criação assíncrona de mascote por foto;
+- importação de mascote pronto por código;
 - persistência local, retomada e fallback offline;
 - resolução visual do pet nos estados de execução.
 
@@ -30,6 +32,8 @@ Fora do escopo da UI:
 | Geral | `GruGeneralScreen.kt` | Estado geral, permissões e saúde do overlay. |
 | Transcrição | `GruTranscriptionScreen.kt` | Online/Groq, Privado/Whisper e configuração do modelo. |
 | Mascote | `GruMascotScreen.kt` | Galerias, aparência, criação, aprovação e recuperação. |
+| Puleiro | `GruPerchScreen.kt` | Código, estados de resolução, confirmação e instalação. |
+| Importação | `mascot/importing/` | Contrato v1, resolvedor, downloader, verificador, coordenador e telemetria. |
 | Preferências | `GruPreferences.kt` | Estado persistente pequeno: seleção, tamanho, opacidade e job pendente. |
 | Fonte visual | `mascot/MascotVisualResolver.kt` | Mapeia fonte + estado de runtime para atlas/arquivo local. |
 | Pacotes locais | `mascot/CustomMascotStore.kt` | Manifest, checksum, staging, promoção atômica, nomes e remoção. |
@@ -255,6 +259,16 @@ Antes de alterar uma tela, validar:
 5. mascote atual preservado quando uma criação nova falhar.
 
 ## 12. Regras de evolução
+
+### Puleiro do Gru
+
+- `MascotImportCode` normaliza a entrada sem expor a composição do catálogo remoto.
+- `MascotImportManifest` exige `schemaVersion = 1`, identidade estável e as funções `NORMAL`, `LISTENING` e `TRANSCRIBING`.
+- `UnavailableMascotCodeResolver` é a implementação de produção enquanto não houver endpoint real; a UI informa que o Puleiro está em preparação.
+- Downloads aceitam somente HTTPS, MIME de imagem permitido, limite de 8 MiB por asset, bytes esperados, SHA-256 e imagem decodificável.
+- As três poses são verificadas em memória e promovidas em conjunto pelo `CustomMascotStore`; falha em uma impede instalação parcial.
+- Pacotes locais antigos continuam legíveis. Favorito é sidecar local e não regrava imagens.
+- Remover o mascote ativo seleciona Faísca antes de apagar o pacote; built-ins nunca oferecem remoção.
 
 - Não mover lógica de criação para `GruActivity`.
 - Não duplicar seleção/tamanho/opacidade em Geral e Mascote.
