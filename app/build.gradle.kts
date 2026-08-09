@@ -160,6 +160,7 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.auth)
     debugImplementation(libs.firebase.appcheck.debug)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     releaseImplementation(libs.firebase.appcheck.playintegrity)
 
     testImplementation(libs.kotlin.test.junit5)
@@ -167,4 +168,6 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
     androidTestImplementation(libs.androidx.test.ext)
     androidTestImplementation(libs.androidx.test.espresso.core)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
 }

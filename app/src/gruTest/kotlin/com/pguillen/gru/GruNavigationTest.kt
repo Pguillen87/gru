@@ -13,16 +13,23 @@ class GruNavigationTest {
                 GruDestination.VOICE,
                 GruDestination.CONTROL,
                 GruDestination.MASCOTS,
-                GruDestination.CREATE_MASCOT,
+                GruDestination.PERCH,
             ),
             GruDestination.entries,
         )
         assertFalse(GruDestination.entries.any { it.name == "CONTACTS" })
+        assertEquals(R.string.gru__nav_perch, GruDestination.PERCH.label)
     }
 
     @Test
     fun centralDestinationIsNavigationOnly() {
         assertEquals(2, GruDestination.CONTROL.ordinal)
         assertEquals(R.string.gru__nav_control, GruDestination.CONTROL.label)
+    }
+
+    @Test
+    fun mainNavigationRemainsAfterOnboardingWhileEngineIsPreparing() {
+        assertEquals(true, shouldShowMainNavigation(onboardingCompleted = true))
+        assertEquals(false, shouldShowMainNavigation(onboardingCompleted = false))
     }
 }
