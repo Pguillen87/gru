@@ -60,6 +60,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.pguillen.gru.dictation.GruDictation
 import com.pguillen.gru.dictation.TranscriptionEngine
@@ -82,6 +85,7 @@ internal fun GruTranscriptionScreen(
     val modelState by manager.state.collectAsState()
     val selected = requested ?: current ?: TranscriptionEngine.ONLINE_GROQ
     var editKey by remember { mutableStateOf(false) }
+    var showGroqTutorial by remember { mutableStateOf(false) }
     val scrollState = if (firstUse) remember { ScrollState(0) } else rememberScrollState()
 
     Column(
@@ -93,7 +97,12 @@ internal fun GruTranscriptionScreen(
             title = stringResource(R.string.gru__voice_header),
             summary = stringResource(R.string.gru__voice_header_summary),
         )
-        VoiceModeSelector(selected = selected) { engine ->
+        VoiceModeSelector(
+            selected = selected,
+            current = current,
+            requested = requested,
+            privateModelState = modelState,
+        ) { engine ->
             val activated = prefs.selectEngine(engine, modelState is WhisperModelState.Installed)
             if (engine == TranscriptionEngine.ONLINE_GROQ && !activated) editKey = true
             if (activated) onConfigured()
@@ -135,7 +144,7 @@ internal fun GruTranscriptionScreen(
             ) onConfigured()
         }
         if (requested == TranscriptionEngine.ONLINE_GROQ || current == TranscriptionEngine.ONLINE_GROQ) {
-            GroqSettings(apiKey, onEdit = { editKey = true }, onRemove = {
+            GroqSettings(apiKey, onTutorial = { showGroqTutorial = true }, onEdit = { editKey = true }, onRemove = {
                 prefs.removeGroqApiKey()
                 if (current == TranscriptionEngine.ONLINE_GROQ) {
                     prefs.clearActiveEngine("groq_key_removed")
@@ -174,10 +183,20 @@ internal fun GruTranscriptionScreen(
             }
         },
     )
+    if (showGroqTutorial) GroqTutorialDialog(
+        onDismiss = { showGroqTutorial = false },
+        onPaste = { showGroqTutorial = false; editKey = true },
+    )
 }
 
 @Composable
-private fun VoiceModeSelector(selected: TranscriptionEngine, onSelect: (TranscriptionEngine) -> Unit) {
+private fun VoiceModeSelector(
+    selected: TranscriptionEngine,
+    current: TranscriptionEngine?,
+    requested: TranscriptionEngine?,
+    privateModelState: WhisperModelState,
+    onSelect: (TranscriptionEngine) -> Unit,
+) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(28.dp),
@@ -190,13 +209,20 @@ private fun VoiceModeSelector(selected: TranscriptionEngine, onSelect: (Transcri
                 TranscriptionEngine.PRIVATE_LOCAL to R.string.gru__voice_private_short,
             ).forEach { (engine, label) ->
                 val active = selected == engine
+                val visualState = voiceModeVisualState(engine, current, requested, privateModelState)
+                val accent = when (visualState) {
+                    VoiceModeVisualState.ACTIVE -> GruColors.Success
+                    VoiceModeVisualState.PREPARING -> GruColors.Gold
+                    VoiceModeVisualState.ERROR -> GruColors.Danger
+                    VoiceModeVisualState.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
                 Surface(
                     onClick = { onSelect(engine) },
-                    color = if (active) GruColors.Success.copy(alpha = 0.14f) else androidx.compose.ui.graphics.Color.Transparent,
-                    contentColor = if (active) GruColors.Success else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (active) accent.copy(alpha = 0.14f) else androidx.compose.ui.graphics.Color.Transparent,
+                    contentColor = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
                     shape = RoundedCornerShape(22.dp),
-                    border = if (active) BorderStroke(1.dp, GruColors.Success.copy(alpha = 0.65f)) else null,
-                    modifier = Modifier.weight(1f),
+                    border = if (active) BorderStroke(1.dp, accent.copy(alpha = 0.65f)) else null,
+                    modifier = Modifier.weight(1f).semantics { this.selected = active; role = Role.RadioButton },
                 ) {
                     Text(
                         stringResource(label),
@@ -208,6 +234,20 @@ private fun VoiceModeSelector(selected: TranscriptionEngine, onSelect: (Transcri
             }
         }
     }
+}
+
+internal enum class VoiceModeVisualState { ACTIVE, PREPARING, ERROR, NEUTRAL }
+
+internal fun voiceModeVisualState(
+    engine: TranscriptionEngine,
+    current: TranscriptionEngine?,
+    requested: TranscriptionEngine?,
+    privateModelState: WhisperModelState,
+): VoiceModeVisualState = when {
+    current == engine -> VoiceModeVisualState.ACTIVE
+    requested == engine && engine == TranscriptionEngine.PRIVATE_LOCAL && privateModelState is WhisperModelState.Error -> VoiceModeVisualState.ERROR
+    requested == engine -> VoiceModeVisualState.PREPARING
+    else -> VoiceModeVisualState.NEUTRAL
 }
 
 @Composable
@@ -262,7 +302,7 @@ private fun EngineChoice(
 }
 
 @Composable
-private fun GroqSettings(apiKey: String, onEdit: () -> Unit, onRemove: () -> Unit) {
+private fun GroqSettings(apiKey: String, onTutorial: () -> Unit, onEdit: () -> Unit, onRemove: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionTitle(R.string.gru__groq_settings)
         Text(
@@ -271,6 +311,9 @@ private fun GroqSettings(apiKey: String, onEdit: () -> Unit, onRemove: () -> Uni
             fontWeight = FontWeight.SemiBold,
         )
         Text(stringResource(R.string.gru__groq_privacy), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(onClick = onTutorial, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.gru__groq_tutorial_action))
+        }
         Button(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(if (apiKey.isBlank()) R.string.gru__add_key else R.string.gru__change_key))
         }
@@ -279,6 +322,29 @@ private fun GroqSettings(apiKey: String, onEdit: () -> Unit, onRemove: () -> Uni
             Text(stringResource(R.string.gru__remove_key), modifier = Modifier.padding(start = 8.dp))
         }
     }
+}
+
+@Composable
+private fun GroqTutorialDialog(onDismiss: () -> Unit, onPaste: () -> Unit) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.gru__groq_tutorial_title)) },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.gru__groq_tutorial_summary))
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(stringResource(R.string.gru__video_placeholder), Modifier.padding(20.dp)) }
+            Text(stringResource(R.string.gru__groq_tutorial_steps))
+            OutlinedButton(onClick = { openGroqKeys(context) }, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.gru__open_groq_site))
+            }
+        } },
+        confirmButton = { TextButton(onClick = onPaste) { Text(stringResource(R.string.gru__paste_key)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } },
+    )
 }
 
 @Composable

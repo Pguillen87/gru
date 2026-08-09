@@ -1,11 +1,7 @@
 package com.pguillen.gru
 
 import android.graphics.BitmapFactory
-import android.net.Uri
 import android.content.Context
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,29 +18,26 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -60,261 +53,63 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import com.pguillen.gru.dictation.TranscriptionEngine
-import com.pguillen.gru.local.WhisperModelManager
-import com.pguillen.gru.local.WhisperModelState
 import com.pguillen.gru.mascot.MascotSource
-import com.pguillen.gru.mascot.MascotApi
-import com.pguillen.gru.mascot.FirebaseMascotAuthTokenProvider
-import com.pguillen.gru.mascot.FirebaseMascotAppCheckTokenProvider
-import com.pguillen.gru.mascot.MascotCreationState
-import com.pguillen.gru.mascot.MascotFailureRecovery
-import com.pguillen.gru.mascot.MascotRepository
-import com.pguillen.gru.mascot.mascotErrorMessage
-import com.pguillen.gru.mascot.toCreationState
-import com.pguillen.gru.mascot.toMascotFailure
-import com.pguillen.gru.mascot.MasterReference
 import com.pguillen.gru.mascot.CustomMascotStore
 import com.pguillen.gru.mascot.CustomMascotEntry
-import com.pguillen.gru.mascot.MascotTelemetry
-import com.pguillen.gru.mascot.prepareMascotPhoto
 import com.pguillen.gru.mascot.normalizeDisplayName
-
-internal enum class MascotFocus { LIBRARY, CREATE }
 
 @Composable
 internal fun GruMascotScreen(
     prefs: GruPreferences,
-    permissionRefresh: Int,
-    focus: MascotFocus = MascotFocus.LIBRARY,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val source by prefs.mascotSource.collectAsState()
-    val enabled by prefs.enabled.collectAsState()
     val size by prefs.size.collectAsState()
     val opacity by prefs.opacity.collectAsState()
-    val engine by prefs.engine.collectAsState()
-    val key by prefs.groqApiKeyState.collectAsState()
-    val modelState by WhisperModelManager.get(context).state.collectAsState()
-    val ready = isGruAccessibilityEnabled(context) && hasPermission(context, android.Manifest.permission.RECORD_AUDIO) && when (engine) {
-        TranscriptionEngine.ONLINE_GROQ -> key.isNotBlank()
-        TranscriptionEngine.PRIVATE_LOCAL -> modelState is WhisperModelState.Installed
-        null -> false
-    }
-    var photo by remember { mutableStateOf<Uri?>(null) }
-    var creation by remember { mutableStateOf<MascotCreationState>(MascotCreationState.Idle) }
-    var selectedMasterId by remember { mutableStateOf<String?>(null) }
-    var masterPreviews by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
-    var creationMascotName by remember { mutableStateOf("") }
     var editTarget by remember { mutableStateOf<CustomMascotEntry?>(null) }
+    var removeTarget by remember { mutableStateOf<CustomMascotEntry?>(null) }
     var editName by remember { mutableStateOf("") }
     val customStore = remember { CustomMascotStore(context) }
     var customMascots by remember { mutableStateOf(customStore.entries()) }
-    val scope = rememberCoroutineScope()
-    val repository = remember { MascotRepository(MascotApi(FirebaseMascotAuthTokenProvider(), FirebaseMascotAppCheckTokenProvider()), prefs, customStore) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) {
-        photo = it
-        creation = if (it == null) MascotCreationState.Idle else MascotCreationState.PhotoSelected
-    }
-    LaunchedEffect(Unit) {
-        runCatching { repository.resume() }.onSuccess { job ->
-            customMascots = repository.customMascots()
-            if (job != null) {
-                creation = job.toCreationState()
-                if (job.state in setOf("FAILED", "CANCELED")) repository.clearPending()
-            }
-        }.onFailure { creation = it.toMascotFailure(prefs.pendingMascotJobId.value) }
-    }
-    val tracked = creation as? MascotCreationState.Tracking
-    LaunchedEffect(tracked?.job?.jobId) {
-        val jobId = tracked?.job?.jobId ?: return@LaunchedEffect
-        var interval = 3_000L
-        while (true) {
-            delay(interval)
-            val job = runCatching { repository.resume() }.getOrElse { error -> creation = error.toMascotFailure(jobId); return@LaunchedEffect }
-                ?: return@LaunchedEffect
-            creation = job.toCreationState()
-            if (job.state in setOf("FAILED", "CANCELED")) repository.clearPending()
-            if (job.state in setOf("COMPLETED", "FAILED", "CANCELED", "AWAITING_MASTER_APPROVAL")) return@LaunchedEffect
-            interval = (interval * 2).coerceAtMost(15_000L)
-        }
-    }
-    val awaiting = creation as? MascotCreationState.AwaitingMasterApproval
-    val posePending = creation as? MascotCreationState.PosePreparationPending
-    val previewJob = awaiting?.job ?: posePending?.job
-    LaunchedEffect(previewJob?.jobId, previewJob?.masters) {
-        val job = previewJob ?: return@LaunchedEffect
-        val masters = job.masters
-        selectedMasterId = if (awaiting != null) null else job.masterId
-        if (awaiting != null) {
-            creationMascotName = ""
-        }
-        masterPreviews = emptyMap()
-        masterPreviews = masters.mapNotNull { reference ->
-            runCatching {
-                val bytes = repository.downloadMaster(reference)
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-            }
-                .getOrNull()?.let { reference.id to it }
-        }.toMap()
-    }
-    val installing = creation as? MascotCreationState.InstallingMascot
-    val installFailureMessage = stringResource(R.string.gru__mascot_install_failed)
-    LaunchedEffect(installing?.jobId) {
-        val jobId = installing?.jobId ?: return@LaunchedEffect
-        creation = runCatching { repository.installCompletedMascot(jobId) }
-            .fold(
-                onSuccess = { installed ->
-                    if (installed) MascotCreationState.Completed
-                    else MascotCreationState.InstallFailed(
-                        jobId,
-                        installFailureMessage,
-                    )
-                },
-                onFailure = {
-                    MascotCreationState.InstallFailed(
-                        jobId,
-                        installFailureMessage,
-                    )
-                },
-            )
-    }
     val selectedCustom = source as? MascotSource.Custom
     Column(
         modifier.clipToBounds().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        if (focus == MascotFocus.LIBRARY) {
-            GruBrandBar()
-            Text(stringResource(R.string.gru__mascots_title), style = MaterialTheme.typography.headlineMedium)
-            MascotPreview(
-                source, size, opacity, customStore,
-                customMascots.firstOrNull { it.poseSetId == selectedCustom?.poseSetId }?.displayName,
-            )
-            Text(stringResource(R.string.gru__my_mascots), style = MaterialTheme.typography.titleLarge)
-            if (customMascots.isEmpty()) {
-                Text(stringResource(R.string.gru__my_mascots_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                Text(stringResource(R.string.gru__my_mascots_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                CustomMascotGallery(
-                    selected = source,
-                    customMascots = customMascots,
-                    selectCustom = { entry -> prefs.selectCustomMascot(entry.poseSetId, entry.masterId) },
-                    editCustom = { entry ->
-                        editTarget = entry
-                        editName = entry.displayName.orEmpty()
-                    },
-                )
-            }
-            Text(stringResource(R.string.gru__gru_mascots), style = MaterialTheme.typography.titleLarge)
-            BuiltInPicker(source, prefs::setPet)
+        GruBrandBar()
+        Text(stringResource(R.string.gru__mascots_title), style = MaterialTheme.typography.headlineMedium)
+        MascotPreview(
+            source, size, opacity, customStore,
+            customMascots.firstOrNull { it.poseSetId == selectedCustom?.poseSetId }?.displayName,
+        )
+        Text(stringResource(R.string.gru__my_mascots), style = MaterialTheme.typography.titleLarge)
+        if (customMascots.isEmpty()) {
+            Text(stringResource(R.string.gru__my_mascots_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            GruBrandBar()
-            if (creation == MascotCreationState.Idle) {
-                Image(
-                    painter = painterResource(R.drawable.gru_brand_master),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxWidth().height(220.dp),
-                )
-            }
-            Text(
-                stringResource(R.string.gru__create_mascot),
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-            Text(
-                stringResource(R.string.gru__create_mascot_summary),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
+            Text(stringResource(R.string.gru__my_mascots_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            CustomMascotGallery(
+                selected = source,
+                customMascots = customMascots,
+                selectCustom = { entry -> prefs.selectCustomMascot(entry.poseSetId, entry.masterId) },
+                editCustom = { entry -> editTarget = entry; editName = entry.displayName.orEmpty() },
+                toggleFavorite = { entry ->
+                    if (customStore.setFavorite(entry.poseSetId, !entry.favorite)) customMascots = customStore.entries()
+                },
+                removeCustom = { removeTarget = it },
             )
         }
-        if (focus == MascotFocus.CREATE) MascotCreationPanel(
-            photo = photo,
-            state = creation,
-            onPick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-            onDiscardPhoto = { photo = null; creation = MascotCreationState.Idle; repository.clearPending() },
-            onUsePhoto = { selected -> scope.launch {
-                creation = MascotCreationState.Submitting
-                val started = MascotTelemetry.mark()
-                runCatching {
-                    val originalContentType = context.contentResolver.getType(selected) ?: "unknown"
-                    val photo = context.prepareMascotPhoto(selected)
-                    MascotTelemetry.info(
-                        "photo_prepare", started,
-                        mapOf(
-                            "outcome" to "success",
-                            "original_content_type" to originalContentType,
-                            "upload_content_type" to photo.contentType,
-                            "image_bytes" to photo.bytes.size,
-                            "width" to photo.width,
-                            "height" to photo.height,
-                        ),
-                    )
-                    repository.create(photo.bytes, photo.contentType)
-                }
-                    .onSuccess { creation = it.toCreationState() }
-                    .onFailure {
-                        MascotTelemetry.failure("submit_flow", started, it)
-                        creation = it.toMascotFailure(prefs.pendingMascotJobId.value)
-                    }
-            } },
-            selectedMasterId = selectedMasterId,
-            masterPreviews = masterPreviews,
-            onSelectMaster = { selectedMasterId = it },
-            mascotName = creationMascotName,
-            onMascotNameChange = { creationMascotName = it.take(32) },
-            onApprove = { masterId, name -> scope.launch {
-                val awaiting = creation as? MascotCreationState.AwaitingMasterApproval ?: return@launch
-                creation = MascotCreationState.Submitting
-                runCatching { repository.approve(awaiting.job.jobId, masterId, name) }
-                    .onSuccess {
-                        customMascots = repository.customMascots()
-                        creation = it.toCreationState()
-                    }
-                    .onFailure { creation = it.toMascotFailure(awaiting.job.jobId) }
-            } },
-            onRetryTracking = { scope.launch {
-                val jobId = prefs.pendingMascotJobId.value
-                runCatching { repository.resume() }
-                    .onSuccess { job -> creation = job?.toCreationState() ?: MascotCreationState.Idle }
-                    .onFailure { creation = it.toMascotFailure(jobId) }
-            } },
-            onStartGeneration = { jobId -> scope.launch {
-                creation = MascotCreationState.Submitting
-                runCatching { repository.startMasterGeneration(jobId) }
-                    .onSuccess { creation = it.toCreationState() }
-                    .onFailure { creation = it.toMascotFailure(jobId) }
-            } },
-            onRetryInstall = { jobId -> creation = MascotCreationState.InstallingMascot(jobId) },
-            onCreateAnother = {
-                repository.clearPending()
-                photo = null
-                creation = MascotCreationState.Idle
-                picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-            },
-            onCancelCreation = { scope.launch {
-                val jobId = prefs.pendingMascotJobId.value ?: return@launch
-                creation = MascotCreationState.Canceling
-                runCatching { repository.cancel(jobId) }
-                    .onSuccess { creation = it.toCreationState() }
-                    .onFailure { creation = MascotCreationState.CancelPending(jobId) }
-            } },
-        )
-        if (focus == MascotFocus.LIBRARY) {
-            Text(stringResource(R.string.gru__appearance), style = MaterialTheme.typography.titleLarge)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GruPetSize.entries.forEach { option -> FilterChip(option == size, { prefs.setSize(option) }, { Text(stringResource(sizeLabel(option))) }) }
-            }
-            Text(stringResource(R.string.gru__opacity, opacity))
-            Slider(opacity.toFloat(), { prefs.setOpacity(it.toInt()) }, valueRange = 40f..100f, steps = 5)
-            if (source is MascotSource.Custom) {
-                Text(stringResource(R.string.gru__poses), style = MaterialTheme.typography.titleLarge)
-                Text(stringResource(R.string.gru__poses_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        Text(stringResource(R.string.gru__gru_mascots), style = MaterialTheme.typography.titleLarge)
+        BuiltInPicker(source, prefs::setPet)
+        Text(stringResource(R.string.gru__appearance), style = MaterialTheme.typography.titleLarge)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GruPetSize.entries.forEach { option -> FilterChip(option == size, { prefs.setSize(option) }, { Text(stringResource(sizeLabel(option))) }) }
+        }
+        Text(stringResource(R.string.gru__opacity, opacity))
+        Slider(opacity.toFloat(), { prefs.setOpacity(it.toInt()) }, valueRange = 40f..100f, steps = 5)
+        if (source is MascotSource.Custom) {
+            Text(stringResource(R.string.gru__poses), style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.gru__poses_summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(12.dp))
     }
@@ -332,6 +127,37 @@ internal fun GruMascotScreen(
             },
         )
     }
+    removeTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { removeTarget = null },
+            title = { Text(stringResource(R.string.gru__remove_mascot_title)) },
+            text = { Text(stringResource(R.string.gru__remove_mascot_summary)) },
+            confirmButton = { TextButton(onClick = {
+                if (removeImportedMascotSafely(
+                        source = source,
+                        entry = target,
+                        selectFallback = { prefs.setPet(GruPet.FAISCA) },
+                        remove = customStore::remove,
+                    )
+                ) customMascots = customStore.entries()
+                removeTarget = null
+            }) { Text(stringResource(R.string.gru__remove_imported_mascot)) } },
+            dismissButton = { TextButton(onClick = { removeTarget = null }) { Text(stringResource(android.R.string.cancel)) } },
+        )
+    }
+}
+
+internal fun isActiveCustomMascot(source: MascotSource, entry: CustomMascotEntry): Boolean =
+    source == MascotSource.Custom(entry.poseSetId, entry.masterId)
+
+internal fun removeImportedMascotSafely(
+    source: MascotSource,
+    entry: CustomMascotEntry,
+    selectFallback: () -> Unit,
+    remove: (String) -> Boolean,
+): Boolean {
+    if (isActiveCustomMascot(source, entry)) selectFallback()
+    return remove(entry.poseSetId)
 }
 
 @Composable private fun MascotPreview(source: MascotSource, size: GruPetSize, opacity: Int, store: CustomMascotStore, customName: String?) {
@@ -373,6 +199,8 @@ internal fun GruMascotScreen(
     customMascots: List<CustomMascotEntry>,
     selectCustom: (CustomMascotEntry) -> Unit,
     editCustom: (CustomMascotEntry) -> Unit,
+    toggleFavorite: (CustomMascotEntry) -> Unit,
+    removeCustom: (CustomMascotEntry) -> Unit,
 ) {
     val cards = customMascots.mapIndexed { index, entry -> entry to (index + 1) }
     cards.chunked(3).forEach { row ->
@@ -395,12 +223,23 @@ internal fun GruMascotScreen(
                             label = entry.displayName ?: stringResource(R.string.gru__personalized_mascot_number, number),
                             modifier = Modifier.fillMaxWidth(),
                         )
-                            IconButton(
-                                onClick = { editCustom(entry) },
-                                modifier = Modifier.align(Alignment.TopEnd).size(36.dp),
-                            ) {
-                                Icon(Icons.Default.Edit, stringResource(R.string.gru__edit_mascot_name))
+                    if (entry.source == "code_import") {
+                        Row(Modifier.align(Alignment.TopEnd)) {
+                            IconButton(onClick = { toggleFavorite(entry) }, modifier = Modifier.size(48.dp)) {
+                                Icon(
+                                    if (entry.favorite) Icons.Default.Star else Icons.Outlined.StarOutline,
+                                    stringResource(if (entry.favorite) R.string.gru__remove_favorite else R.string.gru__add_favorite),
+                                )
                             }
+                            IconButton(onClick = { removeCustom(entry) }, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Default.Delete, stringResource(R.string.gru__remove_imported_mascot))
+                            }
+                        }
+                    } else {
+                        IconButton(onClick = { editCustom(entry) }, modifier = Modifier.align(Alignment.TopEnd).size(48.dp)) {
+                            Icon(Icons.Default.Edit, stringResource(R.string.gru__edit_mascot_name))
+                        }
+                    }
                 }
             }
             repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
@@ -468,182 +307,6 @@ internal fun GruMascotScreen(
 
 @Composable private fun rememberFileBitmap(path: String?): ImageBitmap? = remember(path) {
     path?.let(BitmapFactory::decodeFile)?.asImageBitmap()
-}
-
-@Composable private fun MascotCreationPanel(
-    photo: Uri?, state: MascotCreationState, onPick: () -> Unit, onDiscardPhoto: () -> Unit,
-    onUsePhoto: (Uri) -> Unit, selectedMasterId: String?, masterPreviews: Map<String, ImageBitmap>,
-    onSelectMaster: (String) -> Unit, mascotName: String, onMascotNameChange: (String) -> Unit,
-    onApprove: (String, String) -> Unit, onRetryTracking: () -> Unit,
-    onStartGeneration: (String) -> Unit,
-    onRetryInstall: (String) -> Unit,
-    onCreateAnother: () -> Unit,
-    onCancelCreation: () -> Unit,
-) {
-    val retrySubmissionOrTracking = {
-        if (photo != null) onUsePhoto(photo) else onRetryTracking()
-    }
-    when (state) {
-        MascotCreationState.Idle -> Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__choose_photo)) }
-        MascotCreationState.PhotoSelected -> Unit
-        MascotCreationState.Submitting -> LoadingMessage(R.string.gru__mascot_submitting)
-        is MascotCreationState.Tracking -> {
-            LoadingMessage(R.string.gru__mascot_tracking)
-            OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
-        }
-        is MascotCreationState.GenerationPaused -> {
-            Text(
-                stringResource(R.string.gru__mascot_waiting_generation),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Button(onClick = { onStartGeneration(state.job.jobId) }, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.gru__continue_creation))
-            }
-            OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
-        }
-        is MascotCreationState.AwaitingMasterApproval -> {
-            MasterChoices(state.job.masters, masterPreviews, selectedMasterId, mascotName, onSelectMaster, onMascotNameChange, onApprove)
-            OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__discard_master_options)) }
-        }
-        is MascotCreationState.PosePreparationPending -> {
-            ApprovedMasterPending(state.job, masterPreviews)
-            OutlinedButton(onClick = onCreateAnother, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.gru__create_another_mascot))
-            }
-        }
-        is MascotCreationState.InstallingMascot -> LoadingMessage(R.string.gru__mascot_installing)
-        MascotCreationState.Completed -> Text(
-            stringResource(R.string.gru__mascot_install_complete),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        is MascotCreationState.InstallFailed -> {
-            Text(state.message, color = MaterialTheme.colorScheme.error)
-            Button(onClick = { onRetryInstall(state.jobId) }, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.gru__try_again))
-            }
-        }
-        is MascotCreationState.NetworkUnavailable -> {
-            Text(stringResource(R.string.gru__mascot_network_paused), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = onRetryTracking, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__try_again)) }
-            OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
-        }
-        MascotCreationState.SubmissionUncertain -> {
-            Text(stringResource(R.string.gru__mascot_submission_uncertain), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = retrySubmissionOrTracking, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__try_again)) }
-        }
-        is MascotCreationState.RemoteFailed -> {
-            Text(state.message, color = MaterialTheme.colorScheme.error)
-            if (state.recovery == MascotFailureRecovery.CHOOSE_PHOTO) {
-                Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.gru__try_another_photo))
-                }
-            } else if (state.recovery == MascotFailureRecovery.RETRY) {
-                Button(onClick = retrySubmissionOrTracking, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.gru__try_again))
-                }
-            }
-        }
-        MascotCreationState.Canceling -> LoadingMessage(R.string.gru__canceling_creation)
-        is MascotCreationState.CancelPending -> {
-            Text(stringResource(R.string.gru__cancel_pending), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = onRetryTracking, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__try_again)) }
-        }
-        MascotCreationState.Canceled -> Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__choose_photo)) }
-    }
-    if (photo != null && state is MascotCreationState.PhotoSelected) {
-        PhotoConfirmation(photo, onUsePhoto, onPick, onDiscardPhoto)
-    }
-}
-
-@Composable private fun ApprovedMasterPending(
-    job: com.pguillen.gru.mascot.MascotJobResponse,
-    previews: Map<String, ImageBitmap>,
-) {
-    val selectedId = job.masterId
-    val preview = selectedId?.let(previews::get)
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(stringResource(R.string.gru__approved_master), style = MaterialTheme.typography.titleMedium)
-        if (preview != null) {
-            Image(
-                preview,
-                stringResource(R.string.gru__approved_master_preview),
-                modifier = Modifier.size(160.dp),
-                contentScale = ContentScale.Fit,
-            )
-        }
-        Text(
-            stringResource(R.string.gru__pose_package_pending),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable private fun MasterChoices(
-    masters: List<MasterReference>, previews: Map<String, ImageBitmap>, selectedId: String?,
-    mascotName: String, onSelect: (String) -> Unit, onMascotNameChange: (String) -> Unit,
-    onApprove: (String, String) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.gru__choose_master), style = MaterialTheme.typography.titleMedium)
-        if (masters.isEmpty()) Text(stringResource(R.string.gru__master_images_pending), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        masters.chunked(2).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            row.forEach { master ->
-                val selected = selectedId == master.id
-                val preview = previews[master.id]
-                Column(
-                    Modifier.weight(1f).semantics { this.selected = selected; role = Role.RadioButton }
-                        .border(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-                        .clickable(enabled = preview != null) { onSelect(master.id) }.padding(8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    if (preview != null) {
-                        Image(
-                            preview, stringResource(R.string.gru__master_preview_number, masters.indexOf(master) + 1),
-                            modifier = Modifier.size(136.dp), contentScale = ContentScale.Fit,
-                        )
-                    } else {
-                        Box(Modifier.size(136.dp), contentAlignment = Alignment.Center) {
-                            Text(stringResource(R.string.gru__master_preview_unavailable), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-            }
-            if (row.size == 1) Spacer(Modifier.weight(1f))
-        } }
-        OutlinedTextField(
-            value = mascotName,
-            onValueChange = onMascotNameChange,
-            label = { Text(stringResource(R.string.gru__mascot_name)) },
-                        supportingText = { Text(stringResource(R.string.gru__mascot_name_required)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Button(
-            onClick = { selectedId?.let { onApprove(it, mascotName) } },
-            enabled = selectedId != null && mascotName.trim().isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.gru__choose_this_mascot))
-        }
-    }
-}
-
-@Composable private fun LoadingMessage(label: Int) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        CircularProgressIndicator(Modifier.size(24.dp)); Text(stringResource(label), color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable private fun PhotoConfirmation(uri: Uri, onUse: (Uri) -> Unit, onChange: () -> Unit, onCancel: () -> Unit) {
-    val context = LocalContext.current
-    val preview = remember(uri) { context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)?.asImageBitmap() }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        preview?.let { Image(it, stringResource(R.string.gru__photo_preview), modifier = Modifier.size(160.dp), contentScale = ContentScale.Crop) }
-        Text(stringResource(R.string.gru__photo_tip), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Button(onClick = { onUse(uri) }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__use_this_photo)) }
-        Button(onClick = onChange, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__choose_another_photo)) }
-        Button(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text(stringResource(android.R.string.cancel)) }
-    }
 }
 
 private data class BuiltInOption(val pet: GruPet, val drawable: Int, val name: Int)

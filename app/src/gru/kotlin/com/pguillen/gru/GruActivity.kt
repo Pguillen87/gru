@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
@@ -34,7 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AddCircle
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Pets
@@ -60,6 +61,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -100,7 +102,7 @@ internal enum class GruDestination(val label: Int) {
     VOICE(R.string.gru__nav_voice),
     CONTROL(R.string.gru__nav_control),
     MASCOTS(R.string.gru__nav_mascots),
-    CREATE_MASCOT(R.string.gru__nav_create_mascot),
+    PERCH(R.string.gru__nav_perch),
 }
 
 @Composable
@@ -108,6 +110,7 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
     val context = LocalContext.current
     val modelManager = remember { WhisperModelManager.get(context) }
     val engine by prefs.engine.collectAsState()
+    val onboardingCompleted by prefs.onboardingCompleted.collectAsState()
     val modelState by modelManager.state.collectAsState()
     var destination by remember { mutableIntStateOf(GruDestination.PERMISSIONS.ordinal) }
     LaunchedEffect(engine, modelState) {
@@ -117,7 +120,7 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
     }
     Scaffold(
         bottomBar = {
-            if (engine != null) {
+            if (shouldShowMainNavigation(onboardingCompleted)) {
                 GruBottomNavigation(
                     selected = GruDestination.entries[destination],
                     onSelect = { destination = it.ordinal },
@@ -125,7 +128,7 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
             }
         },
     ) { padding ->
-        if (engine == null) {
+        if (!onboardingCompleted) {
             GruTranscriptionScreen(
                 prefs = prefs,
                 firstUse = true,
@@ -152,27 +155,27 @@ private fun GruApp(permissionRefresh: Int, prefs: GruPreferences, onPermissionCh
             )
             GruDestination.MASCOTS -> GruMascotScreen(
                 prefs = prefs,
-                permissionRefresh = permissionRefresh,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
-            GruDestination.CREATE_MASCOT -> GruMascotScreen(
+            GruDestination.PERCH -> GruPerchScreen(
                 prefs = prefs,
-                permissionRefresh = permissionRefresh,
-                focus = MascotFocus.CREATE,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
         }
     }
 }
 
+internal fun shouldShowMainNavigation(onboardingCompleted: Boolean): Boolean = onboardingCompleted
+
 @Composable
 private fun GruBottomNavigation(selected: GruDestination, onSelect: (GruDestination) -> Unit) {
+    val largeText = LocalDensity.current.fontScale >= 1.5f
     val items = listOf(
         GruDestination.PERMISSIONS to Icons.Default.CheckCircle,
         GruDestination.VOICE to Icons.Default.GraphicEq,
         GruDestination.CONTROL to Icons.Default.PowerSettingsNew,
         GruDestination.MASCOTS to Icons.Default.Pets,
-        GruDestination.CREATE_MASCOT to Icons.Default.AddCircle,
+        GruDestination.PERCH to Icons.Default.Home,
     )
     Box(
         Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp),
@@ -182,7 +185,9 @@ private fun GruBottomNavigation(selected: GruDestination, onSelect: (GruDestinat
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
             shape = RoundedCornerShape(28.dp),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier.fillMaxWidth().height(72.dp).shadow(18.dp, RoundedCornerShape(28.dp)),
+            modifier = Modifier.fillMaxWidth()
+                .heightIn(min = if (largeText) 104.dp else 72.dp)
+                .shadow(18.dp, RoundedCornerShape(28.dp)),
         ) {
             Row(
                 Modifier.fillMaxSize().padding(horizontal = 4.dp),

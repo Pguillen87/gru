@@ -56,6 +56,10 @@ class GruPreferences private constructor(context: Context) {
 
     private val mutableRequestedEngine = MutableStateFlow(storedRequestedEngine)
     val requestedEngine: StateFlow<TranscriptionEngine?> = mutableRequestedEngine.asStateFlow()
+    private val mutableOnboardingCompleted = MutableStateFlow(
+        store.getBoolean(KEY_ONBOARDING_COMPLETED, storedEngine != null),
+    )
+    val onboardingCompleted: StateFlow<Boolean> = mutableOnboardingCompleted.asStateFlow()
     private var legacySelectionRecoveryPending = !store.getBoolean(KEY_TRANSACTIONAL_SELECTION_MIGRATED, false)
 
     private val mutableGroqApiKey = MutableStateFlow(migrateLegacyApiKey())
@@ -174,13 +178,17 @@ class GruPreferences private constructor(context: Context) {
     private fun persistSelection(requested: TranscriptionEngine?, active: TranscriptionEngine?): Boolean {
         val editor = store.edit()
         if (requested == null) editor.remove(KEY_REQUESTED_ENGINE) else editor.putString(KEY_REQUESTED_ENGINE, requested.name)
-        if (active == null) editor.remove(KEY_ENGINE) else editor.putString(KEY_ENGINE, active.name)
+        if (active == null) editor.remove(KEY_ENGINE) else {
+            editor.putString(KEY_ENGINE, active.name)
+            editor.putBoolean(KEY_ONBOARDING_COMPLETED, true)
+        }
         if (!editor.commit()) {
             Log.e(TAG, "event=engine_persist_failed requested=$requested active=$active")
             return false
         }
         mutableRequestedEngine.value = requested
         mutableEngine.value = active
+        if (active != null) mutableOnboardingCompleted.value = true
         return true
     }
 
@@ -240,6 +248,7 @@ class GruPreferences private constructor(context: Context) {
         private const val KEY_ENGINE = "transcription_engine"
         private const val KEY_REQUESTED_ENGINE = "requested_transcription_engine"
         private const val KEY_TRANSACTIONAL_SELECTION_MIGRATED = "transactional_selection_migrated"
+        private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
         private const val SOURCE_BUILT_IN = "built_in"
         private const val SOURCE_CUSTOM = "custom"
 

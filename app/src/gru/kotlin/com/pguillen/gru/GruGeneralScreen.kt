@@ -203,7 +203,15 @@ private fun PermissionSection(accessibility: Boolean, microphone: Boolean, notif
     if (disclosure) AlertDialog(
         onDismissRequest = { disclosure = false },
         title = { Text(stringResource(R.string.gru__accessibility_title)) },
-        text = { Text(stringResource(R.string.gru__accessibility_summary)) },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(stringResource(R.string.gru__accessibility_summary))
+            Text(
+                stringResource(
+                    R.string.gru__accessibility_tutorial_steps,
+                    stringResource(R.string.gru__accessibility_service_label),
+                ),
+            )
+        } },
         confirmButton = { TextButton(onClick = {
             disclosure = false
             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -214,7 +222,7 @@ private fun PermissionSection(accessibility: Boolean, microphone: Boolean, notif
 
 @Composable
 private fun PermissionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: Int, summary: Int, granted: Boolean, actionLabel: Int, action: () -> Unit) {
-    GruPanel(accent = if (granted) GruColors.Success else GruColors.Danger) {
+    GruPanel(accent = permissionStateColor(permissionVisualState(granted))) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Icon(
                 icon,
@@ -236,6 +244,21 @@ private fun PermissionRow(icon: androidx.compose.ui.graphics.vector.ImageVector,
             Text(stringResource(actionLabel))
         }
     }
+}
+
+internal enum class PermissionVisualState { SUCCESS, ATTENTION, ERROR }
+
+internal fun permissionVisualState(granted: Boolean, failed: Boolean = false): PermissionVisualState = when {
+    failed -> PermissionVisualState.ERROR
+    granted -> PermissionVisualState.SUCCESS
+    else -> PermissionVisualState.ATTENTION
+}
+
+@Composable
+private fun permissionStateColor(state: PermissionVisualState) = when (state) {
+    PermissionVisualState.SUCCESS -> GruColors.Success
+    PermissionVisualState.ATTENTION -> GruColors.Gold
+    PermissionVisualState.ERROR -> GruColors.Danger
 }
 
 @Composable

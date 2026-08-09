@@ -12,6 +12,11 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.longOrNull
+import com.pguillen.gru.mascot.importing.MascotImportManifest
+import com.pguillen.gru.mascot.importing.MascotImportAsset
+import com.pguillen.gru.mascot.importing.MascotPoseRole
 
 /** Private, atomic persistence for approved Masters and completed pose sets. */
 class CustomMascotStore internal constructor(private val root: File) {
@@ -47,9 +52,14 @@ class CustomMascotStore internal constructor(private val root: File) {
                 manifest.poses.isNotEmpty(),
                 maxOf(folder.lastModified(), preview.lastModified()),
                 manifest.displayName,
+                manifest.importedMascotId,
+                manifest.packageVersion,
+                manifest.source,
+                isFavorite(manifest.poseSetId),
+                manifest.installedAtMillis,
             )
         }
-        .sortedBy(CustomMascotEntry::updatedAtMillis)
+        .sortedWith(compareByDescending<CustomMascotEntry> { it.favorite }.thenByDescending { it.updatedAtMillis })
 
     fun read(poseSetId: String): CustomMascotManifest? = runCatching {
         val json = Json.parseToJsonElement(File(directory(poseSetId), MANIFEST).readText()).jsonObject
@@ -62,6 +72,11 @@ class CustomMascotStore internal constructor(private val root: File) {
             masterFileName = json.string("masterFileName")?.ifBlank { null },
             masterSha256 = json.string("masterSha256")?.ifBlank { null },
             displayName = json.string("displayName")?.ifBlank { null },
+            importedMascotId = json.string("importedMascotId")?.ifBlank { null },
+            packageVersion = json.string("packageVersion")?.ifBlank { null },
+            source = json.string("source")?.ifBlank { null } ?: "legacy_custom",
+            favorite = json["favorite"]?.jsonPrimitive?.booleanOrNull ?: false,
+            installedAtMillis = json["installedAtMillis"]?.jsonPrimitive?.longOrNull ?: 0L,
         )
     }.getOrNull()
 
@@ -99,6 +114,65 @@ class CustomMascotStore internal constructor(private val root: File) {
             manifest.poses.forEach { pose -> put(pose.fileName, File(folder, pose.fileName).readBytes()) }
         }
         return promoteFiles(manifest.copy(displayName = normalized), files)
+    }
+
+    fun setFavorite(poseSetId: String, favorite: Boolean): Boolean {
+        if (read(poseSetId) == null) return false
+        return runCatching {
+            val marker = File(directory(poseSetId), FAVORITE)
+            if (favorite) marker.writeText("1") else if (marker.exists()) check(marker.delete())
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun isFavorite(poseSetId: String): Boolean = File(directory(poseSetId), FAVORITE).isFile
+
+    fun isImportedPackageInstalled(mascotId: String, packageVersion: String, checksums: List<String>): Boolean =
+        entries().any { entry ->
+            if (entry.importedMascotId != mascotId || entry.packageVersion != packageVersion) return@any false
+            val manifest = read(entry.poseSetId) ?: return@any false
+            manifest.poses.map(MascotPose::sha256).toSet() == checksums.toSet()
+        }
+
+    fun promoteImported(manifest: MascotImportManifest, images: Map<MascotPoseRole, ByteArray>): Boolean {
+        if (manifest.validate() != null || images.keys != MascotPoseRole.entries.toSet()) return false
+        val packageKey = manifest.packageKey()
+        val poses = manifest.poses.map { asset ->
+            val extension = when (asset.mimeType.lowercase()) {
+                "image/png" -> "png"
+                "image/jpeg" -> "jpg"
+                else -> "webp"
+            }
+            val fileName = "${asset.role.name.lowercase()}.$extension"
+            MascotPose(asset.poseId, asset.role.name, fileName, asset.sha256)
+        }
+        val byRole = manifest.poses.associateBy(MascotImportAsset::role)
+        val local = CustomMascotManifest(
+            poseSetId = packageKey,
+            masterId = manifest.mascotId,
+            version = manifest.packageVersion,
+            modelVersion = null,
+            poses = poses,
+            selectedIdlePoseId = requireNotNull(byRole[MascotPoseRole.NORMAL]).poseId,
+            selectedRecordingPoseId = requireNotNull(byRole[MascotPoseRole.LISTENING]).poseId,
+            selectedTranscribingPoseId = requireNotNull(byRole[MascotPoseRole.TRANSCRIBING]).poseId,
+            displayName = normalizeDisplayName(manifest.displayName),
+            importedMascotId = manifest.mascotId,
+            packageVersion = manifest.packageVersion,
+            source = "code_import",
+            installedAtMillis = System.currentTimeMillis(),
+        )
+        val bytes = manifest.poses.associate { asset -> asset.poseId to images.getValue(asset.role) }
+        return promote(local, bytes)
+    }
+
+    private fun rewrite(manifest: CustomMascotManifest): Boolean {
+        val folder = directory(manifest.poseSetId)
+        val files = buildMap {
+            manifest.masterFileName?.let { fileName -> put(fileName, File(folder, fileName).readBytes()) }
+            manifest.poses.forEach { pose -> put(pose.fileName, File(folder, pose.fileName).readBytes()) }
+        }
+        return promoteFiles(manifest, files)
     }
 
     private fun promoteFiles(manifest: CustomMascotManifest, files: Map<String, ByteArray>): Boolean = runCatching {
@@ -140,6 +214,8 @@ class CustomMascotStore internal constructor(private val root: File) {
         put("recording", JsonPrimitive(selectedRecordingPoseId)); put("transcribing", JsonPrimitive(selectedTranscribingPoseId))
         put("masterFileName", JsonPrimitive(masterFileName ?: "")); put("masterSha256", JsonPrimitive(masterSha256 ?: ""))
         put("displayName", JsonPrimitive(displayName ?: ""))
+        put("importedMascotId", JsonPrimitive(importedMascotId ?: "")); put("packageVersion", JsonPrimitive(packageVersion ?: ""))
+        put("source", JsonPrimitive(source)); put("favorite", JsonPrimitive(favorite)); put("installedAtMillis", JsonPrimitive(installedAtMillis))
         put("poses", buildJsonArray { poses.forEach { pose -> add(buildJsonObject {
             put("poseId", JsonPrimitive(pose.poseId)); put("name", JsonPrimitive(pose.name)); put("fileName", JsonPrimitive(pose.fileName))
             put("sha256", JsonPrimitive(pose.sha256)); put("downloadPath", JsonPrimitive(pose.downloadPath ?: ""))
@@ -156,6 +232,7 @@ class CustomMascotStore internal constructor(private val root: File) {
     companion object {
         private const val MANIFEST = "manifest.json"
         private const val MASTER = "master.png"
+        private const val FAVORITE = ".favorite"
         const val MAX_DISPLAY_NAME_LENGTH = 32
     }
 }
@@ -166,12 +243,12 @@ internal fun normalizeDisplayName(value: String): String =
 private fun CustomMascotManifest.isSafe(): Boolean {
     val poseIds = poses.map(MascotPose::poseId)
     val filenames = poses.map(MascotPose::fileName)
-    val safeIdentity = poseSetId.matches(Regex("^[A-Za-z0-9_-]{1,96}$")) && masterId.matches(Regex("^master_[1-4]$"))
+    val safeIdentity = poseSetId.matches(Regex("^[A-Za-z0-9_-]{1,96}$")) && masterId.matches(Regex("^[A-Za-z0-9_-]{1,96}$"))
     val safeMaster = masterFileName?.let { File(it).name == it } == true && masterSha256?.matches(Regex("^[a-fA-F0-9]{64}$")) == true
     val safePoses = poses.isNotEmpty() &&
         poseIds.size == poseIds.toSet().size && filenames.size == filenames.toSet().size &&
         poses.all { pose ->
-            pose.poseId.matches(Regex("^pose_[0-9]{2}$")) && File(pose.fileName).name == pose.fileName
+            pose.poseId.matches(Regex("^[A-Za-z0-9_-]{1,64}$")) && File(pose.fileName).name == pose.fileName
         } && listOf(selectedIdlePoseId, selectedRecordingPoseId, selectedTranscribingPoseId).all(poseIds::contains)
     return safeIdentity && (safeMaster || safePoses)
 }

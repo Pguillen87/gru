@@ -30,6 +30,11 @@ data class CustomMascotManifest(
     val masterFileName: String? = null,
     val masterSha256: String? = null,
     val displayName: String? = null,
+    val importedMascotId: String? = null,
+    val packageVersion: String? = null,
+    val source: String = "legacy_custom",
+    val favorite: Boolean = false,
+    val installedAtMillis: Long = 0L,
 )
 
 data class CustomMascotEntry(
@@ -39,6 +44,11 @@ data class CustomMascotEntry(
     val hasAuthoredPoses: Boolean,
     val updatedAtMillis: Long,
     val displayName: String?,
+    val importedMascotId: String? = null,
+    val packageVersion: String? = null,
+    val source: String = "legacy_custom",
+    val favorite: Boolean = false,
+    val installedAtMillis: Long = 0L,
 )
 
 sealed interface MascotVisual {
