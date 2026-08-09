@@ -105,7 +105,8 @@ Objetivo atual: selecionar o visual ativo, gerenciar mascotes personalizados e i
 | Meus mascotes | Cards dos personalizados aprovados, nome e imagem de preview | Selecionar um; abrir caneta para editar somente o nome. |
 | Mascotes do Gru | Lume, Faísca, Bip, Pingo e Pudim | Selecionar um built-in sem apagar personalizados. |
 | Criar meu mascote | Texto explicativo e painel variável por estado | Escolher foto, confirmar, acompanhar, aprovar Master, cancelar ou tentar novamente. |
-| Escolha de Master | Grade dinâmica de opções retornadas pelo Modal | Selecionar uma opção visual; informar nome obrigatório; aprovar. |
+| Escolha de Master | Grade dinâmica de três opções retornadas pelo Modal | Selecionar uma identidade visual e aprovar. |
+| Catálogo de poses | Quatro imagens reais por estado: normal, ouvindo e transcrevendo | Informar nome e selecionar uma imagem para cada estado. |
 | Aparência | Pequeno, Médio, Grande e slider de opacidade | Alterar escala e transparência persistidas. |
 | Poses | Texto de disponibilidade do pacote | Preparado para lista dinâmica; depende de poses instaladas. |
 
@@ -118,8 +119,9 @@ Objetivo atual: selecionar o visual ativo, gerenciar mascotes personalizados e i
 | `Submitting` | Foto sendo validada/enviada | Aguardar. |
 | `GenerationPaused` | Job salvo, geração aguardando habilitação/continuação | Continuar quando permitido ou cancelar. |
 | `Tracking` | Modal processando o job | Acompanhar ou cancelar. |
-| `AwaitingMasterApproval` | Opções de Master disponíveis | Escolher, nomear e aprovar; descartar opções. |
-| `PosePreparationPending` | Master aprovado, poses ainda pendentes | Criar outro mascote. |
+| `AwaitingMasterApproval` | Três opções de Master disponíveis | Escolher e aprovar; descartar opções. |
+| `PosePreparationPending` | Master aprovado, 12 poses sendo geradas | Acompanhar a etapa real ou cancelar. |
+| `PoseSelectionReady` | As 12 imagens foram verificadas | Nomear e escolher pose normal, ouvindo e transcrevendo. |
 | `InstallingMascot` | Resultado baixando e sendo validado localmente | Aguardar. |
 | `Completed` | Pacote promovido e mascote selecionável | Continuar usando o app. |
 | `NetworkUnavailable` | A conexão local falhou, job preservado | Tentar acompanhar novamente ou cancelar. |
@@ -131,7 +133,7 @@ Objetivo atual: selecionar o visual ativo, gerenciar mascotes personalizados e i
 
 - **Confirmação da foto:** preview, dica sobre a imagem, `Usar esta foto`, `Escolher outra foto` e `Cancelar`.
 - **Escolha do Master:** grade com preview real quando disponível; sem imagem, o card não é selecionável.
-- **Nome do mascote:** obrigatório na aprovação; normalizado e limitado a 32 caracteres.
+- **Nome do mascote:** solicitado depois que as 12 poses estão prontas; normalizado e limitado a 32 caracteres.
 - **Editar nome:** diálogo aberto pela caneta do card; salva apenas `displayName` no manifest local.
 
 ### Overlay fora da Activity
@@ -171,6 +173,7 @@ Idle
   -> GenerationPaused/Tracking
   -> AwaitingMasterApproval
   -> PosePreparationPending
+  -> PoseSelectionReady
   -> InstallingMascot
   -> Completed
 ```
@@ -258,7 +261,7 @@ Antes de alterar uma tela, validar:
 
 - Não mover lógica de criação para `GruActivity`.
 - Não duplicar seleção/tamanho/opacidade em Geral e Mascote.
-- Não hardcodar seis poses na UI; renderizar a lista do manifest.
+- O catálogo aprovado possui quatro opções por papel; a UI cruza `runtimeRole` e `optionId` do manifest e nunca deduz o estado pelo nome do arquivo.
 - Não acoplar o runtime visual a nomes de drawable ou ao provider remoto.
 - Não adicionar logging de foto, áudio, texto ditado, token ou URL assinada.
 - Toda mudança visual deve atualizar `DESIGN.md` quando alterar tokens, componentes ou guardrails.

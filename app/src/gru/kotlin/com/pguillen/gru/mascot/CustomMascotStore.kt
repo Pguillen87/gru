@@ -131,6 +131,7 @@ class CustomMascotStore internal constructor(private val root: File) {
         MascotPose(
             it.requiredString("poseId"), it.requiredString("name"), it.requiredString("fileName"),
             it.requiredString("sha256"), it.string("downloadPath")?.ifBlank { null },
+            it.string("runtimeRole")?.ifBlank { null }, it.string("optionId")?.ifBlank { null },
         )
     } }
 
@@ -143,6 +144,7 @@ class CustomMascotStore internal constructor(private val root: File) {
         put("poses", buildJsonArray { poses.forEach { pose -> add(buildJsonObject {
             put("poseId", JsonPrimitive(pose.poseId)); put("name", JsonPrimitive(pose.name)); put("fileName", JsonPrimitive(pose.fileName))
             put("sha256", JsonPrimitive(pose.sha256)); put("downloadPath", JsonPrimitive(pose.downloadPath ?: ""))
+            put("runtimeRole", JsonPrimitive(pose.runtimeRole ?: "")); put("optionId", JsonPrimitive(pose.optionId ?: ""))
         }) } })
     }
 

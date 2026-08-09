@@ -2,7 +2,7 @@
 
 ## Escopo
 
-Implementação da Parte 3 na branch `feature/frontend-redesign-compose`, derivada do SHA-base `2a1cab011ef77a33a25e4e211420dbf0c03d3429`. A camada visual foi ligada aos estados já existentes; não foram alterados backend, APIs, Firebase, Modal, Groq, Whisper, JNI, CMake ou o overlay.
+Implementação da Parte 3 derivada do SHA-base `2a1cab011ef77a33a25e4e211420dbf0c03d3429`. A camada visual foi ligada aos estados existentes sem alterar Firebase, Groq, Whisper, JNI, CMake ou o overlay. A rodada posterior do catálogo visual ampliou de três para 12 as poses geradas pelo worker Modal, preservando autenticação, endpoints, idempotência e o mapeamento final de três arquivos do runtime.
 
 ## Navegação
 
@@ -38,3 +38,7 @@ Executados com sucesso: `:app:compileDebugKotlin`, `:app:testReleaseUnitTest` (8
 ## Correção visual após auditoria
 
 O commit `fcc54e1` corrige a superfície raiz sem `fillMaxSize`, causa da tela vazia com a Navigation Bar no centro. Também traduz as telas atuais do projeto Stitch `Gru Visual Lab` para um shell escuro coerente: cabeçalho com marca, cartões grafite, dourado de identidade, ciano de seleção, cores semânticas, seletor Online/Privado, Controle com a coruja oficial, galeria de mascotes e navegação flutuante com item central elevado. Nenhuma máquina de estado ou contrato de runtime foi duplicado.
+
+## Catálogo visual de poses
+
+O fluxo aprovado passou a separar identidade e movimento: foto → três Masters → escolha explícita → geração das 12 poses → nome → seleção visual de pose normal, ouvindo e transcrevendo → instalação. O Modal gera quatro imagens finais por papel uma única vez; o Android valida os 12 checksums, apresenta as galerias e promove somente as três escolhas para o armazenamento privado e para o runtime. A barra de carregamento é indeterminada, acompanhada de etapa real e estimativa inicial de 2–4 minutos; nenhuma porcentagem fictícia é exibida. O polling também cobre a preparação de poses, preservando retomada, cancelamento e idempotência.

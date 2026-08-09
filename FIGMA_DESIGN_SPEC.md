@@ -30,4 +30,4 @@ PNG oficial `brand/gru-brand-master.png` foi inserido com Fit nos frames `7:3`, 
 
 ## 8. Pendências e Compose futuro
 
-Pagamento, arquivamento, vídeo Groq e catálogo contratual de poses continuam futuros. Em Compose, mapear tokens aos papéis Material 3/Dynamic Color, usar `ContentScale.Fit`, NavigationBar com destino central seguro, `sp` e reflow para 200%, e estados reais do runtime sem inventar progresso.
+Pagamento, arquivamento e vídeo Groq continuam futuros. O catálogo de poses foi aprovado depois da consolidação do Figma: são quatro imagens reais para cada papel (normal, ouvindo e transcrevendo), apresentadas depois da geração e antes da conclusão. Em Compose, usar `ContentScale.Fit`, `sp`, reflow para 200% e estados reais do runtime sem inventar porcentagens de progresso.

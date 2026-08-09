@@ -82,6 +82,7 @@ import com.pguillen.gru.mascot.MascotTelemetry
 import com.pguillen.gru.mascot.prepareMascotPhoto
 import com.pguillen.gru.mascot.normalizeDisplayName
 import com.pguillen.gru.mascot.MascotPoseChoices
+import com.pguillen.gru.mascot.PreparedMascotAssets
 
 internal enum class MascotFocus { LIBRARY, CREATE }
 
@@ -108,7 +109,10 @@ internal fun GruMascotScreen(
     var photo by remember { mutableStateOf<Uri?>(null) }
     var creation by remember { mutableStateOf<MascotCreationState>(MascotCreationState.Idle) }
     var draftStep by remember { mutableStateOf(MascotDraftStep.START) }
+    var customizationStep by remember { mutableStateOf(MascotCustomizationStep.NAME) }
     var poseChoices by remember { mutableStateOf(MascotPoseChoices()) }
+    var preparedAssets by remember { mutableStateOf<PreparedMascotAssets?>(null) }
+    var posePreviews by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
     var selectedMasterId by remember { mutableStateOf<String?>(null) }
     var masterPreviews by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
     var creationMascotName by remember { mutableStateOf("") }
@@ -118,6 +122,7 @@ internal fun GruMascotScreen(
     var customMascots by remember { mutableStateOf(customStore.entries()) }
     val scope = rememberCoroutineScope()
     val repository = remember { MascotRepository(MascotApi(FirebaseMascotAuthTokenProvider(), FirebaseMascotAppCheckTokenProvider()), prefs, customStore) }
+    val installFailureMessage = stringResource(R.string.gru__mascot_install_failed)
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) {
         photo = it
         creation = if (it == null) MascotCreationState.Idle else MascotCreationState.PhotoSelected
@@ -126,7 +131,7 @@ internal fun GruMascotScreen(
     val submitSelected: (Uri) -> Unit = { selected ->
         scope.launch {
             creation = MascotCreationState.Submitting
-            submitMascotPhoto(context, repository, selected, poseChoices)
+            submitMascotPhoto(context, repository, selected)
                 .onSuccess { creation = it.toCreationState() }
                 .onFailure { creation = it.toMascotFailure(prefs.pendingMascotJobId.value) }
         }
@@ -140,9 +145,13 @@ internal fun GruMascotScreen(
             }
         }.onFailure { creation = it.toMascotFailure(prefs.pendingMascotJobId.value) }
     }
-    val tracked = creation as? MascotCreationState.Tracking
-    LaunchedEffect(tracked?.job?.jobId) {
-        val jobId = tracked?.job?.jobId ?: return@LaunchedEffect
+    val pollingJob = when (val current = creation) {
+        is MascotCreationState.Tracking -> current.job
+        is MascotCreationState.PosePreparationPending -> current.job
+        else -> null
+    }
+    LaunchedEffect(pollingJob?.jobId) {
+        val jobId = pollingJob?.jobId ?: return@LaunchedEffect
         var interval = 3_000L
         while (true) {
             delay(interval)
@@ -170,26 +179,27 @@ internal fun GruMascotScreen(
                 .getOrNull()?.let { reference.id to it }
         }.toMap()
     }
-    val installing = creation as? MascotCreationState.InstallingMascot
-    val installFailureMessage = stringResource(R.string.gru__mascot_install_failed)
-    LaunchedEffect(installing?.jobId) {
-        val jobId = installing?.jobId ?: return@LaunchedEffect
-        creation = runCatching { repository.installCompletedMascot(jobId) }
-            .fold(
-                onSuccess = { installed ->
-                    if (installed) MascotCreationState.Completed
-                    else MascotCreationState.InstallFailed(
-                        jobId,
-                        installFailureMessage,
+    val selectionReady = creation as? MascotCreationState.PoseSelectionReady
+    LaunchedEffect(selectionReady?.jobId) {
+        val jobId = selectionReady?.jobId ?: return@LaunchedEffect
+        runCatching { repository.prepareCompletedMascot(jobId) }
+            .onSuccess { prepared ->
+                preparedAssets = prepared
+                posePreviews = prepared.result.poses.mapNotNull { pose ->
+                    val optionId = pose.optionId ?: return@mapNotNull null
+                    val bytes = prepared.images[pose.poseId] ?: return@mapNotNull null
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()?.let { optionId to it }
+                }.toMap()
+                if (posePreviews.size == 12) {
+                    customizationStep = MascotCustomizationStep.NAME
+                } else {
+                    val installed = repository.installPreparedMascot(prepared, MascotPoseChoices(), "Meu mascote")
+                    creation = if (installed) MascotCreationState.Completed else MascotCreationState.InstallFailed(
+                        jobId, installFailureMessage,
                     )
-                },
-                onFailure = {
-                    MascotCreationState.InstallFailed(
-                        jobId,
-                        installFailureMessage,
-                    )
-                },
-            )
+                }
+            }
+            .onFailure { creation = it.toMascotFailure(jobId) }
     }
     val selectedCustom = source as? MascotSource.Custom
     Column(
@@ -227,18 +237,10 @@ internal fun GruMascotScreen(
             MascotDraftFlow(
                 step = draftStep,
                 photo = photo,
-                choices = poseChoices,
-                name = creationMascotName,
                 onStart = { draftStep = MascotDraftStep.PHOTO },
                 onPickPhoto = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                onConfirmPhoto = { draftStep = MascotDraftStep.NORMAL },
-                onSelectPose = { role, optionId -> poseChoices = poseChoices.select(role, optionId) },
-                onNameChange = { creationMascotName = it.take(32) },
-                onNext = { draftStep = draftStep.next() },
+                onConfirmPhoto = { photo?.let(submitSelected) },
                 onBack = { draftStep = draftStep.previous() },
-                onSubmit = {
-                    photo?.let(submitSelected)
-                },
                 onCancel = {
                     photo = null
                     creation = MascotCreationState.Idle
@@ -255,12 +257,19 @@ internal fun GruMascotScreen(
             selectedMasterId = selectedMasterId,
             masterPreviews = masterPreviews,
             onSelectMaster = { selectedMasterId = it },
+            preparedAssets = preparedAssets,
+            posePreviews = posePreviews,
+            customizationStep = customizationStep,
+            poseChoices = poseChoices,
             mascotName = creationMascotName,
             onMascotNameChange = { creationMascotName = it.take(32) },
-            onApprove = { masterId, name -> scope.launch {
+            onSelectPose = { role, optionId -> poseChoices = poseChoices.select(role, optionId) },
+            onCustomizationNext = { customizationStep = customizationStep.next() },
+            onCustomizationBack = { customizationStep = customizationStep.previous() },
+            onApprove = { masterId -> scope.launch {
                 val awaiting = creation as? MascotCreationState.AwaitingMasterApproval ?: return@launch
                 creation = MascotCreationState.Submitting
-                runCatching { repository.approve(awaiting.job.jobId, masterId, name) }
+                runCatching { repository.approve(awaiting.job.jobId, masterId) }
                     .onSuccess {
                         customMascots = repository.customMascots()
                         creation = it.toCreationState()
@@ -279,12 +288,23 @@ internal fun GruMascotScreen(
                     .onSuccess { creation = it.toCreationState() }
                     .onFailure { creation = it.toMascotFailure(jobId) }
             } },
-            onRetryInstall = { jobId -> creation = MascotCreationState.InstallingMascot(jobId) },
+            onFinishCustomization = { scope.launch {
+                val prepared = preparedAssets ?: return@launch
+                creation = MascotCreationState.InstallingMascot(prepared.result.poseSetId)
+                val installed = runCatching { repository.installPreparedMascot(prepared, poseChoices, creationMascotName) }
+                    .getOrDefault(false)
+                creation = if (installed) MascotCreationState.Completed else MascotCreationState.InstallFailed(
+                    prepared.result.poseSetId, installFailureMessage,
+                )
+                if (installed) customMascots = repository.customMascots()
+            } },
             onCreateAnother = {
                 repository.clearPending()
                 photo = null
                 creation = MascotCreationState.Idle
                 poseChoices = MascotPoseChoices()
+                preparedAssets = null
+                posePreviews = emptyMap()
                 creationMascotName = ""
                 draftStep = MascotDraftStep.START
             },
@@ -329,29 +349,32 @@ internal fun GruMascotScreen(
 internal fun MascotDraftStep.next(): MascotDraftStep = when (this) {
     MascotDraftStep.START -> MascotDraftStep.PHOTO
     MascotDraftStep.PHOTO -> MascotDraftStep.CONFIRM
-    MascotDraftStep.CONFIRM -> MascotDraftStep.NORMAL
-    MascotDraftStep.NORMAL -> MascotDraftStep.LISTENING
-    MascotDraftStep.LISTENING -> MascotDraftStep.TRANSCRIBING
-    MascotDraftStep.TRANSCRIBING -> MascotDraftStep.NAME
-    MascotDraftStep.NAME -> MascotDraftStep.REVIEW
-    MascotDraftStep.REVIEW -> MascotDraftStep.REVIEW
+    MascotDraftStep.CONFIRM -> MascotDraftStep.CONFIRM
 }
 
 internal fun MascotDraftStep.previous(): MascotDraftStep = when (this) {
     MascotDraftStep.START, MascotDraftStep.PHOTO -> MascotDraftStep.START
     MascotDraftStep.CONFIRM -> MascotDraftStep.PHOTO
-    MascotDraftStep.NORMAL -> MascotDraftStep.CONFIRM
-    MascotDraftStep.LISTENING -> MascotDraftStep.NORMAL
-    MascotDraftStep.TRANSCRIBING -> MascotDraftStep.LISTENING
-    MascotDraftStep.NAME -> MascotDraftStep.TRANSCRIBING
-    MascotDraftStep.REVIEW -> MascotDraftStep.NAME
+}
+
+internal fun MascotCustomizationStep.next(): MascotCustomizationStep = when (this) {
+    MascotCustomizationStep.NAME -> MascotCustomizationStep.NORMAL
+    MascotCustomizationStep.NORMAL -> MascotCustomizationStep.LISTENING
+    MascotCustomizationStep.LISTENING -> MascotCustomizationStep.TRANSCRIBING
+    MascotCustomizationStep.TRANSCRIBING -> MascotCustomizationStep.TRANSCRIBING
+}
+
+internal fun MascotCustomizationStep.previous(): MascotCustomizationStep = when (this) {
+    MascotCustomizationStep.NAME -> MascotCustomizationStep.NAME
+    MascotCustomizationStep.NORMAL -> MascotCustomizationStep.NAME
+    MascotCustomizationStep.LISTENING -> MascotCustomizationStep.NORMAL
+    MascotCustomizationStep.TRANSCRIBING -> MascotCustomizationStep.LISTENING
 }
 
 private suspend fun submitMascotPhoto(
     context: Context,
     repository: MascotRepository,
     selected: Uri,
-    poseChoices: MascotPoseChoices,
 ): Result<com.pguillen.gru.mascot.MascotJobResponse> {
     val started = MascotTelemetry.mark()
     return runCatching {
@@ -368,7 +391,7 @@ private suspend fun submitMascotPhoto(
                 "height" to prepared.height,
             ),
         )
-        repository.create(prepared.bytes, prepared.contentType, poseChoices)
+        repository.create(prepared.bytes, prepared.contentType)
     }.onFailure { MascotTelemetry.failure("submit_flow", started, it) }
 }
 
@@ -511,10 +534,14 @@ private suspend fun submitMascotPhoto(
 @Composable private fun MascotCreationPanel(
     photo: Uri?, state: MascotCreationState, onPick: () -> Unit, onDiscardPhoto: () -> Unit,
     onUsePhoto: (Uri) -> Unit, selectedMasterId: String?, masterPreviews: Map<String, ImageBitmap>,
-    onSelectMaster: (String) -> Unit, mascotName: String, onMascotNameChange: (String) -> Unit,
-    onApprove: (String, String) -> Unit, onRetryTracking: () -> Unit,
+    onSelectMaster: (String) -> Unit, preparedAssets: PreparedMascotAssets?, posePreviews: Map<String, ImageBitmap>,
+    customizationStep: MascotCustomizationStep, poseChoices: MascotPoseChoices,
+    mascotName: String, onMascotNameChange: (String) -> Unit,
+    onSelectPose: (com.pguillen.gru.mascot.MascotPoseRole, String) -> Unit,
+    onCustomizationNext: () -> Unit, onCustomizationBack: () -> Unit,
+    onApprove: (String) -> Unit, onRetryTracking: () -> Unit,
     onStartGeneration: (String) -> Unit,
-    onRetryInstall: (String) -> Unit,
+    onFinishCustomization: () -> Unit,
     onCreateAnother: () -> Unit,
     onCancelCreation: () -> Unit,
 ) {
@@ -524,9 +551,14 @@ private suspend fun submitMascotPhoto(
     when (state) {
         MascotCreationState.Idle -> Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__choose_photo)) }
         MascotCreationState.PhotoSelected -> Unit
-        MascotCreationState.Submitting -> LoadingMessage(R.string.gru__mascot_submitting)
+        MascotCreationState.Submitting -> MascotGenerationProgress("Preparando sua criação", "Estamos enviando a foto com segurança.")
         is MascotCreationState.Tracking -> {
-            LoadingMessage(R.string.gru__mascot_tracking)
+            val generatingPoses = state.job.state == "GENERATING_POSES"
+            MascotGenerationProgress(
+                if (generatingPoses) "Criando 12 poses" else "Criando três personagens",
+                if (generatingPoses) "São quatro poses normais, quatro ouvindo e quatro transcrevendo."
+                else "Você poderá escolher seu personagem favorito antes de criarmos as poses.",
+            )
             OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
         }
         is MascotCreationState.GenerationPaused -> {
@@ -540,23 +572,30 @@ private suspend fun submitMascotPhoto(
             OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
         }
         is MascotCreationState.AwaitingMasterApproval -> {
-            MasterChoices(state.job.masters, masterPreviews, selectedMasterId, mascotName, onSelectMaster, onMascotNameChange, onApprove)
+            MasterChoices(state.job.masters, masterPreviews, selectedMasterId, onSelectMaster, onApprove)
             OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__discard_master_options)) }
         }
         is MascotCreationState.PosePreparationPending -> {
-            ApprovedMasterPending(state.job, masterPreviews)
-            OutlinedButton(onClick = onCreateAnother, modifier = Modifier.fillMaxWidth()) {
+            MascotGenerationProgress("Criando 12 poses", "Estamos mantendo a identidade escolhida e preparando quatro opções para cada momento.")
+            OutlinedButton(onClick = onCancelCreation, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.gru__cancel_creation)) }
+        }
+        is MascotCreationState.PoseSelectionReady -> if (preparedAssets == null) {
+            MascotGenerationProgress("Preparando as galerias", "As imagens estão prontas. Agora estamos trazendo as prévias para você escolher.")
+        } else MascotGeneratedFlow(
+            customizationStep, poseChoices, mascotName, posePreviews,
+            onSelectPose, onMascotNameChange, onCustomizationNext, onCustomizationBack, onFinishCustomization,
+        )
+        is MascotCreationState.InstallingMascot -> LoadingMessage(R.string.gru__mascot_installing)
+        MascotCreationState.Completed -> {
+            Text("Seu mascote está pronto!", style = MaterialTheme.typography.headlineSmall)
+            Text(stringResource(R.string.gru__mascot_install_complete), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = onCreateAnother, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.gru__create_another_mascot))
             }
         }
-        is MascotCreationState.InstallingMascot -> LoadingMessage(R.string.gru__mascot_installing)
-        MascotCreationState.Completed -> Text(
-            stringResource(R.string.gru__mascot_install_complete),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         is MascotCreationState.InstallFailed -> {
             Text(state.message, color = MaterialTheme.colorScheme.error)
-            Button(onClick = { onRetryInstall(state.jobId) }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = onFinishCustomization, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.gru__try_again))
             }
         }
@@ -618,8 +657,7 @@ private suspend fun submitMascotPhoto(
 
 @Composable private fun MasterChoices(
     masters: List<MasterReference>, previews: Map<String, ImageBitmap>, selectedId: String?,
-    mascotName: String, onSelect: (String) -> Unit, onMascotNameChange: (String) -> Unit,
-    onApprove: (String, String) -> Unit,
+    onSelect: (String) -> Unit, onApprove: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.gru__choose_master), style = MaterialTheme.typography.titleMedium)
@@ -648,23 +686,9 @@ private suspend fun submitMascotPhoto(
             }
             if (row.size == 1) Spacer(Modifier.weight(1f))
         } }
-        if (mascotName.isBlank()) {
-            OutlinedTextField(
-                value = mascotName,
-                onValueChange = onMascotNameChange,
-                label = { Text(stringResource(R.string.gru__mascot_name)) },
-                supportingText = { Text(stringResource(R.string.gru__mascot_name_required)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            GruPanel(accent = GruColors.Gold) {
-                Text(mascotName.trim(), style = MaterialTheme.typography.titleMedium)
-            }
-        }
         Button(
-            onClick = { selectedId?.let { onApprove(it, mascotName) } },
-            enabled = selectedId != null && mascotName.trim().isNotBlank(),
+            onClick = { selectedId?.let(onApprove) },
+            enabled = selectedId != null,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.gru__choose_this_mascot))

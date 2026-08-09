@@ -6,7 +6,9 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 
 sealed interface MascotCreationState {
     data object Idle : MascotCreationState
@@ -16,6 +18,7 @@ sealed interface MascotCreationState {
     data class GenerationPaused(val job: MascotJobResponse) : MascotCreationState
     data class AwaitingMasterApproval(val job: MascotJobResponse) : MascotCreationState
     data class PosePreparationPending(val job: MascotJobResponse) : MascotCreationState
+    data class PoseSelectionReady(val jobId: String) : MascotCreationState
     data class InstallingMascot(val jobId: String) : MascotCreationState
     data object Completed : MascotCreationState
     data class InstallFailed(val jobId: String, val message: String) : MascotCreationState
@@ -31,6 +34,11 @@ sealed interface MascotCreationState {
 }
 
 enum class MascotFailureRecovery { RETRY, CHOOSE_PHOTO, WAIT }
+
+data class PreparedMascotAssets(
+    val result: MascotResultResponse,
+    val images: Map<String, ByteArray>,
+)
 
 class MascotRepository(
     private val api: MascotRemoteApi,
@@ -86,9 +94,7 @@ class MascotRepository(
 
     suspend fun approve(jobId: String, masterId: String, displayName: String? = null): MascotJobResponse {
         val job = ensureApprovedMaster(api.approveMaster(jobId, masterId, "approve:$jobId:$masterId"))
-        displayName?.takeIf { it.isNotBlank() }?.let { name ->
-            check(requireNotNull(customStore).rename(jobId, name)) { "Unable to save the mascot name." }
-        }
+        displayName?.takeIf { it.isNotBlank() }?.let { name -> customStore?.rename(jobId, name) }
         return job
     }
 
@@ -106,22 +112,55 @@ class MascotRepository(
         return response
     }
 
-    suspend fun installCompletedMascot(jobId: String): Boolean {
-        val store = requireNotNull(customStore)
+    suspend fun prepareCompletedMascot(jobId: String): PreparedMascotAssets {
         val result = api.result(jobId)
         val images = result.poses.associate { pose -> pose.poseId to api.download(requireNotNull(pose.downloadPath)) }
-        val poseIds = result.poses.map(MascotPose::poseId).toSet()
-        val selected = listOf(result.idlePoseId, result.listeningPoseId, result.transcribingPoseId)
-        if (!selected.all(poseIds::contains)) return false
-        val manifest = CustomMascotManifest(
-            result.poseSetId, result.masterId, result.version, result.modelVersion, result.poses,
-            result.idlePoseId, result.listeningPoseId, result.transcribingPoseId,
+        check(result.poses.all { pose -> images[pose.poseId]?.matchesSha256(pose.sha256) == true }) {
+            "Pose checksum does not match."
+        }
+        return PreparedMascotAssets(result, images)
+    }
+
+    suspend fun installCompletedMascot(jobId: String): Boolean = runCatching {
+        val prepared = prepareCompletedMascot(jobId)
+        val existingName = customStore?.read(jobId)?.displayName.orEmpty().ifBlank { "Meu mascote" }
+        installPreparedMascot(prepared, MascotPoseChoices(), existingName)
+    }.getOrDefault(false)
+
+    suspend fun installPreparedMascot(
+        prepared: PreparedMascotAssets,
+        choices: MascotPoseChoices,
+        displayName: String,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val store = requireNotNull(customStore)
+        val result = prepared.result
+        val fallbackIds = mapOf(
+            "normal" to result.idlePoseId,
+            "listening" to result.listeningPoseId,
+            "transcribing" to result.transcribingPoseId,
         )
-        if (!store.promote(manifest, images)) return false
-        if (result.poseSetId != jobId) store.remove(jobId)
+        val selectedByRole = choices.asMap().mapValues { (role, optionId) ->
+            result.poses.singleOrNull { it.runtimeRole == role && it.optionId == optionId }
+                ?: result.poses.singleOrNull { it.poseId == fallbackIds[role] }
+                ?: return@withContext false
+        }
+        val selectedPoses = selectedByRole.values.toList()
+        val images = selectedPoses.associate { pose -> pose.poseId to requireNotNull(prepared.images[pose.poseId]) }
+        val poseIds = result.poses.map(MascotPose::poseId).toSet()
+        val selected = listOf(
+            selectedByRole.getValue("normal").poseId,
+            selectedByRole.getValue("listening").poseId,
+            selectedByRole.getValue("transcribing").poseId,
+        )
+        if (!selected.all(poseIds::contains)) return@withContext false
+        val manifest = CustomMascotManifest(
+            result.poseSetId, result.masterId, result.version, result.modelVersion, selectedPoses,
+            selected[0], selected[1], selected[2], displayName = normalizeDisplayName(displayName),
+        )
+        if (!store.promote(manifest, images)) return@withContext false
         pending.selectCustomMascot(result.poseSetId, result.masterId)
         clearPending()
-        return true
+        true
     }
 
     fun customMascots(): List<CustomMascotEntry> = customStore?.entries().orEmpty()
@@ -139,7 +178,6 @@ class MascotRepository(
                 "Unable to save the approved mascot."
             }
         }
-        pending.selectCustomMascot(job.jobId, masterId)
         return job
     }
 
@@ -181,7 +219,7 @@ fun MascotJobResponse.toCreationState(): MascotCreationState = when (state) {
     "READY_FOR_GENERATION" -> MascotCreationState.GenerationPaused(this)
     "AWAITING_MASTER_APPROVAL" -> MascotCreationState.AwaitingMasterApproval(this)
     "CONSISTENCY_TEST", "READY_FOR_POSES" -> MascotCreationState.PosePreparationPending(this)
-    "COMPLETED" -> MascotCreationState.InstallingMascot(jobId)
+    "COMPLETED" -> MascotCreationState.PoseSelectionReady(jobId)
     "FAILED" -> MascotCreationState.RemoteFailed(
         "Não foi possível criar seu mascote. Escolha outra foto e tente novamente.",
         MascotFailureRecovery.CHOOSE_PHOTO,

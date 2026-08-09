@@ -28,18 +28,18 @@ data class MascotPoseChoices(
 }
 
 val MASCOT_POSE_OPTIONS = listOf(
-    MascotPoseOption("normal_attentive", MascotPoseRole.NORMAL, "Atenta", "Pronta e olhando para você."),
-    MascotPoseOption("normal_relaxed", MascotPoseRole.NORMAL, "Relaxada", "Calma enquanto espera."),
-    MascotPoseOption("normal_curious", MascotPoseRole.NORMAL, "Curiosa", "Leve inclinação e expressão aberta."),
-    MascotPoseOption("normal_firm", MascotPoseRole.NORMAL, "Firme", "Postura confiante e estável."),
-    MascotPoseOption("listening_focus", MascotPoseRole.LISTENING, "Foco atento", "Inclina-se suavemente para escutar."),
-    MascotPoseOption("listening_process", MascotPoseRole.LISTENING, "Processando", "Escuta com concentração tranquila."),
-    MascotPoseOption("listening_natural", MascotPoseRole.LISTENING, "Gesto natural", "Um gesto de escuta adequado ao personagem."),
-    MascotPoseOption("listening_ready", MascotPoseRole.LISTENING, "Pronta", "Alerta e preparada para responder."),
-    MascotPoseOption("transcribing_notes", MascotPoseRole.TRANSCRIBING, "Anotação", "Registra a fala com atenção."),
-    MascotPoseOption("transcribing_thought", MascotPoseRole.TRANSCRIBING, "Pensamento profundo", "Organiza as informações com calma."),
-    MascotPoseOption("transcribing_fast", MascotPoseRole.TRANSCRIBING, "Digitação ágil", "Transcreve com energia e precisão."),
-    MascotPoseOption("transcribing_active", MascotPoseRole.TRANSCRIBING, "Escuta ativa", "Escuta e registra ao mesmo tempo."),
+    MascotPoseOption("normal_attentive", MascotPoseRole.NORMAL, "Pronto e atento", "Preparado para ajudar."),
+    MascotPoseOption("normal_relaxed", MascotPoseRole.NORMAL, "Relaxado", "Calmo enquanto espera."),
+    MascotPoseOption("normal_curious", MascotPoseRole.NORMAL, "Observador", "Atento ao que acontece."),
+    MascotPoseOption("normal_firm", MascotPoseRole.NORMAL, "Espera paciente", "Aguarda com tranquilidade."),
+    MascotPoseOption("listening_focus", MascotPoseRole.LISTENING, "Mão na orelha", "Mostra claramente que está ouvindo."),
+    MascotPoseOption("listening_process", MascotPoseRole.LISTENING, "Inclinado para ouvir", "Aproxima-se para escutar melhor."),
+    MascotPoseOption("listening_natural", MascotPoseRole.LISTENING, "Hang loose ouvindo", "Um gesto descontraído de escuta."),
+    MascotPoseOption("listening_ready", MascotPoseRole.LISTENING, "Cabeça inclinada", "Inclina a cabeça com atenção."),
+    MascotPoseOption("transcribing_notes", MascotPoseRole.TRANSCRIBING, "Escrevendo", "Registra a fala por escrito."),
+    MascotPoseOption("transcribing_fast", MascotPoseRole.TRANSCRIBING, "Digitando", "Transforma a fala em texto."),
+    MascotPoseOption("transcribing_thought", MascotPoseRole.TRANSCRIBING, "Organizando ideias", "Organiza as informações com calma."),
+    MascotPoseOption("transcribing_active", MascotPoseRole.TRANSCRIBING, "Anotando", "Faz anotações enquanto trabalha."),
 )
 
 fun poseOptions(role: MascotPoseRole): List<MascotPoseOption> =

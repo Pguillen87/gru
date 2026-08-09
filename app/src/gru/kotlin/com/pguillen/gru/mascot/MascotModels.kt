@@ -16,6 +16,8 @@ data class MascotPose(
     val fileName: String,
     val sha256: String,
     val downloadPath: String? = null,
+    val runtimeRole: String? = null,
+    val optionId: String? = null,
 )
 
 data class CustomMascotManifest(

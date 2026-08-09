@@ -6,7 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class GruMascotCreationFlowTest {
-    @Test fun `draft follows the approved seven step sequence`() {
+    @Test fun `draft submits the photo before generated choices`() {
         val sequence = generateSequence(MascotDraftStep.PHOTO) { step ->
             step.next().takeUnless { it == step }
         }.toList()
@@ -15,11 +15,22 @@ class GruMascotCreationFlowTest {
             listOf(
                 MascotDraftStep.PHOTO,
                 MascotDraftStep.CONFIRM,
-                MascotDraftStep.NORMAL,
-                MascotDraftStep.LISTENING,
-                MascotDraftStep.TRANSCRIBING,
-                MascotDraftStep.NAME,
-                MascotDraftStep.REVIEW,
+            ),
+            sequence,
+        )
+    }
+
+    @Test fun `generated customization asks for name before the three visual galleries`() {
+        val sequence = generateSequence(MascotCustomizationStep.NAME) { step ->
+            step.next().takeUnless { it == step }
+        }.toList()
+
+        assertEquals(
+            listOf(
+                MascotCustomizationStep.NAME,
+                MascotCustomizationStep.NORMAL,
+                MascotCustomizationStep.LISTENING,
+                MascotCustomizationStep.TRANSCRIBING,
             ),
             sequence,
         )

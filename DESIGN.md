@@ -21,7 +21,7 @@ Navigation Bar inferior: **Permissões**, **Voz**, **Ligar/Desligar**, **Mascote
 - Voz: Online — Groq e Privado — no aparelho, com custos/privacidade explícitos e estados reais de chave/modelo.
 - Controle: Gru ligado, desligado, bloqueado ou em configuração; ação deliberada Ligar/Desligar.
 - Mascotes: atual, meus mascotes, oficiais, aparência e arquivados futuro.
-- Criar mascote: jornada de uma decisão por etapa; pagamento e poses prévias são propostas futuras.
+- Criar mascote: jornada de uma decisão por etapa. Depois da escolha entre três identidades, uma superfície de carregamento antecede nome e três galerias visuais; cada galeria mostra quatro poses reais geradas. Pagamento continua futuro.
 
 ## Mascot, motion and accessibility
 

@@ -90,7 +90,7 @@ class MascotRepositoryTest {
         assertEquals(listOf("approve:job-1:master_2", "approve:job-1:master_2"), remote.approvalKeys)
     }
 
-    @Test fun `approved Master is downloaded promoted selected and remains pending for poses`() = runTest {
+    @Test fun `approved Master is downloaded but not selected before pose choices`() = runTest {
         val root = Files.createTempDirectory("gru-approved-master-test").toFile()
         try {
             val bytes = "transparent-master".encodeToByteArray()
@@ -106,7 +106,7 @@ class MascotRepositoryTest {
             val response = repository.approve("job-1", "master_2")
 
             assertEquals(job, response)
-            assertEquals("job-1" to "master_2", pending.selectedMascot)
+            assertEquals(null, pending.selectedMascot)
             assertEquals("job-1", pending.jobId.value)
             assertEquals("transparent-master", CustomMascotStore(root).previewFile("job-1")?.readText())
         } finally { root.deleteRecursively() }
@@ -163,7 +163,7 @@ class MascotRepositoryTest {
 
     @Test fun `completed remote state starts local installation`() {
         assertEquals(
-            MascotCreationState.InstallingMascot("job-1"),
+            MascotCreationState.PoseSelectionReady("job-1"),
             MascotJobResponse("job-1", "COMPLETED").toCreationState(),
         )
     }
@@ -200,6 +200,42 @@ class MascotRepositoryTest {
             assertEquals(1, remote.resultCalls)
             assertEquals(0, remote.createCalls)
             assertTrue(CustomMascotStore(root).poseFile("set-1", MascotRuntimeState.IDLE)?.isFile == true)
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun `visual catalog installs only the three poses chosen by the user`() = runTest {
+        val root = Files.createTempDirectory("gru-visual-catalog-test").toFile()
+        try {
+            val bytes = "valid-pose".encodeToByteArray()
+            val checksum = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            val roles = listOf("normal", "listening", "transcribing")
+            val optionIds = listOf(
+                "normal_attentive", "normal_relaxed", "normal_curious", "normal_firm",
+                "listening_focus", "listening_process", "listening_natural", "listening_ready",
+                "transcribing_notes", "transcribing_fast", "transcribing_thought", "transcribing_active",
+            )
+            val poses = optionIds.mapIndexed { index, optionId ->
+                val poseId = "pose_%02d".format(index + 1)
+                MascotPose(
+                    poseId, optionId, "$poseId.png", checksum, "/v1/mascot/jobs/job-1/poses/$poseId",
+                    roles[index / 4], optionId,
+                )
+            }
+            val result = MascotResultResponse(
+                "set-1", "master_1", "v3", "model", poses, "pose_01", "pose_05", "pose_10",
+            )
+            val prepared = PreparedMascotAssets(result, poses.associate { it.poseId to bytes })
+            val choices = MascotPoseChoices("normal_curious", "listening_ready", "transcribing_active")
+            val pending = FakePending("job-1")
+
+            assertTrue(MascotRepository(FakeRemote(), pending, CustomMascotStore(root)).installPreparedMascot(prepared, choices, "Luna"))
+
+            val installed = requireNotNull(CustomMascotStore(root).read("set-1"))
+            assertEquals(3, installed.poses.size)
+            assertEquals(listOf("pose_03", "pose_08", "pose_12"), listOf(
+                installed.selectedIdlePoseId, installed.selectedRecordingPoseId, installed.selectedTranscribingPoseId,
+            ))
+            assertEquals("Luna", installed.displayName)
         } finally { root.deleteRecursively() }
     }
 

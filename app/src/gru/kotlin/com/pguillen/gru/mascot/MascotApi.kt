@@ -78,6 +78,7 @@ data class MascotResultResponse(
                 MascotPose(
                     pose.requiredString("poseId"), pose.requiredString("name"), pose.requiredString("fileName"),
                     pose.requiredString("sha256"), pose.requiredString("downloadPath"),
+                    pose.string("runtimeRole"), pose.string("optionId"),
                 )
             } }.orEmpty(),
             idlePoseId = json.requiredString("idlePoseId"),
