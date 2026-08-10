@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
@@ -186,7 +185,7 @@ private fun GruBottomNavigation(selected: GruDestination, onSelect: (GruDestinat
             shape = RoundedCornerShape(28.dp),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier.fillMaxWidth()
-                .heightIn(min = if (largeText) 104.dp else 72.dp)
+                .height(if (largeText) 104.dp else 72.dp)
                 .shadow(18.dp, RoundedCornerShape(28.dp)),
         ) {
             Row(
