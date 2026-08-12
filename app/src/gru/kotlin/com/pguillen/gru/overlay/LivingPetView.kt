@@ -12,6 +12,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
 import android.graphics.Rect
 import android.graphics.RectF
 import android.os.SystemClock
@@ -46,6 +48,7 @@ internal class LivingPetView(
     private var renderedLevel = 0f
     private var animator: ValueAnimator? = null
     private var firstFrameReported = false
+    private var suppressionHighlighted = false
 
     fun setMode(value: PetMotionMode) {
         if (mode == value) return
@@ -56,6 +59,12 @@ internal class LivingPetView(
 
     fun setAudioLevel(value: Float) {
         targetLevel = value.coerceIn(0f, 1f)
+    }
+
+    fun setSuppressionHighlighted(highlighted: Boolean) {
+        if (suppressionHighlighted == highlighted) return
+        suppressionHighlighted = highlighted
+        invalidate()
     }
 
     fun release() {
@@ -263,6 +272,13 @@ internal class LivingPetView(
         }
         paint.alpha = alpha
         canvas.drawBitmap(bitmap, source, destination, paint)
+        if (suppressionHighlighted) {
+            paint.colorFilter = PorterDuffColorFilter(SUPPRESSION_TINT, PorterDuff.Mode.SRC_ATOP)
+            paint.alpha = SUPPRESSION_TINT_ALPHA
+            canvas.drawBitmap(bitmap, source, destination, paint)
+            paint.colorFilter = null
+        }
+        paint.alpha = 255
     }
 
     private fun createAnimator(): ValueAnimator? {
@@ -319,6 +335,8 @@ internal class LivingPetView(
 
     private companion object {
         const val IDLE_CYCLE_SECONDS = 7.2f
+        const val SUPPRESSION_TINT = 0xFFFF4D57.toInt()
+        const val SUPPRESSION_TINT_ALPHA = 82
     }
 }
 

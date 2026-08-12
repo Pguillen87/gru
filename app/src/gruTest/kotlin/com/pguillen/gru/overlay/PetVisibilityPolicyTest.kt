@@ -21,4 +21,10 @@ class PetVisibilityPolicyTest {
     fun `pauses while the requested engine is not ready`() {
         assertFalse(PetVisibilityPolicy.shouldShow(true, false, true, true))
     }
+
+    @Test
+    fun `conversation suppression hides only the pet without disabling Gru`() {
+        assertFalse(PetVisibilityPolicy.shouldShow(true, true, true, true, conversationSuppressed = true))
+        assertTrue(PetVisibilityPolicy.shouldShow(true, true, true, true, conversationSuppressed = false))
+    }
 }

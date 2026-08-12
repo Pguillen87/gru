@@ -47,7 +47,9 @@ Nenhum pacote é promovido se uma pose falhar. Os bytes verificados são entregu
 
 O armazenamento privado existente em `filesDir/mascots` foi evoluído; não existe uma segunda biblioteca. Pacotes antigos continuam legíveis porque os novos campos possuem defaults compatíveis. Um importado usa uma chave local derivada de `mascotId + packageVersion`, enquanto o manifesto preserva ambos separadamente.
 
-Metadados mínimos: identidade, versão, nome, origem, três poses, favorito e instante de instalação. Favorito usa arquivo sidecar e não altera imagens. Duplicidade compara `mascotId`, `packageVersion` e checksums.
+Metadados mínimos: identidade, versão, nome, origem, três poses, favorito, ordem da biblioteca e instante de instalação. Favorito usa arquivo sidecar e não altera imagens. A ordem manual usa metadata privada própria e não compete com favorito. Duplicidade compara `mascotId`, `packageVersion` e checksums.
+
+Depois da promoção atômica, o `CustomMascotStore` notifica seus observadores. Assim, navegar do Puleiro para Mascotes mostra imediatamente o novo item em `Meus mascotes`, sem reiniciar o aplicativo. Essa seção aceita apenas `source = code_import`; pacotes históricos continuam preservados, mas não são classificados como importações por código.
 
 ## Runtime e remoção
 
@@ -57,7 +59,7 @@ O overlay permanece inalterado:
 - `RECORDING → LISTENING`;
 - `TRANSCRIBING → TRANSCRIBING`.
 
-Ao remover o pacote ativo, a UI seleciona Faísca antes da exclusão. Recursos built-in não oferecem remoção. Arquivos temporários, staging e pacote parcial nunca se tornam a fonte ativa.
+Ao remover o pacote ativo, a UI seleciona Faísca antes da exclusão. Se o I/O falhar, restaura a seleção anterior. Recursos built-in não oferecem remoção. Arquivos temporários, staging e pacote parcial nunca se tornam a fonte ativa.
 
 ## Estados
 

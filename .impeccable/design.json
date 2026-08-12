@@ -1,13 +1,151 @@
 {
-  "name": "Gru",
-  "platform": "android",
-  "direction": "operational companion",
-  "tokens": {
-    "semantic": ["success", "attention", "error", "neutral", "surface", "onSurface", "outline"],
-    "themes": ["Light", "Dark"],
-    "spacingDp": [8, 16, 24, 32],
-    "minimumTouchTargetDp": 48
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-12T12:33:05-03:00",
+  "title": "Design System: Gru — Material 3 Companion",
+  "extensions": {
+    "colorMeta": {
+      "brand-cyan": {
+        "role": "primary",
+        "displayName": "Ciano de orientação",
+        "canonical": "#20B8FF",
+        "tonalRamp": ["#00202C", "#003548", "#00506C", "#006F95", "#0092C3", "#20B8FF", "#8BD8FF", "#D6F1FF"]
+      },
+      "brand-gold": {
+        "role": "secondary",
+        "displayName": "Dourado Gru",
+        "canonical": "#FFD84D",
+        "tonalRamp": ["#251A00", "#3E2E00", "#5D4700", "#806300", "#A98200", "#D3AA16", "#FFD84D", "#FFF1B8"]
+      },
+      "success": {
+        "role": "tertiary",
+        "displayName": "Verde pronto",
+        "canonical": "#31E6A1",
+        "tonalRamp": ["#002116", "#003825", "#005238", "#006F4D", "#008E64", "#00B77F", "#31E6A1", "#C0FFDE"]
+      },
+      "danger": {
+        "role": "error",
+        "displayName": "Vermelho de bloqueio",
+        "canonical": "#FF4D57",
+        "tonalRamp": ["#410006", "#68000D", "#930018", "#BA1A1A", "#E52E36", "#FF4D57", "#FFB3B6", "#FFE0E1"]
+      },
+      "dark-background": {
+        "role": "neutral",
+        "displayName": "Noite profunda",
+        "canonical": "#050607",
+        "tonalRamp": ["#050607", "#111416", "#191D20", "#30363A", "#596166", "#858E93", "#B5BDC2", "#F3F4F5"]
+      },
+      "light-background": {
+        "role": "neutral",
+        "displayName": "Papel quente",
+        "canonical": "#FBF9F1",
+        "tonalRamp": ["#191C1D", "#303334", "#444749", "#74777A", "#AEB1B3", "#DAD8D0", "#F0ECE4", "#FBF9F1"]
+      }
+    },
+    "typographyMeta": {
+      "headline-large": { "displayName": "Headline Large", "purpose": "Estados centrais e títulos de alta importância." },
+      "headline-medium": { "displayName": "Headline Medium", "purpose": "Títulos das cinco áreas." },
+      "headline-small": { "displayName": "Headline Small", "purpose": "Títulos de seção e mensagens operacionais." },
+      "title": { "displayName": "Title", "purpose": "Cards principais e escolhas." },
+      "body": { "displayName": "Body", "purpose": "Explicações em linguagem simples." },
+      "label": { "displayName": "Label", "purpose": "Botões, estados e navegação." }
+    },
+    "shadows": [
+      { "name": "navigation-lift", "value": "0 8px 18px rgba(0,0,0,0.20)", "purpose": "Elevar a Navigation Bar sem transformar cards comuns em superfícies flutuantes." }
+    ],
+    "motion": [
+      { "name": "state-short", "value": "160ms cubic-bezier(0.2, 0, 0, 1)", "purpose": "Trocas de seleção, feedback do pet e estados recuperáveis." },
+      { "name": "state-medium", "value": "300ms cubic-bezier(0.2, 0, 0, 1)", "purpose": "Transições de modo e avanço de etapa." },
+      { "name": "reduced-motion", "value": "0ms", "purpose": "Mudança instantânea quando o sistema reduz animações." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "<600dp" },
+      { "name": "expanded-font", "value": "fontScale >= 1.5" }
+    ]
   },
-  "components": ["NavigationCentral", "PermissionCard", "VoiceSelector", "MascotCard", "StepProgress", "RecoverableError", "TutorialDialog"],
-  "accessibility": ["talkback", "rtl", "fontScale200", "reducedMotion", "stateNotColorOnly"]
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Ação principal deliberada, com altura mínima de 48dp.",
+      "html": "<button class=\"ds-btn-primary\">Continuar</button>",
+      "css": ".ds-btn-primary{min-height:48px;padding:12px 24px;border:0;border-radius:999px;background:#20B8FF;color:#001F2A;font:600 14px/20px sans-serif;transition:filter 160ms,transform 160ms}.ds-btn-primary:hover{filter:brightness(1.08)}.ds-btn-primary:active{transform:scale(.98)}.ds-btn-primary:focus-visible{outline:3px solid #FFD84D;outline-offset:3px}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "description": "Ação secundária tonal ou contornada.",
+      "html": "<button class=\"ds-btn-secondary\">Cancelar</button>",
+      "css": ".ds-btn-secondary{min-height:48px;padding:12px 24px;border:1px solid #30363A;border-radius:999px;background:#191D20;color:#F3F4F5;font:600 14px/20px sans-serif;transition:border-color 160ms,background 160ms}.ds-btn-secondary:hover{border-color:#20B8FF;background:#22272A}.ds-btn-secondary:focus-visible{outline:3px solid #FFD84D;outline-offset:3px}"
+    },
+    {
+      "name": "Operational Card",
+      "kind": "card",
+      "refersTo": "card-standard",
+      "description": "Superfície tonal para permissão, motor, mascote ou recuperação.",
+      "html": "<article class=\"ds-card\"><strong>Microfone</strong><p>Permite que o Gru escute sua fala enquanto você dita.</p><span>Permitido</span></article>",
+      "css": ".ds-card{padding:16px;border:1px solid #30363A;border-radius:16px;background:#111416;color:#F3F4F5;font:400 16px/24px sans-serif}.ds-card strong{display:block;font-weight:600}.ds-card p{margin:8px 0;color:#B5BDC2}.ds-card span{color:#31E6A1;font-weight:600}.ds-card:focus-within{outline:3px solid #20B8FF;outline-offset:2px}"
+    },
+    {
+      "name": "Bottom Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-bottom",
+      "description": "Cinco destinos com Controle central protagonista e seleção não dependente de cor.",
+      "html": "<nav class=\"ds-nav\"><span>Permissões</span><span>Voz</span><strong aria-current=\"page\">Ligar/Desligar</strong><span>Mascotes</span><span>Puleiro do Gru</span></nav>",
+      "css": ".ds-nav{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;padding:8px 12px;border:1px solid #30363A;border-radius:28px;background:#111416;color:#B5BDC2;font:500 12px/16px sans-serif;text-align:center}.ds-nav>*{display:grid;place-items:center;min-height:48px;padding:4px;border-radius:20px}.ds-nav strong{color:#20B8FF;background:#191D20;font-weight:600}.ds-nav:focus-within{outline:3px solid #FFD84D;outline-offset:3px}"
+    },
+    {
+      "name": "Status Attention",
+      "kind": "chip",
+      "refersTo": "status-attention",
+      "description": "Pendência, preparação ou ação recomendada.",
+      "html": "<span class=\"ds-status-attention\">● Precisa ativar</span>",
+      "css": ".ds-status-attention{display:inline-flex;align-items:center;min-height:32px;padding:4px 12px;border-radius:999px;background:#FFD84D;color:#211B00;font:600 14px/20px sans-serif}"
+    },
+    {
+      "name": "Mascot Card",
+      "kind": "card",
+      "description": "Mascote em Fit, nome e seleção explícita.",
+      "html": "<button class=\"ds-mascot-card\" aria-pressed=\"true\"><span class=\"ds-mascot-placeholder\">GRU</span><strong>Faísca</strong><small>✓ Selecionado</small></button>",
+      "css": ".ds-mascot-card{display:grid;gap:8px;place-items:center;min-height:164px;padding:16px;border:2px solid #20B8FF;border-radius:12px;background:#191D20;color:#F3F4F5;font:400 14px/20px sans-serif}.ds-mascot-placeholder{display:grid;place-items:center;width:72px;height:72px;border-radius:12px;background:#111416;color:#FFD84D;font-weight:700}.ds-mascot-card small{color:#20B8FF}.ds-mascot-card:focus-visible{outline:3px solid #FFD84D;outline-offset:3px}"
+    },
+    {
+      "name": "Conversation Suppression Target",
+      "kind": "custom",
+      "description": "Zona temporária que oculta o pet somente na conversa atual da sessão.",
+      "html": "<div class=\"ds-suppress-target\">◉ Solte para ocultar nesta conversa</div>",
+      "css": ".ds-suppress-target{display:grid;place-items:center;min-height:64px;padding:12px 20px;border:2px solid #FF4D57;border-radius:16px;background:#BA1A1A;color:#FFFFFF;font:600 16px/22px sans-serif;text-align:center;transition:transform 160ms,background 160ms}.ds-suppress-target:hover{transform:scale(1.02);background:#FF4D57}.ds-suppress-target:focus-visible{outline:3px solid #FFD84D;outline-offset:3px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Companheiro Operacional",
+    "overview": "O Gru é um pequeno companheiro Android que ajuda a pessoa a falar e escrever. A interface combina clareza operacional, presença moderada da coruja oficial e respiro editorial. Material 3 é a base nativa; a identidade aparece no ciano de seleção, no dourado caloroso, nas superfícies suaves e na linguagem humana. O produto deve parecer pessoal sem virar jogo, simples sem parecer uma tela genérica de configurações e visual sem virar dashboard.",
+    "keyCharacteristics": [
+      "Navegação inferior com cinco destinos e Controle central protagonista.",
+      "Hierarquia direta, uma ação principal por contexto e superfícies com bastante respiro.",
+      "Estados comunicados por texto, ícone, forma e cor semântica.",
+      "Claro, escuro, fonte 200%, TalkBack, RTL e movimento reduzido como requisitos estruturais.",
+      "Comportamento Android nativo e integração com estados reais do runtime."
+    ],
+    "rules": [
+      { "name": "The Semantic State Rule", "body": "Verde significa pronto, dourado significa atenção, vermelho significa erro ou destruição e cinza significa neutralidade. Nenhum estado depende somente da cor.", "section": "colors" },
+      { "name": "The Brand Restraint Rule", "body": "Ciano e dourado orientam a experiência; não tingem indiscriminadamente todas as superfícies.", "section": "colors" },
+      { "name": "The Full Meaning Rule", "body": "Rótulos essenciais podem quebrar em duas linhas em fonte 200%; nunca devem ser abreviados nem reduzidos abaixo da escala Material para caber.", "section": "typography" },
+      { "name": "The Tonal First Rule", "body": "Profundidade nasce primeiro da diferença entre fundo, superfície e superfície elevada; sombra não substitui hierarquia.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do preservar Material 3, comportamento nativo e estados reais do runtime.",
+      "Do usar a coruja oficial moderadamente e sempre sem recorte ou recoloração.",
+      "Do testar claro, escuro, fonte 200%, TalkBack, RTL e movimento reduzido.",
+      "Do manter Permissões, Voz, Controle, Mascotes e Puleiro como áreas distintas.",
+      "Do comunicar falhas com recuperação acionável e linguagem não técnica."
+    ],
+    "donts": [
+      "Don't transformar o Gru em dashboard administrativo ou jogo infantil.",
+      "Don't usar amarelo para erro, vermelho para mera pendência ou verde para motor ainda preparando.",
+      "Don't esconder ou ligar/desligar o pet por toque direto na Navigation Bar.",
+      "Don't ler conteúdo de conversa, nome de contato ou clipboard sem ação explícita.",
+      "Don't cortar rótulos essenciais, reduzir tipografia para fazê-los caber ou depender apenas de animação."
+    ]
+  }
 }

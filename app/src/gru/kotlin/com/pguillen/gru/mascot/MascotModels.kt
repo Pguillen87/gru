@@ -49,6 +49,7 @@ data class CustomMascotEntry(
     val source: String = "legacy_custom",
     val favorite: Boolean = false,
     val installedAtMillis: Long = 0L,
+    val displayOrder: Int = Int.MAX_VALUE,
 )
 
 sealed interface MascotVisual {

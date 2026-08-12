@@ -33,10 +33,12 @@ O pet aparece somente quando há um campo editável focado e o teclado está vis
 - Gravar WAV temporário, detectar fala, transcrever e inserir no cursor ou na seleção.
 - Baixar o modelo local somente após ação explícita, validar tamanho e SHA-256 e armazená-lo em área privada.
 - Oferecer cinco pets, três tamanhos, transparência, arraste e encaixe na borda.
+- Manter o pet fora do teclado e do campo editável; permitir ocultá-lo temporariamente no contexto atual sem desligar o Gru.
 - Comunicar os estados inativo, ouvindo, processando, sucesso e erro.
 - Não oferecer teclado, dicionário, autocorreção, histórico, prompts, reescrita, mídia, extensões ou Wear OS.
 - Não registrar áudio, texto ditado, conteúdo da tela ou chave.
-- O Base Q5_1 é o modelo local padrão: foi escolhido após o teste de uso real mostrar que o Small não mantinha latência interativa em frases curtas no Samsung A55.
+- A identidade de conversa usa somente estrutura da janela e do editor, transformada em chave opaca da sessão. Silenciamentos não sobrevivem ao reinício do serviço.
+- O Small Q5_1 é o modelo local em avaliação para priorizar precisão em português. Ele substitui o Base Q5_1 após relatos de muitas palavras incorretas; sua latência precisa ser validada novamente em aparelho físico antes da decisão definitiva.
 - O Large V3 Turbo Q5_0 permanece apenas no histórico de benchmark e não é baixado pelo aplicativo.
 
 ## Product Principles

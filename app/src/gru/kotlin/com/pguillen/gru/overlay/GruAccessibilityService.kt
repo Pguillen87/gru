@@ -38,13 +38,17 @@ import kotlinx.coroutines.flow.asStateFlow
 class GruAccessibilityService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val focusUpdate = Runnable(::updateEditorState)
+    private val conversationResolver: ConversationContextResolver = StructuralConversationContextResolver()
     private var bubble: GruPetOverlayController? = null
     private var foreground = false
+    private var windowGeneration = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         GruOverlayHealth.serviceConnected()
+        conversationResolver.startSession()
+        ConversationSuppressionSession.startSession(SystemClock.elapsedRealtimeNanos())
         createNotificationChannel()
         bubble = GruPetOverlayController(this).also(GruPetOverlayController::start)
         refreshEditorStateAfterImeSettles()
@@ -59,9 +63,17 @@ class GruAccessibilityService : AccessibilityService() {
             }
             AccessibilityEvent.TYPE_VIEW_FOCUSED,
             AccessibilityEvent.TYPE_VIEW_CLICKED,
+            -> {
+                refreshEditorStateAfterImeSettles()
+            }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             -> {
+                val eventPackage = event.packageName?.toString()
+                val foreground = mutableForegroundPackage.value
+                if (!eventPackage.isNullOrBlank() && eventPackage != packageName &&
+                    (foreground == null || eventPackage == foreground)
+                ) windowGeneration += 1L
                 refreshEditorStateAfterImeSettles()
             }
         }
@@ -80,9 +92,16 @@ class GruAccessibilityService : AccessibilityService() {
     }
 
     private fun updateEditorState() {
-        mutableEditableFocused.value = focusedEditableNode() != null
+        val editable = focusedEditableNode()
+        val applicationWindow = focusedApplicationWindow()
+        val foreground = currentAppPackage(applicationWindow)?.takeIf { it != packageName }
+        mutableEditableFocused.value = editable != null
         mutableImeVisible.value = isImeWindowShown()
-        currentAppPackage()?.takeIf { it != packageName }?.let { mutableForegroundPackage.value = it }
+        mutableForegroundPackage.value = foreground
+        mutableOverlayEnvironment.value = resolveOverlayEnvironment(editable)
+        mutableConversationContext.value = conversationResolver.resolve(
+            conversationStructure(foreground, applicationWindow, editable),
+        )
     }
 
     private fun refreshEditorStateAfterImeSettles() {
@@ -100,6 +119,11 @@ class GruAccessibilityService : AccessibilityService() {
             .mapNotNull { window -> editableFrom(window.root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)) }
             .firstOrNull()
     }
+
+    private fun focusedApplicationWindow(): AccessibilityWindowInfo? = runCatching {
+        windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .maxByOrNull { if (it.isFocused) 1 else 0 }
+    }.getOrNull()
 
     private fun editableFrom(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? = when {
         node == null -> null
@@ -145,23 +169,83 @@ class GruAccessibilityService : AccessibilityService() {
         }.getOrDefault(false)
     }
 
-    internal fun editorAreaBottom(): Int = runCatching {
-        val bounds = Rect()
-        windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
-            ?.getBoundsInScreen(bounds)
-        bounds.top.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
-    }.getOrDefault(resources.displayMetrics.heightPixels)
-
-    private fun currentAppPackage(): String? = runCatching {
-        windows
-            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-            .sortedByDescending { it.isFocused }
-            .firstOrNull()
-            ?.root
-            ?.packageName
-            ?.toString()
+    private fun currentAppPackage(window: AccessibilityWindowInfo?): String? = runCatching {
+        window?.root?.packageName?.toString()
             ?: rootInActiveWindow?.packageName?.toString()
     }.getOrNull()
+
+    private fun resolveOverlayEnvironment(editable: AccessibilityNodeInfo?): OverlayEnvironment {
+        val usable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val metrics = getSystemService(WindowManager::class.java)?.currentWindowMetrics
+            val screen = metrics?.bounds
+                ?: Rect(0, 0, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+            val insets = metrics?.windowInsets?.getInsetsIgnoringVisibility(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+            )
+            OverlayRect(
+                left = screen.left + (insets?.left ?: 0),
+                top = screen.top + (insets?.top ?: 0),
+                right = screen.right - (insets?.right ?: 0),
+                bottom = screen.bottom - (insets?.bottom ?: 0),
+            )
+        } else {
+            OverlayRect(
+                left = 0,
+                top = 0,
+                right = resources.displayMetrics.widthPixels,
+                bottom = resources.displayMetrics.heightPixels,
+            )
+        }
+        val regions = buildList {
+            imeBounds()?.takeIf { it.hasArea() }?.let { add(AvoidanceRegion(it, AvoidanceKind.IME)) }
+            nodeBounds(editable)?.takeIf { it.hasArea() }?.let { add(AvoidanceRegion(it, AvoidanceKind.EDITOR)) }
+        }
+        return OverlayEnvironment(usable, regions)
+    }
+
+    private fun imeBounds(): OverlayRect? = runCatching {
+        val bounds = Rect()
+        val ime = windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } ?: return@runCatching null
+        ime.getBoundsInScreen(bounds)
+        bounds.toOverlayRect()
+    }.getOrNull()
+
+    private fun nodeBounds(node: AccessibilityNodeInfo?): OverlayRect? = runCatching {
+        node ?: return@runCatching null
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        bounds.toOverlayRect()
+    }.getOrNull()
+
+    private fun conversationStructure(
+        foregroundPackage: String?,
+        window: AccessibilityWindowInfo?,
+        editor: AccessibilityNodeInfo?,
+    ): ConversationStructure? = runCatching {
+        val packageName = foregroundPackage ?: return@runCatching null
+        val activeWindow = window ?: return@runCatching null
+        val editable = editor ?: return@runCatching null
+        val root = activeWindow.root ?: return@runCatching null
+        ConversationStructure(
+            packageName = packageName,
+            windowId = activeWindow.id,
+            windowGeneration = windowGeneration,
+            rootUniqueId = root.safeUniqueId(),
+            rootViewId = root.viewIdResourceName,
+            rootClassName = root.className?.toString(),
+            rootChildCount = root.childCount,
+            editorUniqueId = editable.safeUniqueId(),
+            editorViewId = editable.viewIdResourceName,
+            editorClassName = editable.className?.toString(),
+            editorBounds = nodeBounds(editable) ?: return@runCatching null,
+        )
+    }.getOrNull()
+
+    private fun AccessibilityNodeInfo.safeUniqueId(): String? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) uniqueId else null
+
+    private fun Rect.toOverlayRect() = OverlayRect(left, top, right, bottom)
+    private fun OverlayRect.hasArea() = width > 0 && height > 0
 
     private fun insertText(text: String): Boolean {
         if (text.isBlank() || !isImeWindowShown()) return false
@@ -279,6 +363,9 @@ class GruAccessibilityService : AccessibilityService() {
         mutableEditableFocused.value = false
         mutableImeVisible.value = false
         mutableForegroundPackage.value = null
+        mutableOverlayEnvironment.value = defaultOverlayEnvironment()
+        mutableConversationContext.value = null
+        ConversationSuppressionSession.startSession(0L)
         mainHandler.removeCallbacksAndMessages(null)
         bubble?.destroy()
         bubble = null
@@ -309,6 +396,17 @@ class GruAccessibilityService : AccessibilityService() {
 
         private val mutableForegroundPackage = MutableStateFlow<String?>(null)
         val foregroundPackage: StateFlow<String?> = mutableForegroundPackage.asStateFlow()
+
+        private val mutableOverlayEnvironment = MutableStateFlow(defaultOverlayEnvironment())
+        internal val overlayEnvironment: StateFlow<OverlayEnvironment> = mutableOverlayEnvironment.asStateFlow()
+
+        private val mutableConversationContext = MutableStateFlow<ConversationContext?>(null)
+        internal val conversationContext: StateFlow<ConversationContext?> = mutableConversationContext.asStateFlow()
+
+        private fun defaultOverlayEnvironment() = OverlayEnvironment(
+            usableBounds = OverlayRect(0, 0, 1, 1),
+            avoidanceRegions = emptyList(),
+        )
 
         fun injectText(text: String): Boolean = instance?.insertText(text) ?: false
 

@@ -9,6 +9,7 @@ import com.pguillen.gru.mascot.MascotSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 
 class FrontendOperationalStateTest {
     @Test fun `removing the active custom mascot requires built in fallback`() {
@@ -23,6 +24,30 @@ class FrontendOperationalStateTest {
             remove = { order += "remove"; true },
         ))
         assertEquals(listOf("fallback", "remove"), order)
+    }
+
+    @Test fun `failed active mascot removal restores previous selection`() {
+        val entry = CustomMascotEntry("package", "mascot", "preview", true, 0L, "Bob", source = "code_import")
+        val order = mutableListOf<String>()
+        assertFalse(removeImportedMascotSafely(
+            source = MascotSource.Custom("package", "mascot"),
+            entry = entry,
+            selectFallback = { order += "fallback" },
+            restoreSelection = { order += "restore" },
+            remove = { order += "remove"; false },
+        ))
+        assertEquals(listOf("fallback", "remove", "restore"), order)
+    }
+
+    @Test fun `my mascots contains only code imports`() {
+        val imported = CustomMascotEntry("imported", "one", "preview", true, 0L, "Bob", source = "code_import")
+        val legacy = CustomMascotEntry("legacy", "two", "preview", true, 0L, "Old", source = "legacy_custom")
+        assertEquals(listOf(imported), importedMascotEntries(listOf(legacy, imported)))
+    }
+
+    @Test fun `built in gallery exposes five real assets and reserves sixth for future`() {
+        assertEquals(5, currentBuiltInMascotCount)
+        assertEquals(6, PLANNED_BUILT_IN_MASCOT_COUNT)
     }
     @Test fun `permission roles distinguish attention error and success`() {
         assertEquals(PermissionVisualState.ATTENTION, permissionVisualState(granted = false))

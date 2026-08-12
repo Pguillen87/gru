@@ -20,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -30,6 +31,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
@@ -39,6 +41,7 @@ import com.pguillen.gru.dictation.TranscriptionEngine
 import com.pguillen.gru.local.WhisperModelManager
 import com.pguillen.gru.local.WhisperModelState
 import com.pguillen.gru.overlay.GruOverlayHealth
+import com.pguillen.gru.overlay.ConversationSuppressionSession
 
 @Composable
 internal fun GruControlScreen(
@@ -54,6 +57,7 @@ internal fun GruControlScreen(
     val key by prefs.groqApiKeyState.collectAsState()
     val modelState by WhisperModelManager.get(context).state.collectAsState()
     val health by GruOverlayHealth.state.collectAsState()
+    val suppression by ConversationSuppressionSession.state.collectAsState()
     val accessibility = remember(permissionRefresh) { isGruAccessibilityEnabled(context) }
     val microphone = remember(permissionRefresh) { hasPermission(context, Manifest.permission.RECORD_AUDIO) }
     val engineReady = when (engine) {
@@ -132,6 +136,41 @@ internal fun GruControlScreen(
                 stringResource(R.string.gru__control_reversible),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        if (suppression.count > 0) {
+            SuppressedConversationsCard(suppression.count) { ConversationSuppressionSession.clearAll() }
+        }
+    }
+}
+
+@Composable
+internal fun SuppressedConversationsCard(count: Int, onClear: () -> Unit) {
+    if (count <= 0) return
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                Icons.Default.Visibility,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                stringResource(R.string.gru__suppressed_conversations_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                pluralStringResource(R.plurals.gru__suppressed_conversations_summary, count, count),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = onClear, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.gru__show_again))
+            }
         }
     }
 }

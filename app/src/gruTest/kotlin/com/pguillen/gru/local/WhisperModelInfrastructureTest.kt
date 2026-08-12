@@ -21,12 +21,12 @@ import kotlin.test.assertTrue
 
 class WhisperModelInfrastructureTest {
     @Test
-    fun `pins the production Base Q5_1 model`() {
-        val model = GruWhisperModel.BASE_Q5_1
+    fun `pins the production Small Q5_1 model`() {
+        val model = GruWhisperModel.SMALL_Q5_1
 
-        assertEquals("ggml-base-q5_1.bin", model.fileName)
-        assertEquals(59_707_625L, model.expectedBytes)
-        assertEquals("422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898", model.sha256)
+        assertEquals("ggml-small-q5_1.bin", model.fileName)
+        assertEquals(190_085_487L, model.expectedBytes)
+        assertEquals("ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb", model.sha256)
         assertTrue(model.downloadUrl.contains(model.version.substringAfter('@')))
     }
 

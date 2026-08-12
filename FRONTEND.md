@@ -151,59 +151,48 @@ O pet flutuante não é uma quarta aba. Ele é desenhado pelo `GruAccessibilityS
 
 O overlay funciona sem rede depois que o pacote personalizado foi promovido. A troca de pose não chama Modal.
 
-## 5. Área Mascote
+### Posição segura e ocultação por conversa
 
-`GruMascotScreen` organiza a tela nesta ordem:
+`OverlayPlacementPolicy` mantém o pet dentro dos insets e fora do IME e do editor focado. Uma posição escolhida pelo usuário é reutilizada quando segura; caso teclado, rotação, tamanho ou editor criem colisão, o controller move o pet uma vez para o ponto válido mais próximo.
 
-1. **Meu mascote:** preview do visual ativo, nome e switch de ativação.
-2. **Meus mascotes:** galeria dos personalizados já aprovados; cada card pode ser selecionado e editado por caneta.
-3. **Mascotes do Gru:** Lume, Faísca, Bip, Pingo e Pudim.
-4. **Criar meu mascote:** Photo Picker e criação assíncrona.
-5. **Aparência:** Pequeno, Médio, Grande e opacidade.
-6. **Poses:** aparece quando a fonte personalizada possui pacote de poses.
+O arraste possui uma máquina visual separada do ditado. Durante o gesto, uma segunda janela não tocável mostra “Ocultar nesta conversa”; soltar dentro da zona adiciona uma chave opaca ao `ConversationSuppressionSession`. `prefs.enabled`, motor e `GruDictationState` não são modificados. Gravação e transcrição bloqueiam o gesto de ocultação.
 
-O nome de um mascote personalizado é metadado local. O diálogo de edição altera somente `displayName`; não reenvia foto, não chama Modal e não modifica `masterId`/`poseSetId`.
+`StructuralConversationContextResolver` não lê texto, título, contato nem mensagem. Quando há IDs estruturais estáveis, a chave pode distinguir o retorno ao mesmo contexto; sem isso, usa identidade efêmera por geração de janela e não finge precisão. Todo o estado é somente em memória e é limpo quando o serviço reinicia. Controle expõe apenas contador e “Mostrar novamente”, sem nomes de aplicativos ou pessoas.
 
-## 6. Fluxo de criação
+## 5. Biblioteca de mascotes
 
-O estado visual é uma projeção amigável do estado remoto:
+`GruMascotScreen` segue a galeria aprovada no Stitch e organiza a tela nesta ordem:
 
-```text
-Idle
-  -> PhotoSelected
-  -> Submitting
-  -> GenerationPaused/Tracking
-  -> AwaitingMasterApproval
-  -> PosePreparationPending
-  -> InstallingMascot
-  -> Completed
-```
+1. **Mascote atual:** preview com proporção preservada, nome e origem.
+2. **Mascotes do Gru:** Lume, Faísca, Bip, Pingo e Pudim. São os cinco assets oficiais existentes, sempre offline, selecionáveis e nunca removíveis. A grade de três colunas já comporta o sexto mascote planejado, mas nenhum placeholder é exibido enquanto o asset oficial não existir.
+3. **Meus mascotes:** somente pacotes com `source = code_import`, trazidos pelo Puleiro. Legados permanecem no armazenamento e não são misturados automaticamente.
+4. **Aparência:** Pequeno, Médio, Grande e transparência de 40% a 100%; ambas as preferências atualizam o preview e o overlay real.
 
-Falhas mantêm estados próprios: `NetworkUnavailable`, `SubmissionUncertain`, `RemoteFailed`, `InstallFailed`, `CancelPending` e `Canceled`.
+Favorito e ordem manual são metadados independentes. A ordem persiste em arquivo privado próprio, não renomeia imagens e não é alterada ao favoritar. O menu de cada importado permite mover para antes/depois e remover, inclusive por TalkBack. Se a remoção do mascote ativo falhar, a seleção anterior é restaurada.
 
-Regras:
+## 6. Fluxo do Puleiro
 
-- `PhotoPicker` não pede permissão ampla à galeria.
-- `Usar esta foto` bloqueia duplicação na UI e usa chave de idempotência no repository/API.
-- `pendingMascotJobId` impede iniciar outro job enquanto o anterior ainda está ativo.
-- Falha de rede preserva o job; retry consulta o mesmo job.
-- `COMPLETED` inicia instalação local, não fica preso em acompanhamento.
-- Retry de instalação repete `result -> download -> checksum -> promoção`; não consome GPU.
-- Cancelamento confirma o estado remoto antes de limpar o pending local.
-
-## 7. Autenticação e rede
-
-Cada requisição protegida usa:
+A criação pesada de mascotes não acontece no Android. O fluxo móvel é:
 
 ```text
-Authorization: Bearer <Firebase ID Token temporário>
-X-Firebase-AppCheck: <token temporário>
-X-Idempotency-Key: <chave estável da operação>
+Código do mascote
+  -> resolução do manifesto v1
+  -> prévia e confirmação
+  -> download das três poses
+  -> verificação de bytes, MIME, imagem e SHA-256
+  -> promoção atômica
+  -> Meus mascotes
 ```
 
-`MascotApi` serializa DTOs tipados. O token é obtido por `FirebaseMascotAuthTokenProvider`; App Check é fornecido por `FirebaseMascotAppCheckTokenProvider`. Nenhum segredo permanente do Modal está no APK.
+Os estados são explícitos (`Idle`, `Resolving`, `PreviewReady`, `Downloading`, `Verifying`, `Installing`, `Installed` e falhas recuperáveis). O clipboard só é lido após toque em “Colar código”, e o download nunca começa apenas por colar ou buscar.
 
-O cliente traduz códigos estruturados para mensagens curtas. `IOException` é conexão; `UNAUTHENTICATED`, `APP_CHECK_REQUIRED`, `GENERATION_DISABLED`, limites, foto inválida e 5xx têm mensagens diferentes e não expõem token, UID, stack trace ou URL privada.
+Nesta versão, `UnavailableMascotCodeResolver` retorna `NotConfigured`: a UI e o protocolo estão prontos, mas ainda não existe serviço Web/endpoint de produção. Fakes existem somente em testes.
+
+## 7. Rede e infraestrutura histórica
+
+O Puleiro não possui endpoint real configurado e não inventa backend, localhost ou sucesso. Quando o serviço Web existir, a implementação de `MascotCodeResolver` deverá usar HTTPS, timeout, erros estruturados, política de origem e o `schemaVersion` já definido.
+
+`MascotApi`, Firebase Auth/App Check e as classes da antiga geração móvel permanecem apenas como infraestrutura histórica desacoplada da navegação e da tela Mascotes. A biblioteca não abre polling, não retoma jobs e não chama esse backend.
 
 ## 8. Persistência e offline
 
@@ -268,7 +257,8 @@ Antes de alterar uma tela, validar:
 - Downloads aceitam somente HTTPS, MIME de imagem permitido, limite de 8 MiB por asset, bytes esperados, SHA-256 e imagem decodificável.
 - As três poses são verificadas em memória e promovidas em conjunto pelo `CustomMascotStore`; falha em uma impede instalação parcial.
 - Pacotes locais antigos continuam legíveis. Favorito é sidecar local e não regrava imagens.
-- Remover o mascote ativo seleciona Faísca antes de apagar o pacote; built-ins nunca oferecem remoção.
+- A biblioteca observa mudanças do `CustomMascotStore`; uma instalação concluída no Puleiro aparece em “Meus mascotes” sem reiniciar Activity ou processo.
+- Remover o mascote ativo seleciona Faísca antes de apagar o pacote; se a exclusão falhar, restaura a seleção anterior. Built-ins nunca oferecem remoção.
 
 - Não mover lógica de criação para `GruActivity`.
 - Não duplicar seleção/tamanho/opacidade em Geral e Mascote.

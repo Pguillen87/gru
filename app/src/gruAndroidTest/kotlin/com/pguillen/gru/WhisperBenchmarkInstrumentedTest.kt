@@ -76,7 +76,7 @@ class WhisperBenchmarkInstrumentedTest {
         const val BENCHMARK_MODEL_DIR = "benchmark-models"
         const val ARG_MODEL_NAME = "modelName"
         const val ARG_THREAD_COUNT = "threadCount"
-        const val DEFAULT_MODEL_NAME = "ggml-base-q5_1.bin"
+        const val DEFAULT_MODEL_NAME = "ggml-small-q5_1.bin"
         const val DEFAULT_THREAD_COUNT = 4
         const val MIN_THREADS = 1
         const val MAX_THREADS = 8

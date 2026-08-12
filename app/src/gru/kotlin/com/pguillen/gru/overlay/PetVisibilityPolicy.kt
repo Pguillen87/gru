@@ -12,8 +12,10 @@ internal object PetVisibilityPolicy {
         engineReady: Boolean,
         editableFocused: Boolean,
         imeVisible: Boolean,
+        conversationSuppressed: Boolean = false,
     ): Boolean = enabled &&
         engineReady &&
         editableFocused &&
-        imeVisible
+        imeVisible &&
+        !conversationSuppressed
 }

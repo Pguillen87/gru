@@ -3,6 +3,11 @@ package com.pguillen.gru.mascot
 import android.content.Context
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -39,7 +44,9 @@ class CustomMascotStore internal constructor(private val root: File) {
         return validatedMasterFile(manifest) ?: poseFile(poseSetId, MascotRuntimeState.IDLE)
     }
 
-    fun entries(): List<CustomMascotEntry> = root.listFiles()
+    fun entries(): List<CustomMascotEntry> {
+        val order = importedOrder().withIndex().associate { it.value to it.index }
+        return root.listFiles()
         .orEmpty()
         .filter { it.isDirectory && !it.name.startsWith(".") }
         .mapNotNull { folder ->
@@ -57,9 +64,20 @@ class CustomMascotStore internal constructor(private val root: File) {
                 manifest.source,
                 isFavorite(manifest.poseSetId),
                 manifest.installedAtMillis,
+                order[manifest.poseSetId] ?: Int.MAX_VALUE,
             )
         }
-        .sortedWith(compareByDescending<CustomMascotEntry> { it.favorite }.thenByDescending { it.updatedAtMillis })
+        .sortedWith(
+            compareBy<CustomMascotEntry> { it.displayOrder }
+                .thenBy { it.installedAtMillis.takeIf { installed -> installed > 0L } ?: it.updatedAtMillis }
+                .thenBy(CustomMascotEntry::poseSetId),
+        )
+    }
+
+    /** Emits a fresh filesystem snapshot whenever any store instance changes this library. */
+    fun observeEntries(): Flow<List<CustomMascotEntry>> = changeSignal()
+        .map { entries() }
+        .distinctUntilChanged()
 
     fun read(poseSetId: String): CustomMascotManifest? = runCatching {
         val json = Json.parseToJsonElement(File(directory(poseSetId), MANIFEST).readText()).jsonObject
@@ -94,14 +112,14 @@ class CustomMascotStore internal constructor(private val root: File) {
             masterFileName = MASTER,
             masterSha256 = checksum,
         )
-        return promoteFiles(manifest, mapOf(MASTER to image))
+        return promoteFiles(manifest, mapOf(MASTER to image)).also(::notifyIfChanged)
     }
 
     fun promote(manifest: CustomMascotManifest, images: Map<String, ByteArray>): Boolean = runCatching {
         require(manifest.isSafe())
         require(manifest.poses.all { pose -> images[pose.poseId]?.matchesSha256(pose.sha256) == true })
         val files = manifest.poses.associate { pose -> pose.fileName to images.getValue(pose.poseId) }
-        promoteFiles(manifest, files)
+        promoteFiles(manifest, files).also(::notifyIfChanged)
     }.getOrElse { false }
 
     fun rename(poseSetId: String, name: String): Boolean {
@@ -113,16 +131,17 @@ class CustomMascotStore internal constructor(private val root: File) {
             manifest.masterFileName?.let { fileName -> put(fileName, File(folder, fileName).readBytes()) }
             manifest.poses.forEach { pose -> put(pose.fileName, File(folder, pose.fileName).readBytes()) }
         }
-        return promoteFiles(manifest.copy(displayName = normalized), files)
+        return promoteFiles(manifest.copy(displayName = normalized), files).also(::notifyIfChanged)
     }
 
     fun setFavorite(poseSetId: String, favorite: Boolean): Boolean {
         if (read(poseSetId) == null) return false
-        return runCatching {
+        return locked { runCatching {
             val marker = File(directory(poseSetId), FAVORITE)
             if (favorite) marker.writeText("1") else if (marker.exists()) check(marker.delete())
+            notifyChanged()
             true
-        }.getOrDefault(false)
+        }.getOrDefault(false) }
     }
 
     private fun isFavorite(poseSetId: String): Boolean = File(directory(poseSetId), FAVORITE).isFile
@@ -136,6 +155,7 @@ class CustomMascotStore internal constructor(private val root: File) {
 
     fun promoteImported(manifest: MascotImportManifest, images: Map<MascotPoseRole, ByteArray>): Boolean {
         if (manifest.validate() != null || images.keys != MascotPoseRole.entries.toSet()) return false
+        if (manifest.poses.any { asset -> images[asset.role]?.matchesSha256(asset.sha256) != true }) return false
         val packageKey = manifest.packageKey()
         val poses = manifest.poses.map { asset ->
             val extension = when (asset.mimeType.lowercase()) {
@@ -159,11 +179,33 @@ class CustomMascotStore internal constructor(private val root: File) {
             displayName = normalizeDisplayName(manifest.displayName),
             importedMascotId = manifest.mascotId,
             packageVersion = manifest.packageVersion,
-            source = "code_import",
+            source = SOURCE_CODE_IMPORT,
             installedAtMillis = System.currentTimeMillis(),
         )
         val bytes = manifest.poses.associate { asset -> asset.poseId to images.getValue(asset.role) }
-        return promote(local, bytes)
+        return locked {
+            val promoted = promoteFiles(local, local.poses.associate { pose -> pose.fileName to bytes.getValue(pose.poseId) })
+            if (!promoted) return@locked false
+            val ordered = importedOrder().filterNot(packageKey::equals) + packageKey
+            persistImportedOrder(ordered)
+            notifyChanged()
+            true
+        }
+    }
+
+    fun reorderImported(poseSetId: String, offset: Int): Boolean = locked {
+        if (offset !in setOf(-1, 1)) return@locked false
+        val imported = entries().filter { it.source == SOURCE_CODE_IMPORT }.map(CustomMascotEntry::poseSetId)
+        val current = imported.indexOf(poseSetId)
+        val target = current + offset
+        if (current < 0 || target !in imported.indices) return@locked false
+        val reordered = imported.toMutableList().apply {
+            val moved = removeAt(current)
+            add(target, moved)
+        }
+        if (!persistImportedOrder(reordered)) return@locked false
+        notifyChanged()
+        true
     }
 
     private fun rewrite(manifest: CustomMascotManifest): Boolean {
@@ -175,7 +217,7 @@ class CustomMascotStore internal constructor(private val root: File) {
         return promoteFiles(manifest, files)
     }
 
-    private fun promoteFiles(manifest: CustomMascotManifest, files: Map<String, ByteArray>): Boolean = runCatching {
+    private fun promoteFiles(manifest: CustomMascotManifest, files: Map<String, ByteArray>): Boolean = locked { runCatching {
         require(manifest.isSafe())
         root.mkdirs()
         val staging = File(root, ".${manifest.poseSetId}.staging")
@@ -192,9 +234,44 @@ class CustomMascotStore internal constructor(private val root: File) {
         }
         backup.deleteRecursively()
         true
-    }.getOrElse { false }
+    }.getOrElse { false } }
 
-    fun remove(poseSetId: String): Boolean = runCatching { directory(poseSetId).deleteRecursively() }.getOrDefault(false)
+    fun remove(poseSetId: String): Boolean = locked { runCatching {
+        val removed = directory(poseSetId).deleteRecursively()
+        if (removed) {
+            persistImportedOrder(importedOrder().filterNot(poseSetId::equals))
+            notifyChanged()
+        }
+        removed
+    }.getOrDefault(false) }
+
+    private fun importedOrder(): List<String> = runCatching {
+        val element = Json.parseToJsonElement(File(root, ORDER).readText()).jsonArray
+        element.map { it.jsonPrimitive.content }.filter { it.matches(SAFE_ID) }
+    }.getOrDefault(emptyList())
+
+    private fun persistImportedOrder(order: List<String>): Boolean = runCatching {
+        require(order.distinct().size == order.size && order.all { it.matches(SAFE_ID) })
+        root.mkdirs()
+        val staging = File(root, "$ORDER.tmp")
+        staging.writeText(Json.encodeToString(JsonArray.serializer(), JsonArray(order.map(::JsonPrimitive))))
+        val target = File(root, ORDER)
+        val backup = File(root, "$ORDER.backup")
+        backup.delete()
+        if (target.exists() && !target.renameTo(backup)) error("Unable to replace mascot order")
+        if (!staging.renameTo(target)) {
+            if (backup.exists()) check(backup.renameTo(target))
+            error("Unable to persist mascot order")
+        }
+        backup.delete()
+        true
+    }.getOrDefault(false)
+
+    private fun changeSignal(): MutableStateFlow<Long> = CHANGE_SIGNALS.getOrPut(root.canonicalPath) { MutableStateFlow(0L) }
+    private fun notifyChanged() { changeSignal().value += 1L }
+    private fun notifyIfChanged(changed: Boolean) { if (changed) notifyChanged() }
+    private fun <T> locked(block: () -> T): T = synchronized(libraryLock()) { block() }
+    private fun libraryLock(): Any = LIBRARY_LOCKS.getOrPut(root.canonicalPath) { Any() }
 
     private fun directory(poseSetId: String): File {
         require(poseSetId.matches(Regex("^[A-Za-z0-9_-]{1,96}$")))
@@ -233,6 +310,11 @@ class CustomMascotStore internal constructor(private val root: File) {
         private const val MANIFEST = "manifest.json"
         private const val MASTER = "master.png"
         private const val FAVORITE = ".favorite"
+        private const val ORDER = ".import-order.json"
+        const val SOURCE_CODE_IMPORT = "code_import"
+        private val SAFE_ID = Regex("^[A-Za-z0-9_-]{1,96}$")
+        private val CHANGE_SIGNALS = ConcurrentHashMap<String, MutableStateFlow<Long>>()
+        private val LIBRARY_LOCKS = ConcurrentHashMap<String, Any>()
         const val MAX_DISPLAY_NAME_LENGTH = 32
     }
 }

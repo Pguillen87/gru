@@ -22,7 +22,9 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.HapticFeedbackConstants
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -78,6 +80,13 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private var previousVisibility: VisibilitySnapshot? = null
     private val positions = mutableMapOf<String, Pair<Int, Int>>()
     private var snapAnimator: ValueAnimator? = null
+    private var suppressionTarget: SuppressionTargetView? = null
+    private var suppressionTargetParams: WindowManager.LayoutParams? = null
+    private var suppressionTargetAdded = false
+    private val interaction = OverlayInteractionMachine()
+    private var currentEnvironment = OverlayEnvironment(OverlayRect(0, 0, screenWidth(), screenHeight()), emptyList())
+    private var currentConversation: ConversationContext? = null
+    private var currentDictationState: GruDictationState = GruDictationState.Idle
 
     private data class Appearance(
         val source: MascotSource,
@@ -88,6 +97,8 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private data class TargetState(
         val editableFocused: Boolean,
         val imeVisible: Boolean,
+        val conversation: ConversationContext?,
+        val conversationSuppressed: Boolean,
     )
 
     private data class VisibilitySnapshot(
@@ -103,6 +114,12 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             GruAccessibilityService.foregroundPackage.collect(::onForegroundPackageChanged)
         }
         scope.launch {
+            GruAccessibilityService.overlayEnvironment.collect { environment ->
+                currentEnvironment = environment
+                if (interaction.state == OverlayInteractionState.VISIBLE) repositionIfUnsafe()
+            }
+        }
+        scope.launch {
             val appearance = combine(
                 prefs.mascotSource,
                 prefs.size,
@@ -111,7 +128,16 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             val target = combine(
                 GruAccessibilityService.editableFocused,
                 GruAccessibilityService.imeVisible,
-            ) { focused, imeVisible -> TargetState(focused, imeVisible) }
+                GruAccessibilityService.conversationContext,
+                ConversationSuppressionSession.state,
+            ) { focused, imeVisible, conversation, suppression ->
+                TargetState(
+                    editableFocused = focused,
+                    imeVisible = imeVisible,
+                    conversation = conversation,
+                    conversationSuppressed = conversation?.key in suppression.suppressedKeys,
+                )
+            }
             combine(
                 prefs.enabled,
                 prefs.engine,
@@ -129,6 +155,7 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         recoveryJob?.cancel()
         scope.cancel()
         snapAnimator?.cancel()
+        removeSuppressionTarget()
         GruDictation.cancel()
         removeImmediately()
         releasePet()
@@ -149,6 +176,8 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         target: TargetState,
         state: GruDictationState,
     ) {
+        currentDictationState = state
+        currentConversation = target.conversation
         val nextRuntimeState = runtimeState(state)
         if (appearance.source != currentSource ||
             appearance.size != currentSize ||
@@ -172,11 +201,13 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             engineReady = engineReady,
             editableFocused = target.editableFocused,
             imeVisible = target.imeVisible,
+            conversationSuppressed = target.conversationSuppressed,
         )
         reportVisibility(enabled, engineReady, target, shouldShow)
         if (shouldShow) {
+            if (interaction.state == OverlayInteractionState.SUPPRESSED) interaction.reset()
             ensureShown()
-            clampPosition()
+            repositionIfUnsafe()
         } else {
             hide()
         }
@@ -218,6 +249,8 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         desiredVisible = false
         recoveryJob?.cancel()
         recoveryJob = null
+        removeSuppressionTarget()
+        resetSuppressionFeedback()
         removeImmediately()
     }
 
@@ -279,6 +312,28 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             minimumHeight = viewSize
             isClickable = true
             isFocusable = true
+            accessibilityDelegate = object : View.AccessibilityDelegate() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    if (canSuppress()) {
+                        info.addAction(
+                            AccessibilityNodeInfo.AccessibilityAction(
+                                ACCESSIBILITY_ACTION_SUPPRESS,
+                                context.getString(R.string.gru__hide_in_conversation),
+                            ),
+                        )
+                    }
+                }
+
+                override fun performAccessibilityAction(host: View, action: Int, args: android.os.Bundle?): Boolean {
+                    return if (action == ACCESSIBILITY_ACTION_SUPPRESS && canSuppress()) {
+                        suppressCurrentConversation(animate = false)
+                        true
+                    } else {
+                        super.performAccessibilityAction(host, action, args)
+                    }
+                }
+            }
             addView(signal, FrameLayout.LayoutParams(petSize, petSize, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
             addView(pet, FrameLayout.LayoutParams(petSize, petSize, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
             addView(status, FrameLayout.LayoutParams(scaledDp(90), scaledDp(21), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
@@ -459,19 +514,43 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - downRawX
                     val dy = event.rawY - downRawY
-                    if (!dragging && hypot(dx.toDouble(), dy.toDouble()) >= slop) dragging = true
+                    if (!dragging && hypot(dx.toDouble(), dy.toDouble()) >= slop && canDrag()) {
+                        dragging = true
+                        interaction.beginDrag()
+                        if (canSuppress()) showSuppressionTarget()
+                    }
                     if (dragging) {
-                        layout.x = (startX + dx.toInt()).coerceIn(0, maxX())
-                        layout.y = (startY + dy.toInt()).coerceIn(minY(), maxY())
+                        val bounds = OverlayPlacementPolicy.dragBounds(
+                            currentEnvironment,
+                            OverlaySize(rootWidth(), rootHeight()),
+                            edgeMarginPx(),
+                        )
+                        layout.x = (startX + dx.toInt()).coerceIn(bounds.left, bounds.right)
+                        layout.y = (startY + dy.toInt()).coerceIn(bounds.top, bounds.bottom)
                         updateWindowLayout()
+                        updateSuppressionTargetState()
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (dragging) snapToEdge() else rootView?.performClick()
+                    if (dragging) {
+                        when (interaction.release()) {
+                            DragReleaseAction.SUPPRESS -> suppressCurrentConversation(animate = true)
+                            DragReleaseAction.SNAP_TO_EDGE -> {
+                                removeSuppressionTarget()
+                                resetSuppressionFeedback()
+                                snapToEdge()
+                            }
+                        }
+                    } else rootView?.performClick()
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> true
+                MotionEvent.ACTION_CANCEL -> {
+                    interaction.reset()
+                    removeSuppressionTarget()
+                    resetSuppressionFeedback()
+                    true
+                }
                 else -> false
             }
         }
@@ -479,7 +558,8 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
 
     private fun snapToEdge() {
         val layout = params ?: return
-        val target = if (layout.x + rootWidth() / 2 < screenWidth() / 2) EDGE_MARGIN else maxX() - EDGE_MARGIN
+        val margin = edgeMarginPx()
+        val target = if (layout.x + rootWidth() / 2 < screenWidth() / 2) margin else maxX() - margin
         val start = layout.x
         if (!animationsEnabled() || start == target) {
             layout.x = target.coerceIn(0, maxX())
@@ -512,8 +592,11 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (screenWidth() - width - EDGE_MARGIN).coerceAtLeast(0)
-            y = ((service.editorAreaBottom() - width) / 2).coerceIn(minY(), maxY())
+            OverlayPlacementPolicy.initialPosition(
+                currentEnvironment,
+                OverlaySize(width, width),
+                edgeMarginPx(),
+            ).let { point -> x = point.x; y = point.y }
         }
     }
 
@@ -523,13 +606,20 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         currentPackage = packageName
         val saved = positions[packageName]
         params?.let { layout ->
-            if (saved != null) {
-                layout.x = saved.first.coerceIn(0, maxX())
-                layout.y = saved.second.coerceIn(minY(), maxY())
-            } else {
-                layout.x = (maxX() - EDGE_MARGIN).coerceAtLeast(0)
-                layout.y = ((service.editorAreaBottom() - rootHeight()) / 2).coerceIn(minY(), maxY())
-            }
+            val next = saved?.let { OverlayPoint(it.first, it.second) }
+                ?: OverlayPlacementPolicy.initialPosition(
+                    currentEnvironment,
+                    OverlaySize(rootWidth(), rootHeight()),
+                    edgeMarginPx(),
+                )
+            val safe = OverlayPlacementPolicy.resolve(
+                next,
+                currentEnvironment,
+                OverlaySize(rootWidth(), rootHeight()),
+                edgeMarginPx(),
+            )
+            layout.x = safe.x
+            layout.y = safe.y
             updateWindowLayout()
         }
     }
@@ -544,14 +634,117 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         if (added) rootView?.let { view -> params?.let { runCatching { windowManager.updateViewLayout(view, it) } } }
     }
 
-    private fun clampPosition() {
+    private fun repositionIfUnsafe() {
+        if (interaction.state != OverlayInteractionState.VISIBLE) return
         val layout = params ?: return
-        val x = layout.x.coerceIn(0, maxX())
-        val y = layout.y.coerceIn(minY(), maxY())
-        if (layout.x == x && layout.y == y) return
-        layout.x = x
-        layout.y = y
+        val resolved = OverlayPlacementPolicy.resolve(
+            OverlayPoint(layout.x, layout.y),
+            currentEnvironment,
+            OverlaySize(rootWidth(), rootHeight()),
+            edgeMarginPx(),
+        )
+        if (layout.x == resolved.x && layout.y == resolved.y) return
+        layout.x = resolved.x
+        layout.y = resolved.y
         updateWindowLayout()
+        Log.d(TAG, "event=overlay_auto_repositioned reason=unsafe_region")
+    }
+
+    private fun canSuppress(): Boolean = currentConversation != null &&
+        canDrag()
+
+    private fun canDrag(): Boolean =
+        currentDictationState !is GruDictationState.Recording &&
+        currentDictationState !is GruDictationState.Transcribing
+
+    private fun showSuppressionTarget() {
+        if (suppressionTargetAdded) return
+        val target = suppressionTarget ?: SuppressionTargetView(context).also { suppressionTarget = it }
+        val targetParams = createSuppressionTargetParams().also { suppressionTargetParams = it }
+        runCatching {
+            windowManager.addView(target, targetParams)
+            suppressionTargetAdded = true
+            Log.d(TAG, "event=suppression_zone_shown")
+        }.onFailure { Log.w(TAG, "suppression zone unavailable: ${it.javaClass.simpleName}") }
+    }
+
+    private fun createSuppressionTargetParams(): WindowManager.LayoutParams {
+        val largeText = context.resources.configuration.fontScale >= 1.5f
+        val width = (screenWidth() * if (largeText) 0.90f else 0.72f).toInt().coerceAtMost(dp(if (largeText) 480 else 360))
+        val height = dp(if (largeText) 104 else 64)
+        val usable = currentEnvironment.usableBounds
+        val imeTop = currentEnvironment.avoidanceRegions.filter { it.kind == AvoidanceKind.IME }
+            .minOfOrNull { it.bounds.top } ?: usable.bottom
+        return WindowManager.LayoutParams(
+            width,
+            height,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = usable.left + ((usable.width - width) / 2).coerceAtLeast(0)
+            y = (imeTop - height - dp(20)).coerceAtLeast(usable.top + dp(20))
+        }
+    }
+
+    private fun updateSuppressionTargetState() {
+        val targetBounds = suppressionTargetBounds() ?: return
+        val layout = params ?: return
+        val petBounds = OverlayRect(layout.x, layout.y, layout.x + rootWidth(), layout.y + rootHeight())
+        val over = isOverSuppressionTarget(petBounds, targetBounds)
+        val entered = interaction.updateSuppressionTarget(over)
+        suppressionTarget?.setOverTarget(over)
+        petView?.setSuppressionHighlighted(over)
+        rootView?.scaleX = if (over && animationsEnabled()) 1.06f else 1f
+        rootView?.scaleY = if (over && animationsEnabled()) 1.06f else 1f
+        if (entered) rootView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    }
+
+    private fun suppressionTargetBounds(): OverlayRect? {
+        val layout = suppressionTargetParams ?: return null
+        return OverlayRect(layout.x, layout.y, layout.x + layout.width, layout.y + layout.height)
+    }
+
+    private fun suppressCurrentConversation(animate: Boolean) {
+        val conversation = currentConversation ?: return
+        removeSuppressionTarget()
+        val view = rootView
+        if (!animate || !animationsEnabled() || view == null) {
+            interaction.suppressionCompleted()
+            commitSuppression(conversation)
+            return
+        }
+        view.animate().cancel()
+        view.animate().alpha(0f).scaleX(0.72f).scaleY(0.72f).setDuration(160L).withEndAction {
+            interaction.suppressionCompleted()
+            commitSuppression(conversation)
+        }.start()
+    }
+
+    private fun commitSuppression(conversation: ConversationContext) {
+        if (ConversationSuppressionSession.suppress(conversation)) {
+            Log.i(TAG, "event=conversation_suppressed confidence=${conversation.confidence}")
+            Toast.makeText(context, R.string.gru__conversation_hidden_confirmation, Toast.LENGTH_SHORT).show()
+        } else {
+            hide()
+        }
+    }
+
+    private fun removeSuppressionTarget() {
+        if (suppressionTargetAdded) suppressionTarget?.let { runCatching { windowManager.removeView(it) } }
+        suppressionTargetAdded = false
+        suppressionTargetParams = null
+    }
+
+    private fun resetSuppressionFeedback() {
+        petView?.setSuppressionHighlighted(false)
+        rootView?.scaleX = 1f
+        rootView?.scaleY = 1f
+        if (interaction.state != OverlayInteractionState.SUPPRESSED) interaction.reset()
     }
 
     private fun runtimeState(state: GruDictationState): MascotRuntimeState = when (state) {
@@ -579,8 +772,8 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
     private fun screenWidth(): Int = context.resources.displayMetrics.widthPixels
     private fun screenHeight(): Int = context.resources.displayMetrics.heightPixels
     private fun maxX(): Int = (screenWidth() - rootWidth()).coerceAtLeast(0)
-    private fun minY(): Int = EDGE_MARGIN
-    private fun maxY(): Int = (service.editorAreaBottom() - rootHeight() - EDGE_MARGIN).coerceAtLeast(minY())
+    private fun edgeMarginPx(): Int = dp(EDGE_MARGIN)
+    private fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
     private fun animationsEnabled(): Boolean = ValueAnimator.areAnimatorsEnabled()
 
@@ -597,9 +790,12 @@ class GruPetOverlayController(private val service: GruAccessibilityService) {
         const val RECOVERY_DELAY_MILLIS = 120L
         const val BASE_VIEW_DP = 120
         const val BASE_PET_DP = 108
+        const val ACCESSIBILITY_ACTION_SUPPRESS = 0x47525501
     }
 
     private class PetOverlayLayout(context: Context) : FrameLayout(context) {
+        override fun getAccessibilityClassName(): CharSequence = android.widget.Button::class.java.name
+
         override fun dispatchDraw(canvas: Canvas) {
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
             super.dispatchDraw(canvas)

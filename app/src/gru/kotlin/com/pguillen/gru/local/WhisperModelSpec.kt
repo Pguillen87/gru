@@ -17,13 +17,13 @@ data class WhisperModelSpec(
 )
 
 object GruWhisperModel {
-    val BASE_Q5_1 = WhisperModelSpec(
-        id = "base-q5_1",
-        version = "ggerganov/whisper.cpp@5359861c739e955e79d9a303bcbc70fb988958b1",
-        fileName = "ggml-base-q5_1.bin",
+    val SMALL_Q5_1 = WhisperModelSpec(
+        id = "small-q5_1",
+        version = "ggerganov/whisper.cpp@f281eb45af861ab5e5297d23694b7d46e090c02c",
+        fileName = "ggml-small-q5_1.bin",
         downloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/" +
-            "5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q5_1.bin?download=true",
-        expectedBytes = 59_707_625L,
-        sha256 = "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+            "f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-small-q5_1.bin?download=true",
+        expectedBytes = 190_085_487L,
+        sha256 = "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
     )
 }

@@ -21,6 +21,7 @@ import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.Locale
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.flow.first
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -135,6 +136,31 @@ class MascotImportTest {
         assertFalse(store.entries().single().favorite)
         assertTrue(store.remove(installed.packageKey))
         assertTrue(store.entries().isEmpty())
+    }
+
+    @Test fun `manual order persists and favorite does not override it`() = runTest {
+        val root = Files.createTempDirectory("perch-order").toFile()
+        val store = CustomMascotStore(root)
+        val first = validManifest().copy(mascotId = "first", displayName = "First")
+        val second = validManifest().copy(mascotId = "second", displayName = "Second")
+        val firstKey = assertIs<MascotInstallResult.Installed>(installer(store).install(first)).packageKey
+        val secondKey = assertIs<MascotInstallResult.Installed>(installer(store).install(second)).packageKey
+
+        assertEquals(listOf(firstKey, secondKey), store.entries().map { it.poseSetId })
+        assertTrue(store.reorderImported(secondKey, -1))
+        assertTrue(CustomMascotStore(root).setFavorite(firstKey, true))
+        assertEquals(listOf(secondKey, firstKey), CustomMascotStore(root).entries().map { it.poseSetId })
+    }
+
+    @Test fun `installation is immediately observable from another store instance`() = runTest {
+        val root = Files.createTempDirectory("perch-observe").toFile()
+        val installerStore = CustomMascotStore(root)
+        val libraryStore = CustomMascotStore(root)
+        assertTrue(libraryStore.entries().isEmpty())
+
+        assertIs<MascotInstallResult.Installed>(installer(installerStore).install(validManifest()))
+
+        assertEquals("code_import", libraryStore.observeEntries().first().single().source)
     }
 
     private fun installer(store: CustomMascotStore) = MascotPackageInstaller(

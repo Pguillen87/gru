@@ -38,6 +38,12 @@
   <string name="gru__remove_imported_mascot">Remover mascote</string>
   <string name="gru__remove_mascot_title">Remover este mascote do celular?</string>
   <string name="gru__remove_mascot_summary">Você poderá baixá-lo novamente usando o código.</string>
+  <string name="gru__remove_mascot_failed">Não foi possível remover este mascote. Sua seleção anterior foi restaurada.</string>
+  <string name="gru__move_mascot_before">Mover para antes</string>
+  <string name="gru__move_mascot_after">Mover para depois</string>
+  <string name="gru__mascot_actions">Ações para %1$s</string>
+  <string name="gru__selected">Selecionado</string>
+  <string name="gru__not_selected">Não selecionado</string>
   <string name="gru__try_another_code">Tentar outro código</string>
   <string name="gru__close">Fechar</string>
   <string name="gru__mascots_title">Mascotes</string>
@@ -51,6 +57,15 @@
   <string name="gru__turn_on">Ligar</string>
   <string name="gru__turn_off">Desligar</string>
   <string name="gru__control_reversible">Você pode mudar esse estado quando quiser.</string>
+  <string name="gru__hide_in_conversation">Ocultar nesta conversa</string>
+  <string name="gru__release_to_hide_conversation">Solte para ocultar nesta conversa</string>
+  <string name="gru__conversation_hidden_confirmation">Mascote oculto nesta conversa.</string>
+  <string name="gru__suppressed_conversations_title">Conversas silenciadas</string>
+  <string name="gru__show_again">Mostrar novamente</string>
+  <plurals name="gru__suppressed_conversations_summary">
+    <item quantity="one">O mascote está oculto temporariamente em %1$d conversa.</item>
+    <item quantity="other">O mascote está oculto temporariamente em %1$d conversas.</item>
+  </plurals>
   <string name="gru__permissions_title">Permissões</string>
   <string name="gru__permissions_progress">%1$d de %2$d concluído</string>
   <string name="gru__permissions_header">Configurar acesso</string>
@@ -150,7 +165,7 @@
   <string name="gru__private_title">Privado — no aparelho</string>
   <string name="gru__private_subtitle">Seu áudio não sai do celular</string>
   <string name="gru__private_benefits">✓ Áudio permanece no celular\n✓ Funciona offline\n✓ Não precisa de chave API</string>
-  <string name="gru__private_details">Precisa baixar cerca de 57 MiB. Usa mais bateria e processamento; a velocidade depende do aparelho.</string>
+  <string name="gru__private_details">Precisa baixar cerca de 181 MiB. Usa mais bateria e processamento; a velocidade depende do aparelho.</string>
   <string name="gru__use_online">Usar Online</string>
   <string name="gru__use_private">Baixar modo privado</string>
   <string name="gru__active">Ativo</string>
@@ -175,8 +190,8 @@
   <string name="gru__open_groq_site">Abrir site da Groq</string>
   <string name="gru__save_and_continue">Salvar e continuar</string>
   <string name="gru__offline_model">Modelo offline</string>
-  <string name="gru__model_name">Whisper Base Q5_1</string>
-  <string name="gru__model_size">Download de cerca de 57 MiB. Recomendamos usar Wi-Fi.</string>
+  <string name="gru__model_name">Whisper Small Q5_1</string>
+  <string name="gru__model_size">Download de cerca de 181 MiB. Recomendamos usar Wi-Fi.</string>
   <string name="gru__model_not_installed">Não instalado. O download só começa quando você pedir.</string>
   <string name="gru__download_model">Baixar modelo offline</string>
   <string name="gru__model_preparing">Preparando download…</string>
@@ -188,7 +203,7 @@
   <string name="gru__remove_model">Remover modelo offline</string>
   <string name="gru__try_download_again">Tentar baixar novamente</string>
   <string name="gru__model_source">Versão fixa e verificada do modelo.</string>
-  <string name="gru__model_error_space">Não há espaço suficiente. Libere pelo menos 185 MiB e tente novamente.</string>
+  <string name="gru__model_error_space">Não há espaço suficiente. Libere pelo menos 310 MiB e tente novamente.</string>
   <string name="gru__model_error_network">O download parou. Verifique sua conexão e tente novamente.</string>
   <string name="gru__model_error_corrupt">O arquivo não passou na verificação e foi removido. Tente novamente.</string>
   <string name="gru__model_error_storage">O Gru não conseguiu salvar o modelo. Verifique o espaço disponível e tente novamente.</string>
@@ -196,8 +211,11 @@
   <string name="gru__my_mascot">Meu mascote</string>
   <string name="gru__gru_mascots">Mascotes do Gru</string>
   <string name="gru__my_mascots">Meus mascotes</string>
-  <string name="gru__my_mascots_summary">Seus mascotes personalizados ficam salvos aqui.</string>
-  <string name="gru__my_mascots_empty">Você ainda não criou um mascote personalizado.</string>
+  <string name="gru__current_mascot">Mascote atual</string>
+  <string name="gru__official_mascot">Incluído no Gru</string>
+  <string name="gru__imported_from_perch">Trazido do Puleiro do Gru</string>
+  <string name="gru__my_mascots_summary">Os mascotes que você trouxer do Puleiro aparecem aqui.</string>
+  <string name="gru__my_mascots_empty">Os mascotes que você trouxer do Puleiro aparecerão aqui.</string>
   <string name="gru__create_mascot">Criar meu mascote</string>
   <string name="gru__create_mascot_summary">Transforme uma pessoa ou animal em um mascote do Gru com uma foto.</string>
   <string name="gru__choose_photo">Criar com uma foto</string>

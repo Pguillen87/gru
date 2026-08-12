@@ -13,7 +13,7 @@ Implementação da Parte 3 na branch `feature/frontend-redesign-compose`, deriva
 - `GruGeneralScreen`: Permissões, com resumo de conclusão e reavaliação no retorno da tela de Configurações.
 - `GruTranscriptionScreen`: Voz, preservando a seleção transacional Online/Groq e Privado/Whisper.
 - `GruControlScreen`: estado operacional derivado de `GruPreferences`, permissão de Acessibilidade, microfone, motor e saúde do overlay. Ligar/desligar usa somente `prefs.setEnabled`.
-- `GruMascotScreen`: biblioteca, seleção, edição de nome, favoritos, remoção, tamanho e opacidade.
+- `GruMascotScreen`: galeria fiel ao Stitch, mascote atual, cinco built-ins reais, importados do Puleiro, ordem persistente, favoritos, remoção com rollback, tamanho e transparência.
 - `GruPerchScreen`: entrada por código, resolução versionada, prévia e instalação local de três poses prontas.
 
 ## Componentes e acessibilidade
@@ -30,10 +30,20 @@ Não há router paralelo. A segurança da troca de motor continua em `GruPrefere
 - Não foram criados vídeos ou screenshots falsos para os tutoriais.
 - Pagamento, poses remotas antecipadas e arquivamento continuam fora do escopo.
 - O protótipo Figma foi consultado somente em leitura nos nós aprovados (`6:20`, `6:24`, `7:3`, `7:10`, `7:17`, `7:24`, `7:31`, `7:38`, `8:3`, `9:4–9:6`).
+- O sexto mascote built-in continua pendente do asset oficial; nenhum item falso ou duplicado foi criado.
+- `UnavailableMascotCodeResolver` continua sendo o resolvedor de produção. O Android está preparado para importar, mas ainda não existe serviço real configurado que transforme um código em `MascotImportManifest`.
+
+## Biblioteca de mascotes
+
+A tela usa como referência visual a tela Stitch `0eea9dbbf15e4a24b4eb6d2dea734102` do projeto `Gru Visual Lab`: grade compacta de três colunas no tamanho normal, cards tonais de 12dp, seleção ciano com check e grupos visualmente separados. Em fonte a partir de 150%, a grade passa para duas colunas para preservar nomes, ações e alvos de 48dp.
+
+`Mascotes do Gru` contém somente os cinco recursos oficiais existentes. `Meus mascotes` filtra estritamente `source = code_import`; entradas legadas continuam preservadas no `CustomMascotStore`. Instalação, favorito, reordenação e remoção publicam um novo snapshot por `Flow`, de modo que o retorno do Puleiro atualiza a tela imediatamente. A ordem manual é metadata privada separada do favorito e sobrevive ao reinício do processo.
+
+Na remoção ativa, a seleção muda para Faísca antes do I/O. Se a exclusão não concluir, a seleção customizada anterior é restaurada e o diálogo permanece com uma mensagem recuperável. O overlay e seu mapeamento `IDLE/RECORDING/TRANSCRIBING` não foram alterados.
 
 ## Verificação
 
-Na rodada do Puleiro foram executados com sucesso: `:app:compileDebugKotlin`, `:app:compileReleaseAndroidTestKotlin`, `:app:testReleaseUnitTest` (100 testes), `:app:assembleDebug`, `:app:assembleRelease`, `:app:assembleAndroidTest`, `:app:lintDebug`, `git diff --check` e `zipalign -c -P 16 -v 4`. O APK de depuração está em `app/build/outputs/apk/debug/app-debug.apk`, SHA-256 `F6A7D84ED130916A70ABC8D44F41A1102F2E80D5C7AC9C906DCE8D1CF3A4351A`. Não havia aparelho listado no ADB nesta validação, portanto o teste Compose foi compilado, mas não executado fisicamente; nenhuma autorização de Acessibilidade foi automatizada.
+Na rodada final da biblioteca foram executados com sucesso: `:app:compileDebugKotlin`, `:app:testReleaseUnitTest` (105 testes), `:app:assembleDebug`, `:app:assembleRelease`, `:app:assembleAndroidTest`, `:app:lintDebug`, `git diff --check` e `zipalign -c -P 16 -v 4`. Os quatro testes Compose de `GruMascotScreenTest` também foram executados em aparelho físico, incluindo fonte 200%, RTL, semântica de seleção e ações do mascote importado. O APK de depuração final foi instalado e aberto pelo ADB; está em `app/build/outputs/apk/debug/app-debug.apk`, SHA-256 `2EB8498EB6950E1BC5B6525E465CF7C848ED751109E924163270F7669E2C3498`. Nenhuma autorização de Acessibilidade foi automatizada.
 
 ## Correção visual após auditoria
 
@@ -60,3 +70,9 @@ A estratégia posterior substitui a rota móvel de geração pelo `GruPerchScree
 O resolvedor de produção é deliberadamente indisponível até existir configuração real. A tela responde “O Puleiro ainda está sendo preparado”, sem localhost, domínio inventado ou sucesso falso. Fakes existem apenas nos testes.
 
 `MascotImportCoordinator` concentra e serializa os estados; `MascotPackageInstaller` baixa e verifica três poses; `CustomMascotStore` promove atomicamente, detecta duplicidade, persiste favoritos sem tocar nas imagens e permite remoção segura com fallback para Faísca quando o pacote estava ativo. A chave local usa SHA-256 do par `mascotId + packageVersion`, sem colisões por sanitização. URLs locais/privadas, credenciais embutidas, portas alternativas e redirects inseguros são recusados. A telemetria `GruPerch` registra apenas trace aleatório, evento, duração e resultado estrutural — nunca código, URL ou imagem.
+
+## Ocultar nesta conversa
+
+O overlay agora resolve uma `OverlayEnvironment` com insets, IME e limites do editor, e aplica uma política pura de posicionamento seguro. O gesto de arraste mostra uma zona visual separada acima do teclado; entrar combina ícone, texto, tint vermelho e haptic único. A máquina `OverlayInteractionState` permanece independente de `GruDictationState`.
+
+O contexto usa apenas metadados estruturais e uma chave SHA-256 salgada por sessão. Não são lidos ou registrados contato, título, mensagem ou texto digitado. IDs suficientes geram identidade estrutural estável; caso contrário, a geração da janela produz fallback efêmero para evitar ocultar todo um aplicativo. `ConversationSuppressionSession` não persiste em disco e é reiniciado junto com o serviço. Controle mostra somente contador e ação global de recuperação.
