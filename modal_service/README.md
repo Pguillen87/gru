@@ -26,3 +26,6 @@ modal deploy -m modal_service.app
 ```
 
 The deployment must not proceed if the Firebase Admin Secret is absent. See [OPERATIONS.md](OPERATIONS.md), [API.md](API.md), and [FIRST_GPU_SMOKE.md](FIRST_GPU_SMOKE.md).
+# Contrato Puleiro v2
+
+A integração segura, não geradora e owner-scoped está documentada em [API_V2.md](API_V2.md). Nenhum deploy é implícito: testes locais não acionam GPU.
