@@ -23,6 +23,54 @@ def test_create_replay_returns_same_job_without_new_quota_or_cost():
     assert all("cost" not in key for key in usage)
 
 
+def test_v2_registration_stops_before_generation_and_is_attempt_idempotent():
+    service, usage = coordinator()
+    first, created = service.register(
+        "uid-a",
+        "registration-key",
+        "original/hash",
+        registration_only=True,
+        attempt_id="attempt-1",
+    )
+    replay, replay_created = service.register(
+        "uid-a",
+        "registration-key",
+        "original/hash",
+        registration_only=True,
+        attempt_id="attempt-1",
+    )
+
+    assert created and not replay_created
+    assert first.job_id == replay.job_id
+    assert first.state is JobState.REGISTERED
+    assert not first.generation_reserved and first.gpu_call_id is None
+    assert all("cost" not in key for key in usage)
+
+
+def test_v2_attempt_is_owner_scoped_and_cannot_change_on_replay():
+    service, _ = coordinator()
+    job, _ = service.register(
+        "uid-a", "registration-key", "original/hash", registration_only=True, attempt_id="attempt-1"
+    )
+    with pytest.raises(JobNotFound):
+        service.ensure_owner(job, "uid-b")
+    with pytest.raises(DomainError, match="different attempt"):
+        service.register(
+            "uid-a", "registration-key", "original/hash", registration_only=True, attempt_id="attempt-2"
+        )
+
+
+def test_v2_generation_is_not_authorized_when_switch_is_off():
+    service, usage = coordinator()
+    job, _ = service.register(
+        "uid-a", "registration-key", "original/hash", registration_only=True, attempt_id="attempt-1"
+    )
+
+    assert not service.authorize_generation(job.job_id, "uid-a", enabled=False)
+    assert service.get(job.job_id).state is JobState.REGISTERED
+    assert all("cost" not in key for key in usage)
+
+
 def test_response_loss_recovery_uses_deterministic_job_without_new_quota():
     service, usage = coordinator()
     first, _ = service.register("uid-a", "key-x", "original/hash")

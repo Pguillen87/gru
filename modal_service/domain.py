@@ -11,6 +11,7 @@ from modal_service.catalog import DEFAULT_POSE_CHOICES, MASTER_PROMPT_VERSION, P
 
 
 class JobState(StrEnum):
+    REGISTERED = "REGISTERED"
     QUEUED = "QUEUED"
     VALIDATING_INPUT = "VALIDATING_INPUT"
     READY_FOR_GENERATION = "READY_FOR_GENERATION"
@@ -28,6 +29,7 @@ class JobState(StrEnum):
 TERMINAL_STATES = frozenset({JobState.COMPLETED, JobState.FAILED, JobState.CANCELED})
 
 ALLOWED_TRANSITIONS: Mapping[JobState, frozenset[JobState]] = {
+    JobState.REGISTERED: frozenset({JobState.VALIDATING_INPUT, JobState.CANCELED}),
     JobState.QUEUED: frozenset({JobState.VALIDATING_INPUT, JobState.CANCELED}),
     JobState.VALIDATING_INPUT: frozenset({JobState.READY_FOR_GENERATION, JobState.GENERATING_MASTER, JobState.FAILED, JobState.CANCELED}),
     JobState.READY_FOR_GENERATION: frozenset({JobState.VALIDATING_INPUT, JobState.CANCELED}),
@@ -92,6 +94,7 @@ class JobRecord:
     user_id: str
     idempotency_key: str
     source_key: str
+    attempt_id: str | None = None
     state: JobState = JobState.QUEUED
     master_id: str | None = None
     pose_set_id: str | None = None

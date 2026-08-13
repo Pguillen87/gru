@@ -30,7 +30,8 @@ from modal_service.catalog import (
     POSE_OPTIONS,
     validate_pose_choices,
 )
-from modal_service.config import Environment, generation_enabled, limits_for
+from modal_service.bff_auth import BffAuthenticationRejected, BffIdentity, verify_bff_token
+from modal_service.config import Environment, feature_enabled, generation_enabled, limits_for
 from modal_service.coordinator import JobCoordinator, JobOperation
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
 from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState
@@ -45,6 +46,7 @@ from modal_service.model_cache import (
 from modal_service.persistent_runtime import PersistentPipelineRuntime
 from modal_service.security import AuthenticationRejected, app_check_token, bearer_token, may_schedule_gpu, valid_firebase_claims
 from modal_service.validation import ImageValidationError, validate_image
+from modal_service.v2_contract import public_job
 
 APP_NAME = "gru-mascot"
 FIREBASE_PROJECT_ID = "gru-mascote"
@@ -55,6 +57,9 @@ ENVIRONMENT = Environment(os.getenv("GRU_MASCOT_ENV", Environment.DEVELOPMENT))
 FIREBASE_SECRET_ENVIRONMENT = os.getenv("GRU_FIREBASE_SECRET_ENVIRONMENT") or None
 LIMITS = limits_for(ENVIRONMENT)
 GPU_GENERATION_ENABLED = generation_enabled(ENVIRONMENT, os.getenv("GPU_GENERATION_ENABLED"))
+REGISTRATION_ENABLED = feature_enabled(os.getenv("REGISTRATION_ENABLED"), default=True)
+MASTER_GENERATION_ENABLED = feature_enabled(os.getenv("MASTER_GENERATION_ENABLED"))
+POSE_GENERATION_ENABLED = feature_enabled(os.getenv("POSE_GENERATION_ENABLED"))
 MASTER_GPU = "H100"
 QWEN_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
 QWEN_MODEL_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
@@ -115,6 +120,12 @@ class CreateJobRequest(BaseModel):
     pose_choices: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_POSE_CHOICES))
 
 
+class CreateJobV2Request(BaseModel):
+    image_base64: str = Field(min_length=1, max_length=14_000_000)
+    content_type: str | None = None
+    attempt_id: str = Field(pattern=r"^[A-Za-z0-9:_-]{1,160}$")
+
+
 class ApproveMasterRequest(BaseModel):
     master_id: str = Field(pattern=r"^master_[1-4]$")
 
@@ -128,6 +139,9 @@ api_image = (
         {
             "GRU_MASCOT_ENV": ENVIRONMENT.value,
             "GPU_GENERATION_ENABLED": "true" if GPU_GENERATION_ENABLED else "false",
+            "REGISTRATION_ENABLED": "true" if REGISTRATION_ENABLED else "false",
+            "MASTER_GENERATION_ENABLED": "true" if MASTER_GENERATION_ENABLED else "false",
+            "POSE_GENERATION_ENABLED": "true" if POSE_GENERATION_ENABLED else "false",
         }
     )
     .pip_install(
@@ -136,6 +150,7 @@ api_image = (
         "httpx>=0.28,<1",
         "google-auth>=2.38,<3",
         "firebase-admin>=6.6,<7",
+        "PyJWT>=2.10,<3",
     )
 )
 gpu_image = api_image.pip_install(
@@ -158,6 +173,10 @@ firebase_admin_secret = modal.Secret.from_name(
     "gru-mascot-firebase-admin",
     environment_name=FIREBASE_SECRET_ENVIRONMENT,
 )
+puleiro_bff_secret = modal.Secret.from_name(
+    "gru-mascot-puleiro-bff",
+    environment_name=FIREBASE_SECRET_ENVIRONMENT,
+)
 
 
 def _record_key(user_id: str, idempotency_key: str) -> str:
@@ -166,6 +185,10 @@ def _record_key(user_id: str, idempotency_key: str) -> str:
 
 def _operation_key(user_id: str, operation: str) -> str:
     return f"operation:{user_id}:{operation}"
+
+
+def _attempt_key(user_id: str, attempt_id: str) -> str:
+    return f"attempt:{user_id}:{attempt_id}"
 
 
 def _asset_path(job_id: str, folder: str, name: str) -> Path:
@@ -327,10 +350,21 @@ def register_job(
     idempotency_key: str,
     source_key: str,
     pose_choices: dict[str, str] | None = None,
+    registration_only: bool = False,
+    attempt_id: str | None = None,
 ) -> dict[str, object]:
     try:
         coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
-        job, created = coordinator.register(user_id, idempotency_key, source_key, pose_choices)
+        job, created = coordinator.register(
+            user_id,
+            idempotency_key,
+            source_key,
+            pose_choices,
+            registration_only=registration_only,
+            attempt_id=attempt_id,
+        )
+        if attempt_id:
+            coordinator.idempotency[_attempt_key(user_id, attempt_id)] = job.job_id
         return {"job": _serialize(job), "created": created}
     except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
         return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
@@ -926,7 +960,12 @@ def normalize_master_assets(job_id: str) -> dict[str, object]:
     return {"job_id": job_id, "masters": updated}
 
 
-@app.function(image=api_image, volumes={ASSET_ROOT: assets}, secrets=[firebase_admin_secret], max_containers=1)
+@app.function(
+    image=api_image,
+    volumes={ASSET_ROOT: assets},
+    secrets=[firebase_admin_secret, puleiro_bff_secret],
+    max_containers=1,
+)
 @modal.asgi_app()
 def api():
     from fastapi import Depends, FastAPI, Header
@@ -1023,6 +1062,29 @@ def api():
     ) -> str:
         return user_id
 
+    async def verified_bff_identity(authorization: str | None = Header(default=None)) -> BffIdentity:
+        try:
+            token = bearer_token(authorization)
+            return verify_bff_token(token, os.environ.get("PULEIRO_BFF_JWT_SECRET", ""))
+        except (AuthenticationRejected, BffAuthenticationRejected) as error:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "BFF_UNAUTHENTICATED", "message": "A valid BFF identity is required."},
+            ) from error
+
+    async def bff_operation_context(
+        identity: BffIdentity = Depends(verified_bff_identity),
+        x_idempotency_key: str | None = Header(default=None),
+    ) -> tuple[BffIdentity, str]:
+        if not x_idempotency_key or not x_idempotency_key.strip():
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "IDEMPOTENCY_KEY_REQUIRED", "message": "An idempotency key is required."},
+            )
+        return identity, x_idempotency_key.strip()
+
     @service.get("/health")
     async def health() -> dict[str, object]:
         return {
@@ -1057,6 +1119,128 @@ def api():
             raise _api_error(error) from error
         except ValueError as error:
             raise _api_error(DomainError("Invalid pose selection.")) from error
+
+    @service.post("/v2/mascot/jobs", status_code=202)
+    async def create_job_v2(
+        request: CreateJobV2Request,
+        context: tuple[BffIdentity, str] = Depends(bff_operation_context),
+    ):
+        identity, key = context
+        if not REGISTRATION_ENABLED:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "REGISTRATION_DISABLED", "message": "Job registration is disabled."},
+            )
+        if request.attempt_id != identity.attempt_id:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "ATTEMPT_MISMATCH", "message": "The attempt does not belong to this identity."},
+            )
+        try:
+            content = _decode_image(request.image_base64)
+            validate_image(content, request.content_type)
+            digest = hashlib.sha256(content).hexdigest()
+            registration = register_job.remote(
+                identity.user_id,
+                key,
+                f"original/{digest}",
+                registration_only=True,
+                attempt_id=request.attempt_id,
+            )
+            _raise_guard_error(registration)
+            job = _deserialize(dict(registration["job"]))
+            destination = _asset_path(job.job_id, "original", "source.bin")
+            if not destination.is_file() or hashlib.sha256(destination.read_bytes()).hexdigest() != digest:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
+                assets.commit()
+            return public_job(job) | {"idempotentReplay": not bool(registration["created"])}
+        except (ImageValidationError, DomainError, CostLimitExceeded, RateLimitExceeded) as error:
+            raise _api_error(error) from error
+
+    @service.get("/v2/mascot/jobs")
+    async def recover_job_v2(
+        attempt_id: str,
+        identity: BffIdentity = Depends(verified_bff_identity),
+    ):
+        if attempt_id != identity.attempt_id:
+            raise _api_error(JobNotFound("Job was not found."))
+        try:
+            job_id = str(idempotency[_attempt_key(identity.user_id, attempt_id)])
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            return public_job(job, _master_references(job))
+        except KeyError as error:
+            raise _api_error(JobNotFound("Job was not found.")) from error
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.get("/v2/mascot/jobs/{job_id}")
+    async def read_job_v2(job_id: str, identity: BffIdentity = Depends(verified_bff_identity)):
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            return public_job(job, _master_references(job))
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.post("/v2/mascot/jobs/{job_id}/master-generations", status_code=202)
+    async def start_master_generation_v2(
+        job_id: str,
+        context: tuple[BffIdentity, str] = Depends(bff_operation_context),
+    ):
+        identity, _ = context
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            if not MASTER_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
+                raise GuardRejected("GENERATION_DISABLED", "Master generation is disabled.")
+            return public_job(_deserialize(_schedule_master(job_id, identity.user_id)))
+        except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
+            raise _api_error(error) from error
+
+    @service.post("/v2/mascot/jobs/{job_id}/masters/{master_id}/approve")
+    async def approve_master_v2(
+        job_id: str,
+        master_id: str,
+        context: tuple[BffIdentity, str] = Depends(bff_operation_context),
+    ):
+        identity, _ = context
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            if master_id not in {reference["id"] for reference in _master_references(job)}:
+                raise JobNotFound("Master was not found.")
+            approval = job_control.remote(
+                JobOperation.APPROVE_MASTER.value,
+                job_id,
+                identity.user_id,
+                master_id=master_id,
+            )
+            _raise_guard_error(approval)
+            return public_job(_deserialize(dict(approval["job"])), _master_references(job))
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.post("/v2/mascot/jobs/{job_id}/pose-generations", status_code=202)
+    async def start_pose_generation_v2(
+        job_id: str,
+        context: tuple[BffIdentity, str] = Depends(bff_operation_context),
+    ):
+        identity, _ = context
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            if not POSE_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
+                raise GuardRejected("POSE_GENERATION_DISABLED", "Pose generation is disabled.")
+            raise GuardRejected("POSE_GENERATION_NOT_READY", "Pose generation is not available in v2 yet.")
+        except DomainError as error:
+            raise _api_error(error) from error
 
     @service.get("/v1/mascot/jobs/{job_id}")
     async def read_job(job_id: str, user_id: str = Depends(secure_user)):

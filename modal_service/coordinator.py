@@ -69,6 +69,9 @@ class JobCoordinator:
         key: str,
         source_key: str,
         pose_choices: dict[str, str] | None = None,
+        *,
+        registration_only: bool = False,
+        attempt_id: str | None = None,
     ) -> tuple[JobRecord, bool]:
         selected_poses = validate_pose_choices(pose_choices or dict(DEFAULT_POSE_CHOICES))
         request_key = f"create:{user_id}:{key}"
@@ -79,6 +82,8 @@ class JobCoordinator:
                 raise DomainError("Idempotency key was already used with different input.")
             if existing.pose_choices != selected_poses:
                 raise DomainError("Idempotency key was already used with different pose choices.")
+            if existing.attempt_id != attempt_id:
+                raise DomainError("Idempotency key was already used with a different attempt.")
             return existing, False
 
         job_id = deterministic_job_id(user_id, key)
@@ -88,6 +93,8 @@ class JobCoordinator:
                 raise DomainError("Idempotency key was already used with different input.")
             if existing.pose_choices != selected_poses:
                 raise DomainError("Idempotency key was already used with different pose choices.")
+            if existing.attempt_id != attempt_id:
+                raise DomainError("Idempotency key was already used with a different attempt.")
             self.idempotency[request_key] = existing.job_id
             return existing, False
         except JobNotFound:
@@ -106,9 +113,14 @@ class JobCoordinator:
             source_key=source_key,
             model_version="Qwen-Image-Edit-2511",
             pose_choices=selected_poses,
+            attempt_id=attempt_id,
         )
-        job.transition_to(JobState.VALIDATING_INPUT)
-        job.transition_to(JobState.READY_FOR_GENERATION)
+        if registration_only:
+            job.state = JobState.REGISTERED
+            job.updated_at = job.created_at
+        else:
+            job.transition_to(JobState.VALIDATING_INPUT)
+            job.transition_to(JobState.READY_FOR_GENERATION)
         self.save(job)
         self.idempotency[request_key] = job.job_id
         return job, True
@@ -118,7 +130,7 @@ class JobCoordinator:
             return False
         job = self.get(job_id)
         self.ensure_owner(job, user_id)
-        if job.state is not JobState.READY_FOR_GENERATION or job.generation_reserved:
+        if job.state not in {JobState.REGISTERED, JobState.READY_FOR_GENERATION} or job.generation_reserved:
             return False
         generation_key = f"user-generations:{self.day_key}:{user_id}"
         next_user_generations = require_job_quota(
