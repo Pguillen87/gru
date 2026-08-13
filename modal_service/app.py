@@ -1227,6 +1227,26 @@ def api():
         except DomainError as error:
             raise _api_error(error) from error
 
+    @service.get("/v2/mascot/jobs/{job_id}/masters/{master_id}")
+    async def download_master_v2(
+        job_id: str,
+        master_id: str,
+        identity: BffIdentity = Depends(verified_bff_identity),
+    ):
+        from fastapi.responses import FileResponse
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            if master_id not in {reference["id"] for reference in _master_references(job)}:
+                raise JobNotFound("Master was not found.")
+            path = _asset_path(job_id, "masters", f"{master_id}.png")
+            if not path.is_file():
+                raise JobNotFound("Master was not found.")
+            return FileResponse(path, media_type="image/png", filename=f"{master_id}.png")
+        except DomainError as error:
+            raise _api_error(error) from error
+
     @service.post("/v2/mascot/jobs/{job_id}/pose-generations", status_code=202)
     async def start_pose_generation_v2(
         job_id: str,

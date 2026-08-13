@@ -49,3 +49,11 @@ def test_v1_routes_remain_in_the_api_factory():
     assert '@service.post("/v1/mascot/jobs"' in source
     assert '@service.post("/v1/mascot/jobs/{job_id}/approve-master"' in source
     assert '@service.get("/v1/mascot/jobs/{job_id}/result"' in source
+
+
+def test_v2_master_download_is_owner_scoped():
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+    route = source.split('@service.get("/v2/mascot/jobs/{job_id}/masters/{master_id}")', 1)[1]
+    route = route.split('@service.post("/v2/mascot/jobs/{job_id}/pose-generations"', 1)[0]
+    assert "verified_bff_identity" in route
+    assert "_ensure_owner(job, identity.user_id)" in route
