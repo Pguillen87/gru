@@ -29,6 +29,13 @@ def test_completed_modal_step_is_not_publicly_ready():
     assert public_job(record(JobState.COMPLETED))["status"] == "awaiting_set_approval"
 
 
+def test_public_states_needed_for_no_gpu_simulation_are_stable():
+    assert public_job(record(JobState.AWAITING_MASTER_APPROVAL))["status"] == "awaiting_master_approval"
+    assert public_job(record(JobState.READY_FOR_POSES, master_id="master_1"))["status"] == "master_approved"
+    assert public_job(record(JobState.FAILED, error_code="SIMULATED"))["status"] == "failed"
+    assert public_job(record(JobState.CANCELED))["status"] == "canceled"
+
+
 def test_approval_and_registration_v2_do_not_spawn_gpu_or_poses():
     source = Path("modal_service/app.py").read_text(encoding="utf-8")
     create_block = source.split('@service.post("/v2/mascot/jobs", status_code=202)', 1)[1].split(
