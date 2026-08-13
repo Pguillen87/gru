@@ -140,6 +140,8 @@ api_image = (
     modal.Image.debian_slim(python_version="3.12")
     .env(
         {
+            "GRU_MASCOT_APP_NAME": APP_NAME,
+            "GRU_MASCOT_RESOURCE_PREFIX": RESOURCE_PREFIX,
             "GRU_MASCOT_ENV": ENVIRONMENT.value,
             "GPU_GENERATION_ENABLED": "true" if GPU_GENERATION_ENABLED else "false",
             "REGISTRATION_ENABLED": "true" if REGISTRATION_ENABLED else "false",
@@ -984,12 +986,21 @@ def api():
     from google.oauth2 import id_token
 
     service = FastAPI(title="GRU Mascot API", docs_url=None, redoc_url=None)
-    credentials_json = os.environ.get("FIREBASE_ADMIN_CREDENTIALS_JSON")
-    if not credentials_json:
-        raise RuntimeError("Firebase Admin credentials are required for protected API startup.")
-    try:
-        firebase_admin.get_app()
-    except ValueError:
+    def ensure_firebase_admin() -> None:
+        """Initialize Firebase only for legacy v1 requests.
+
+        Modal v2 authenticates the Puleiro BFF with its short-lived service
+        token and must remain independently startable in an isolated staging
+        environment without copying production Firebase credentials.
+        """
+        try:
+            firebase_admin.get_app()
+            return
+        except ValueError:
+            pass
+        credentials_json = os.environ.get("FIREBASE_ADMIN_CREDENTIALS_JSON")
+        if not credentials_json:
+            raise RuntimeError("Firebase Admin credentials are unavailable for legacy v1 authentication.")
         firebase_admin.initialize_app(credentials.Certificate(json.loads(credentials_json)))
 
     @service.middleware("http")
@@ -1033,6 +1044,7 @@ def api():
             from fastapi import HTTPException
             raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": str(error)}) from error
         try:
+            ensure_firebase_admin()
             claims = id_token.verify_firebase_token(token, GoogleRequest(), audience="gru-mascote")
             if not valid_firebase_claims(claims, FIREBASE_PROJECT_ID):
                 raise ValueError("Unexpected Firebase token claims.")
@@ -1049,6 +1061,7 @@ def api():
             from fastapi import HTTPException
             raise HTTPException(status_code=401, detail={"code": "APP_CHECK_REQUIRED", "message": str(error)}) from error
         try:
+            ensure_firebase_admin()
             firebase_app_check.verify_token(token)
         except Exception as error:
             logging.info("firebase_app_check_rejected type=%s", type(error).__name__)

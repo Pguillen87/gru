@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+$env:PYTHONUTF8 = "1"
 
 $stagingEnvironment = "gru-mascot-v2-staging"
 $env:GRU_MASCOT_ENV = "staging"
