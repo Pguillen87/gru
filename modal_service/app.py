@@ -48,13 +48,16 @@ from modal_service.security import AuthenticationRejected, app_check_token, bear
 from modal_service.validation import ImageValidationError, validate_image
 from modal_service.v2_contract import public_job
 
-APP_NAME = "gru-mascot"
+APP_NAME = os.getenv("GRU_MASCOT_APP_NAME", "gru-mascot")
 FIREBASE_PROJECT_ID = "gru-mascote"
 FIREBASE_PROJECT_NUMBER = "816774877835"
 ASSET_ROOT = "/gru-assets"
 MODEL_ROOT = "/gru-models"
 ENVIRONMENT = Environment(os.getenv("GRU_MASCOT_ENV", Environment.DEVELOPMENT))
 FIREBASE_SECRET_ENVIRONMENT = os.getenv("GRU_FIREBASE_SECRET_ENVIRONMENT") or None
+RESOURCE_PREFIX = os.getenv("GRU_MASCOT_RESOURCE_PREFIX", "gru-mascot")
+FIREBASE_SECRET_NAME = os.getenv("GRU_FIREBASE_SECRET_NAME", "gru-mascot-firebase-admin")
+PULEIRO_BFF_SECRET_NAME = os.getenv("GRU_PULEIRO_BFF_SECRET_NAME", "gru-mascot-puleiro-bff")
 LIMITS = limits_for(ENVIRONMENT)
 GPU_GENERATION_ENABLED = generation_enabled(ENVIRONMENT, os.getenv("GPU_GENERATION_ENABLED"))
 REGISTRATION_ENABLED = feature_enabled(os.getenv("REGISTRATION_ENABLED"), default=True)
@@ -142,6 +145,9 @@ api_image = (
             "REGISTRATION_ENABLED": "true" if REGISTRATION_ENABLED else "false",
             "MASTER_GENERATION_ENABLED": "true" if MASTER_GENERATION_ENABLED else "false",
             "POSE_GENERATION_ENABLED": "true" if POSE_GENERATION_ENABLED else "false",
+            "PULEIRO_BFF_JWT_ISSUER": os.getenv("PULEIRO_BFF_JWT_ISSUER", "puleiro-bff"),
+            "PULEIRO_BFF_JWT_AUDIENCE": os.getenv("PULEIRO_BFF_JWT_AUDIENCE", "gru-modal"),
+            "PULEIRO_BFF_JWT_MAX_TTL_SECONDS": os.getenv("PULEIRO_BFF_JWT_MAX_TTL_SECONDS", "120"),
         }
     )
     .pip_install(
@@ -164,17 +170,17 @@ gpu_image = api_image.pip_install(
 )
 cache_image = api_image.pip_install("huggingface_hub>=0.34,<1")
 app = modal.App(APP_NAME)
-assets = modal.Volume.from_name("gru-mascot-assets", create_if_missing=True)
-models = modal.Volume.from_name("gru-mascot-models", create_if_missing=True)
-jobs = modal.Dict.from_name("gru-mascot-jobs", create_if_missing=True)
-idempotency = modal.Dict.from_name("gru-mascot-idempotency", create_if_missing=True)
-usage = modal.Dict.from_name("gru-mascot-usage", create_if_missing=True)
+assets = modal.Volume.from_name(f"{RESOURCE_PREFIX}-assets", create_if_missing=True)
+models = modal.Volume.from_name(f"{RESOURCE_PREFIX}-models", create_if_missing=True)
+jobs = modal.Dict.from_name(f"{RESOURCE_PREFIX}-jobs", create_if_missing=True)
+idempotency = modal.Dict.from_name(f"{RESOURCE_PREFIX}-idempotency", create_if_missing=True)
+usage = modal.Dict.from_name(f"{RESOURCE_PREFIX}-usage", create_if_missing=True)
 firebase_admin_secret = modal.Secret.from_name(
-    "gru-mascot-firebase-admin",
+    FIREBASE_SECRET_NAME,
     environment_name=FIREBASE_SECRET_ENVIRONMENT,
 )
 puleiro_bff_secret = modal.Secret.from_name(
-    "gru-mascot-puleiro-bff",
+    PULEIRO_BFF_SECRET_NAME,
     environment_name=FIREBASE_SECRET_ENVIRONMENT,
 )
 

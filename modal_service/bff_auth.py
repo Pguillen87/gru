@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import re
 import time
 from typing import Callable
@@ -10,9 +11,9 @@ from typing import Callable
 import jwt
 
 
-ISSUER = "puleiro-bff"
-AUDIENCE = "gru-modal"
-MAX_TOKEN_LIFETIME_SECONDS = 120
+ISSUER = os.getenv("PULEIRO_BFF_JWT_ISSUER", "puleiro-bff")
+AUDIENCE = os.getenv("PULEIRO_BFF_JWT_AUDIENCE", "gru-modal")
+MAX_TOKEN_LIFETIME_SECONDS = min(int(os.getenv("PULEIRO_BFF_JWT_MAX_TTL_SECONDS", "120")), 120)
 IDENTIFIER = re.compile(r"^[A-Za-z0-9:_-]{1,160}$")
 
 
