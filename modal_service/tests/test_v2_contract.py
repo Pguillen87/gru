@@ -28,7 +28,12 @@ def test_registered_job_is_public_and_never_claims_generation_scheduled():
 
 
 def test_completed_modal_step_is_not_publicly_ready():
-    assert public_job(record(JobState.COMPLETED))["status"] == "awaiting_set_approval"
+    payload = public_job(
+        record(JobState.COMPLETED),
+        poses=[{"id": "pose_01", "role": "normal", "optionId": "normal_attentive", "label": "Pronto", "sha256": "a" * 64}],
+    )
+    assert payload["status"] == "awaiting_set_approval"
+    assert payload["poses"][0]["role"] == "normal"
 
 
 def test_public_states_needed_for_no_gpu_simulation_are_stable():

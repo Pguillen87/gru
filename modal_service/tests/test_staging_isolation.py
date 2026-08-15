@@ -19,6 +19,14 @@ def test_cost_bearing_staging_flags_still_fail_closed():
     assert "POSE_GENERATION_ENABLED = feature_enabled(os.getenv(\"POSE_GENERATION_ENABLED\"))" in source
 
 
+def test_staging_deploy_is_fail_closed_unless_gpu_test_is_explicit():
+    source = Path("modal_service/deploy_v2_staging.ps1").read_text(encoding="utf-8")
+    assert "[switch]$EnableGpuTest" in source
+    assert 'if ($EnableGpuTest) { "true" } else { "false" }' in source
+    assert "$env:MASTER_GENERATION_ENABLED = $generationEnabled" in source
+    assert "$env:POSE_GENERATION_ENABLED = $generationEnabled" in source
+
+
 def test_bff_auth_contract_is_environment_configurable_and_capped():
     source = Path("modal_service/bff_auth.py").read_text(encoding="utf-8")
     assert 'os.getenv("PULEIRO_BFF_JWT_ISSUER", "puleiro-bff")' in source

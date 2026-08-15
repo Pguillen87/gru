@@ -2,7 +2,7 @@
 
 Ambiente Modal: `gru-mascot-v2-staging`.
 
-O script `deploy_v2_staging.ps1` fixa app, recursos, secrets e flags próprios. Ele nunca usa os nomes `gru-mascot-*` de produção para Volumes ou Dicts e mantém `GPU_GENERATION_ENABLED`, `MASTER_GENERATION_ENABLED` e `POSE_GENERATION_ENABLED` como `false`.
+O script `deploy_v2_staging.ps1` fixa app, recursos, secrets e flags próprios. Ele nunca usa os nomes `gru-mascot-*` de produção para Volumes ou Dicts. Por padrão mantém `GPU_GENERATION_ENABLED`, `MASTER_GENERATION_ENABLED` e `POSE_GENERATION_ENABLED` como `false`.
 
 Antes do deploy, o ambiente precisa conter exclusivamente:
 
@@ -16,6 +16,14 @@ O contrato v2 usa JWT curto do BFF. A criação registra e persiste, mas não ch
 ```powershell
 .\modal_service\deploy_v2_staging.ps1
 ```
+
+Para uma sessão deliberada de teste real, o parâmetro explícito abaixo habilita Master e poses somente no environment isolado de staging:
+
+```powershell
+.\modal_service\deploy_v2_staging.ps1 -EnableGpuTest
+```
+
+O deploy não gera imagens por si. A GPU só é chamada por endpoints autenticados depois da ação do usuário. O modo padrão continua fail-closed.
 
 Nunca execute o script com outro environment, não altere as três flags de geração e não use rotas v1 nesta validação.
 

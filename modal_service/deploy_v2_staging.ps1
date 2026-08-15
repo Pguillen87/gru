@@ -1,3 +1,7 @@
+param(
+    [switch]$EnableGpuTest
+)
+
 $ErrorActionPreference = "Stop"
 $env:PYTHONUTF8 = "1"
 
@@ -8,10 +12,11 @@ $env:GRU_MASCOT_RESOURCE_PREFIX = "gru-mascot-v2-staging"
 $env:GRU_FIREBASE_SECRET_ENVIRONMENT = $stagingEnvironment
 $env:GRU_FIREBASE_SECRET_NAME = "gru-mascot-v2-staging-firebase-admin"
 $env:GRU_PULEIRO_BFF_SECRET_NAME = "gru-mascot-v2-staging-puleiro-bff"
-$env:GPU_GENERATION_ENABLED = "false"
+$generationEnabled = if ($EnableGpuTest) { "true" } else { "false" }
+$env:GPU_GENERATION_ENABLED = $generationEnabled
 $env:REGISTRATION_ENABLED = "true"
-$env:MASTER_GENERATION_ENABLED = "false"
-$env:POSE_GENERATION_ENABLED = "false"
+$env:MASTER_GENERATION_ENABLED = $generationEnabled
+$env:POSE_GENERATION_ENABLED = $generationEnabled
 $env:PULEIRO_BFF_JWT_ISSUER = "puleiro-bff"
 $env:PULEIRO_BFF_JWT_AUDIENCE = "gru-modal"
 $env:PULEIRO_BFF_JWT_MAX_TTL_SECONDS = "120"

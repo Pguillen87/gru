@@ -22,7 +22,11 @@ PUBLIC_STATUS_BY_STATE = {
 }
 
 
-def public_job(job: JobRecord, masters: list[dict[str, str]] | None = None) -> dict[str, object]:
+def public_job(
+    job: JobRecord,
+    masters: list[dict[str, str]] | None = None,
+    poses: list[dict[str, str]] | None = None,
+) -> dict[str, object]:
     status = PUBLIC_STATUS_BY_STATE[job.state]
     payload: dict[str, object] = {
         "jobId": job.job_id,
@@ -36,6 +40,8 @@ def public_job(job: JobRecord, masters: list[dict[str, str]] | None = None) -> d
     }
     if status == "awaiting_master_approval":
         payload["masters"] = masters or []
+    if status == "awaiting_set_approval":
+        payload["poses"] = poses or []
     if job.master_id:
         payload["approvedMasterId"] = job.master_id
     if job.error_code:

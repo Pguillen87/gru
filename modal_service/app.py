@@ -326,6 +326,25 @@ def _master_references(job: JobRecord) -> list[dict[str, str]]:
     return references
 
 
+def _pose_references(job: JobRecord) -> list[dict[str, str]]:
+    manifest_path = _asset_path(job.job_id, "poses", "manifest.json")
+    if job.state is not JobState.COMPLETED or not manifest_path.is_file():
+        return []
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    references: list[dict[str, str]] = []
+    for item in manifest.get("poses", []):
+        references.append(
+            {
+                "id": str(item["poseId"]),
+                "role": str(item["runtimeRole"]),
+                "optionId": str(item["optionId"]),
+                "label": str(item["name"]),
+                "sha256": str(item["sha256"]),
+            }
+        )
+    return references
+
+
 def _deserialize(record: dict[str, object]) -> JobRecord:
     # API responses may include presentation-only fields (for example, the
     # signed master references). Persisted JobRecord data must remain the sole
@@ -1163,6 +1182,9 @@ def api():
             "service": APP_NAME,
             "environment": ENVIRONMENT.value,
             "generation_enabled": GPU_GENERATION_ENABLED,
+            "registration_enabled": REGISTRATION_ENABLED,
+            "master_generation_enabled": MASTER_GENERATION_ENABLED,
+            "pose_generation_enabled": POSE_GENERATION_ENABLED,
             "templates_installed": _templates_installed(),
             "model_configured": True,
             "pose_catalog_size": len(POSE_OPTIONS),
@@ -1248,7 +1270,7 @@ def api():
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
             _refresh_result_assets(job)
-            return public_job(job, _master_references(job))
+            return public_job(job, _master_references(job), _pose_references(job))
         except KeyError as error:
             raise _api_error(JobNotFound("Job was not found.")) from error
         except DomainError as error:
@@ -1260,7 +1282,7 @@ def api():
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
             _refresh_result_assets(job)
-            return public_job(job, _master_references(job))
+            return public_job(job, _master_references(job), _pose_references(job))
         except DomainError as error:
             raise _api_error(error) from error
 
@@ -1320,6 +1342,27 @@ def api():
             if not path.is_file():
                 raise JobNotFound("Master was not found.")
             return FileResponse(path, media_type="image/png", filename=f"{master_id}.png")
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.get("/v2/mascot/jobs/{job_id}/poses/{role}")
+    async def download_pose_v2(
+        job_id: str,
+        role: Literal["normal", "listening", "transcribing"],
+        identity: BffIdentity = Depends(verified_bff_identity),
+    ):
+        from fastapi.responses import FileResponse
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            pose = next((item for item in _pose_references(job) if item["role"] == role), None)
+            if pose is None:
+                raise JobNotFound("Pose was not found.")
+            path = _asset_path(job_id, "poses", f"{pose['id']}.png")
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != pose["sha256"]:
+                raise JobNotFound("Pose was not found.")
+            return FileResponse(path, media_type="image/png", filename=f"{role}.png")
         except DomainError as error:
             raise _api_error(error) from error
 
