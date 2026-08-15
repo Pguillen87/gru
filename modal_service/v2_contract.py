@@ -46,4 +46,6 @@ def public_job(
         payload["approvedMasterId"] = job.master_id
     if job.error_code:
         payload["error"] = {"code": job.error_code}
+    if job.pose_operation_id:
+        payload["operationId"] = job.pose_operation_id
     return payload

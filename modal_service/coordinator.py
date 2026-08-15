@@ -27,6 +27,7 @@ class JobOperation(StrEnum):
     START_POSES = "START_POSES"
     COMMIT_POSES = "COMMIT_POSES"
     FAIL_POSES = "FAIL_POSES"
+    ENQUEUE_POSES = "ENQUEUE_POSES"
     CANCEL = "CANCEL"
 
 
@@ -221,6 +222,7 @@ class JobCoordinator:
         if job.state is not JobState.GENERATING_POSES or job.pose_gpu_call_id == call_id:
             return job, False
         job.pose_gpu_call_id = call_id
+        job.pose_operation_status = "running"
         self.save(job)
         return job, True
 
@@ -250,12 +252,57 @@ class JobCoordinator:
             self.save(job)
         return job, changed
 
+    def enqueue_pose_generation(
+        self,
+        job_id: str,
+        user_id: str,
+        pose_choices: dict[str, str],
+        operation_id: str,
+        operation_fingerprint: str,
+        correlation_id: str | None,
+        request_id: str | None,
+    ) -> tuple[JobRecord, bool, bool]:
+        job = self.get(job_id)
+        self.ensure_owner(job, user_id)
+        selected_poses = validate_pose_choices(pose_choices)
+        if job.pose_operation_id:
+            if job.pose_operation_fingerprint != operation_fingerprint or job.pose_choices != selected_poses:
+                raise DomainError("Pose choices cannot change after the operation is reserved.")
+            return job, False, False
+        if not job.master_id:
+            raise DomainError("An approved Master is required for pose generation.")
+
+        job.pose_choices = selected_poses
+        job.pose_operation_id = operation_id
+        job.pose_operation_fingerprint = operation_fingerprint
+        job.pose_operation_status = "queued"
+        job.pose_request_id = request_id
+        if correlation_id:
+            job.correlation_id = correlation_id
+        job.start_pose_generation()
+        job.pose_operation_created_at = job.updated_at
+        job.pose_gpu_call_id = "reserved"
+        self.save(job)
+        return job, True, True
+
+    def fail_pose_generation(self, job_id: str, error_code: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state is not JobState.GENERATING_POSES:
+            return job, False
+        changed = job.transition(JobState.FAILED)
+        if changed:
+            job.error_code = error_code
+            job.pose_operation_status = "failed"
+            self.save(job)
+        return job, changed
+
     def commit_pose_outputs(self, job_id: str, persist: Callable[[JobRecord], None]) -> tuple[JobRecord, bool]:
         job = self.get(job_id)
         if job.state in TERMINAL_STATES or job.state is not JobState.GENERATING_POSES:
             return job, False
         persist(job)
         changed = job.complete_pose_generation(job.job_id)
+        job.pose_operation_status = "completed"
         self.save(job)
         return job, changed
 
