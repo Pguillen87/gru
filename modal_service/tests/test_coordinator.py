@@ -80,6 +80,25 @@ def test_pose_generation_locks_exactly_one_choice_per_role():
     assert started.pose_choices == choices
 
 
+def test_pose_worker_call_is_reserved_once_and_then_recorded():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-x", "original/hash")
+    service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
+    service.start_pose_generation(job.job_id, {
+        "normal": "normal_relaxed",
+        "listening": "listening_ready",
+        "transcribing": "transcribing_notes",
+    })
+
+    reserved, changed = service.reserve_pose_gpu_call(job.job_id)
+    repeated, repeated_changed = service.reserve_pose_gpu_call(job.job_id)
+    recorded, recorded_changed = service.record_pose_gpu_call(job.job_id, "fc-pose")
+
+    assert changed and reserved.pose_gpu_call_id == "reserved"
+    assert not repeated_changed and repeated.pose_gpu_call_id == "reserved"
+    assert recorded_changed and recorded.pose_gpu_call_id == "fc-pose"
+
+
 def test_v2_attempt_is_owner_scoped_and_cannot_change_on_replay():
     service, _ = coordinator()
     job, _ = service.register(

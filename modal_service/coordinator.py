@@ -21,6 +21,8 @@ class JobOperation(StrEnum):
     RECONCILE_MASTER = "RECONCILE_MASTER"
     FAIL_MASTER = "FAIL_MASTER"
     RECORD_GPU_CALL = "RECORD_GPU_CALL"
+    RESERVE_POSE_GPU_CALL = "RESERVE_POSE_GPU_CALL"
+    RECORD_POSE_GPU_CALL = "RECORD_POSE_GPU_CALL"
     APPROVE_MASTER = "APPROVE_MASTER"
     START_POSES = "START_POSES"
     COMMIT_POSES = "COMMIT_POSES"
@@ -203,6 +205,22 @@ class JobCoordinator:
         if job.state in TERMINAL_STATES:
             return job, False
         job.gpu_call_id = call_id
+        self.save(job)
+        return job, True
+
+    def reserve_pose_gpu_call(self, job_id: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state is not JobState.GENERATING_POSES or job.pose_gpu_call_id is not None:
+            return job, False
+        job.pose_gpu_call_id = "reserved"
+        self.save(job)
+        return job, True
+
+    def record_pose_gpu_call(self, job_id: str, call_id: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state is not JobState.GENERATING_POSES or job.pose_gpu_call_id == call_id:
+            return job, False
+        job.pose_gpu_call_id = call_id
         self.save(job)
         return job, True
 

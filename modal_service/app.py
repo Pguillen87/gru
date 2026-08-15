@@ -518,6 +518,10 @@ def job_control(
             )
         elif command is JobOperation.RECORD_GPU_CALL:
             job, changed = coordinator.record_gpu_call(job_id, call_id)
+        elif command is JobOperation.RESERVE_POSE_GPU_CALL:
+            job, changed = coordinator.reserve_pose_gpu_call(job_id)
+        elif command is JobOperation.RECORD_POSE_GPU_CALL:
+            job, changed = coordinator.record_pose_gpu_call(job_id, call_id)
         elif command is JobOperation.APPROVE_MASTER:
             job, changed = coordinator.approve_master(job_id, user_id, master_id, POSE_PROMPT_VERSION)
         elif command is JobOperation.START_POSES:
@@ -709,11 +713,10 @@ class QwenMasterWorker:
         if not GPU_GENERATION_ENABLED:
             observer.event("pose_job_failed", {"error_code": "GENERATION_DISABLED", "outcome": "blocked"})
             return
-        started = job_control.remote(JobOperation.START_POSES.value, job_id)
-        _raise_guard_error(started)
-        if not bool(started["changed"]):
+        job = _get_job(job_id)
+        if job.state is not JobState.GENERATING_POSES:
+            observer.event("pose_job_skipped", {"state": job.state.value, "outcome": "not_active"})
             return
-        job = _deserialize(dict(started["job"]))
         try:
             assets.reload()
             outputs = self.runtime.run(lambda pipeline: _generate_qwen_poses(job, pipeline, observer))
@@ -1388,11 +1391,21 @@ def api():
                 pose_choices=choices,
             )
             _raise_guard_error(started)
-            if bool(started["changed"]):
+            reservation = job_control.remote(JobOperation.RESERVE_POSE_GPU_CALL.value, job_id)
+            _raise_guard_error(reservation)
+            response_job = dict(reservation["job"])
+            if bool(reservation["changed"]):
                 observer = InferenceObserver(_trace_id_for_record(job))
                 observer.event("pose_job_queued", {"outputs": 3, "gpu_type": MASTER_GPU})
-                QwenMasterWorker().generate_poses.spawn(job_id)
-            return public_job(_deserialize(dict(started["job"])))
+                pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
+                recorded = job_control.remote(
+                    JobOperation.RECORD_POSE_GPU_CALL.value,
+                    job_id,
+                    call_id=pose_call.object_id,
+                )
+                _raise_guard_error(recorded)
+                response_job = dict(recorded["job"])
+            return public_job(_deserialize(response_job))
         except (DomainError, ValueError) as error:
             raise _api_error(error) from error
 

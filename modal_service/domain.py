@@ -114,6 +114,7 @@ class JobRecord:
     error_code: str | None = None
     generation_reserved: bool = False
     gpu_call_id: str | None = None
+    pose_gpu_call_id: str | None = None
 
     def transition_to(self, target: JobState) -> None:
         require_transition(self.state, target)
