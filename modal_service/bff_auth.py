@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import os
 import re
 import time
-from typing import Callable
+from typing import Callable, MutableMapping
 
 import jwt
 
@@ -26,6 +26,7 @@ class BffIdentity:
     user_id: str
     attempt_id: str
     jti: str
+    expires_at: int
 
 
 def verify_bff_token(
@@ -59,7 +60,22 @@ def verify_bff_token(
     user_id = _identifier_claim(claims, "sub")
     attempt_id = _identifier_claim(claims, "attempt_id")
     jti = _identifier_claim(claims, "jti")
-    return BffIdentity(user_id, attempt_id, jti)
+    return BffIdentity(user_id, attempt_id, jti, expires_at)
+
+
+def consume_jti(
+    store: MutableMapping[str, object],
+    jti: str,
+    expires_at: int,
+    *,
+    now: Callable[[], int] = lambda: int(time.time()),
+) -> None:
+    current = now()
+    key = f"bff-jti:{jti}"
+    recorded = int(store.get(key, 0))
+    if recorded > current:
+        raise BffAuthenticationRejected("A BFF token cannot be replayed.")
+    store[key] = expires_at
 
 
 def _integer_claim(claims: dict[str, object], name: str) -> int:

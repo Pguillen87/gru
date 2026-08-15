@@ -3,7 +3,7 @@ from __future__ import annotations
 import jwt
 import pytest
 
-from modal_service.bff_auth import AUDIENCE, ISSUER, BffAuthenticationRejected, verify_bff_token
+from modal_service.bff_auth import AUDIENCE, ISSUER, BffAuthenticationRejected, consume_jti, verify_bff_token
 
 
 SECRET = "test-secret-with-at-least-thirty-two-bytes"
@@ -29,6 +29,20 @@ def test_valid_short_lived_bff_token_yields_owner_and_attempt():
     assert identity.user_id == "firebase-uid-1"
     assert identity.attempt_id == "attempt-1"
     assert identity.jti == "jti-1"
+    assert identity.expires_at == NOW + 90
+
+
+def test_jti_is_consumed_once_until_expiration():
+    store = {}
+    consume_jti(store, "jti-1", NOW + 90, now=lambda: NOW)
+    with pytest.raises(BffAuthenticationRejected, match="replayed"):
+        consume_jti(store, "jti-1", NOW + 90, now=lambda: NOW + 1)
+
+
+def test_expired_jti_record_does_not_block_a_new_short_lived_token():
+    store = {"bff-jti:jti-1": NOW - 1}
+    consume_jti(store, "jti-1", NOW + 90, now=lambda: NOW)
+    assert store["bff-jti:jti-1"] == NOW + 90
 
 
 @pytest.mark.parametrize(
