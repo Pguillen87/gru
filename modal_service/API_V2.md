@@ -1,5 +1,7 @@
 # Mascot API v2 — integração segura do Puleiro
 
+> Operações de poses, idempotência, trace e anti-replay: consulte [`POSE_OPERATIONS.md`](./POSE_OPERATIONS.md).
+
 ## Garantias desta versão
 
 - `POST /v2/mascot/jobs` registra e armazena a entrada, mas não agenda GPU;

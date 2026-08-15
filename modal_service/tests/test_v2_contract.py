@@ -71,3 +71,36 @@ def test_v2_master_download_is_owner_scoped():
     route = route.split('@service.post("/v2/mascot/jobs/{job_id}/pose-generations"', 1)[0]
     assert "verified_bff_identity" in route
     assert "_ensure_owner(job, identity.user_id)" in route
+
+
+def test_pose_endpoint_enqueues_once_without_waiting_for_gpu_or_cache():
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+    route = source.split('@service.post("/v2/mascot/jobs/{job_id}/pose-generations", status_code=202)', 1)[1]
+    route = route.split('@service.get("/v1/mascot/jobs/{job_id}")', 1)[0]
+
+    assert "ENQUEUE_POSES" in route
+    assert "model_cache_status.remote" not in route
+    assert ".generate_poses.remote(" not in route
+    assert route.count(".generate_poses.spawn(") == 1
+    assert 'status_code=202' in source
+
+
+def test_pose_reservation_is_serialized_and_worker_does_not_restart_transition():
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+    control_prefix = source.split("def job_control(", 1)[0][-220:]
+    worker = source.split("def generate_poses(self, job_id: str)", 1)[1].split("@modal.exit()", 1)[0]
+
+    assert "@modal.concurrent(max_inputs=1)" in control_prefix
+    assert "max_containers=1" in control_prefix
+    assert "START_POSES" not in worker
+
+
+def test_pose_verification_requires_exact_runtime_roles_and_reserved_choices():
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+    verifier = source.split("def _verify_pose_outputs(job: JobRecord)", 1)[1].split(
+        "def _master_outputs_ready", 1
+    )[0]
+
+    assert '{"normal", "listening", "transcribing"}' in verifier
+    assert "len(poses) != 3" in verifier
+    assert "selected != job.pose_choices" in verifier

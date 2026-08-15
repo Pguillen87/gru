@@ -99,6 +99,60 @@ def test_pose_worker_call_is_reserved_once_and_then_recorded():
     assert recorded_changed and recorded.pose_gpu_call_id == "fc-pose"
 
 
+def test_pose_operation_is_created_once_and_replayed_without_second_worker():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-x", "original/hash")
+    service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
+    service.jobs[job.job_id]["master_id"] = "master_1"
+    choices = {
+        "normal": "normal_relaxed",
+        "listening": "listening_ready",
+        "transcribing": "transcribing_notes",
+    }
+
+    first, created, reserved = service.enqueue_pose_generation(
+        job.job_id, "uid-a", choices, "op-1", "fingerprint-1", "trace-1", "request-1"
+    )
+    replay, replay_created, replay_reserved = service.enqueue_pose_generation(
+        job.job_id, "uid-a", choices, "op-2", "fingerprint-1", "trace-1", "request-2"
+    )
+
+    assert created and reserved
+    assert not replay_created and not replay_reserved
+    assert replay.pose_operation_id == first.pose_operation_id == "op-1"
+    assert replay.pose_gpu_call_id == "reserved"
+
+
+def test_pose_operation_rejects_owner_and_choice_changes_after_reservation():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-x", "original/hash")
+    service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
+    service.jobs[job.job_id]["master_id"] = "master_1"
+    choices = {
+        "normal": "normal_relaxed",
+        "listening": "listening_ready",
+        "transcribing": "transcribing_notes",
+    }
+    service.enqueue_pose_generation(
+        job.job_id, "uid-a", choices, "op-1", "fingerprint-1", "trace-1", "request-1"
+    )
+
+    with pytest.raises(JobNotFound):
+        service.enqueue_pose_generation(
+            job.job_id, "uid-b", choices, "op-2", "fingerprint-1", "trace-2", "request-2"
+        )
+    with pytest.raises(DomainError, match="cannot change"):
+        service.enqueue_pose_generation(
+            job.job_id,
+            "uid-a",
+            choices | {"normal": "normal_attentive"},
+            "op-2",
+            "fingerprint-2",
+            "trace-1",
+            "request-2",
+        )
+
+
 def test_v2_attempt_is_owner_scoped_and_cannot_change_on_replay():
     service, _ = coordinator()
     job, _ = service.register(
