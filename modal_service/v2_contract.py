@@ -31,6 +31,8 @@ def public_job(job: JobRecord, masters: list[dict[str, str]] | None = None) -> d
         "generationScheduled": job.state not in {JobState.REGISTERED, JobState.READY_FOR_GENERATION},
         "createdAt": job.created_at,
         "updatedAt": job.updated_at,
+        "subjectIdentity": job.subject_identity,
+        "poseChoices": job.pose_choices,
     }
     if status == "awaiting_master_approval":
         payload["masters"] = masters or []

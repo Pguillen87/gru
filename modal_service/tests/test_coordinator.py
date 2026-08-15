@@ -47,6 +47,39 @@ def test_v2_registration_stops_before_generation_and_is_attempt_idempotent():
     assert all("cost" not in key for key in usage)
 
 
+def test_v2_registration_persists_confirmed_subject_identity_and_rejects_replay_changes():
+    service, _ = coordinator()
+    identity = {"category": "human", "label": "person", "species": None}
+    job, _ = service.register(
+        "uid-a", "registration-key", "original/hash", subject_identity=identity,
+        registration_only=True, attempt_id="attempt-1",
+    )
+
+    assert job.subject_identity == identity
+    with pytest.raises(DomainError, match="different subject identity"):
+        service.register(
+            "uid-a", "registration-key", "original/hash",
+            subject_identity={"category": "animal", "label": "dog", "species": "dog"},
+            registration_only=True, attempt_id="attempt-1",
+        )
+
+
+def test_pose_generation_locks_exactly_one_choice_per_role():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-x", "original/hash")
+    service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
+    choices = {
+        "normal": "normal_relaxed",
+        "listening": "listening_ready",
+        "transcribing": "transcribing_notes",
+    }
+
+    started, changed = service.start_pose_generation(job.job_id, choices)
+
+    assert changed and started.state is JobState.GENERATING_POSES
+    assert started.pose_choices == choices
+
+
 def test_v2_attempt_is_owner_scoped_and_cannot_change_on_replay():
     service, _ = coordinator()
     job, _ = service.register(

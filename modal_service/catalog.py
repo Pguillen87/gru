@@ -3,26 +3,66 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 
-MASTER_PROMPT_VERSION = "master-v3-identity"
-POSE_PROMPT_VERSION = "pose-v4-visual-catalog"
-POSE_TEMPLATE_VERSION = "poses-v3-visual-catalog"
+MASTER_PROMPT_VERSION = "master-v4-confirmed-category"
+POSE_PROMPT_VERSION = "pose-v5-confirmed-identity"
+POSE_TEMPLATE_VERSION = "poses-v4-three-selected"
 
 MASTER_PROMPT = (
-    "Create a clean, friendly, full-body 2D cartoon mascot. Use the supplied photo only as identity evidence, "
-    "not as a composition or pose reference. First identify the primary subject and preserve its category exactly: "
-    "a human remains a human; an animal remains its exact species. Extract and preserve the subject's distinctive "
-    "identity, natural anatomy, colors, markings, facial proportions, coat or feather pattern, and visible clothing "
-    "when present. Ignore and do not copy the source pose, gesture, camera angle, crop, framing, lighting, background, "
-    "or placement. Repose the subject independently in a balanced neutral standing mascot pose, facing mostly forward, "
-    "with the complete body visible and a clear silhouette. "
-    "For a human, use normal human ears and anatomy only: never add animal ears, tail, muzzle, paws, fur, "
-    "horns, or hybrid features. For an animal, preserve its real species, body plan, coat or feather colors, "
-    "markings, ears where naturally applicable, and face. Never turn one species into another. "
-    "Single centered character, clear silhouette for small Android sizes, transparent background when supported, "
-    "otherwise a plain neutral background; no text, watermark, accessories not present in the reference, or extra subjects."
+    "Create one full-body 2D editorial cartoon mascot from the confirmed primary subject. "
+    "Use the supplied photo only as identity evidence, never as permission to invent or hybridize anatomy. "
+    "Preserve only visual evidence that belongs to the confirmed subject. Do not transfer clothing prints, "
+    "background colors, shadows, scenery, or nearby textures onto unrelated body regions. "
+    "Recompose one centered character in a balanced neutral pose, facing mostly forward, with a complete body "
+    "and a clear silhouette for small Android sizes. Use the approved GRU matte editorial-cartoon finish, "
+    "controlled outlines, and transparent background when supported. No text, watermark, additional subject, "
+    "invented accessory, duplicated limb, or background scenery."
 )
+
+CATEGORY_PROMPTS = {
+    "human": (
+        "The confirmed subject is a human and must remain anatomically human. Preserve the person's face, skin tone, "
+        "body proportions, hair, facial hair, confirmed tattoos, and visible clothing. Clothing colors and prints must "
+        "remain on clothing only. Use normal human ears, hands, feet, skin, and facial anatomy."
+    ),
+    "animal": (
+        "The confirmed subject is an animal. Preserve its exact confirmed species, natural body plan, face, colors, "
+        "coat, scales, or feather pattern only where naturally applicable. Do not turn it into another species."
+    ),
+    "object": (
+        "The confirmed subject is an object. Preserve its recognizable construction, materials, colors, proportions, "
+        "and defining parts. Personify it only through restrained editorial expression without adding animal anatomy."
+    ),
+    "other": (
+        "The confirmed subject belongs to the explicitly described category. Preserve that category, construction, "
+        "materials, colors, proportions, and defining features without borrowing anatomy from humans or animals."
+    ),
+}
+
+CATEGORY_NEGATIVE_PROMPTS = {
+    "human": "animal ears, fur, muzzle, paws, tail, horns, feathers, animal markings, hybrid anatomy, clothing pattern on skin",
+    "animal": "wrong species, human ears, human skin, species hybrid, invented markings, clothing pattern on fur",
+    "object": "animal ears, fur, paws, tail, human skin, species hybrid, organic anatomy",
+    "other": "category change, species hybrid, invented anatomy, unrelated materials",
+}
+
+
+def build_master_prompt(identity: Mapping[str, object]) -> str:
+    category = str(identity.get("category", "other"))
+    label = str(identity.get("label", "confirmed subject"))
+    species = str(identity.get("species") or "").strip()
+    category_prompt = CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["other"])
+    identity_line = f"Confirmed subject label: {label}."
+    if category == "animal" and species:
+        identity_line += f" Confirmed species: {species}."
+    return " ".join((MASTER_PROMPT, identity_line, category_prompt, "Preserve the confirmed category exactly."))
+
+
+def build_master_negative_prompt(identity: Mapping[str, object]) -> str:
+    category = str(identity.get("category", "other"))
+    return CATEGORY_NEGATIVE_PROMPTS.get(category, CATEGORY_NEGATIVE_PROMPTS["other"])
 
 POSE_PROMPT = (
     "Preserve exactly the same GRU mascot identity and subject category from the master reference: "
@@ -47,9 +87,9 @@ POSE_OPTIONS = (
     PoseOption("normal_relaxed", "normal", "Relaxado", "relaxed balanced stance, soft friendly expression, resting naturally"),
     PoseOption("normal_curious", "normal", "Observador", "observing the surroundings with an attentive gaze and composed posture"),
     PoseOption("normal_firm", "normal", "Espera paciente", "patient waiting pose, calm body, gentle expectant expression"),
-    PoseOption("listening_focus", "listening", "Mão na orelha", "clear listening gesture with hand, paw, wing, or natural ear oriented toward sound, anatomically appropriate"),
+    PoseOption("listening_focus", "listening", "Gesto de escuta", "clear listening response adapted to the subject's confirmed anatomy; never invent a human hand for an animal or object"),
     PoseOption("listening_process", "listening", "Inclinado para ouvir", "leaning the upper body slightly toward the sound with attentive eyes"),
-    PoseOption("listening_natural", "listening", "Hang loose ouvindo", "friendly hang-loose listening gesture adapted naturally to the character anatomy"),
+    PoseOption("listening_natural", "listening", "Reação natural", "natural listening reaction using gaze, head, ears, wings, posture, or object affordances appropriate to the confirmed subject"),
     PoseOption("listening_ready", "listening", "Cabeça inclinada", "head tilted toward the sound, alert and clearly listening"),
     PoseOption("transcribing_notes", "transcribing", "Escrevendo", "writing clearly with a simple pencil and note surface, focused expression"),
     PoseOption("transcribing_fast", "transcribing", "Digitando", "typing with focused energy on a simple compact keyboard, clean silhouette"),
@@ -80,6 +120,20 @@ def validate_pose_choices(choices: dict[str, str]) -> dict[str, str]:
 
 def pose_option(option_id: str) -> PoseOption:
     return next(option for option in POSE_OPTIONS if option.option_id == option_id)
+
+
+def build_pose_prompt(identity: Mapping[str, object], role: str, option: PoseOption) -> str:
+    category = str(identity.get("category", "other"))
+    label = str(identity.get("label", "confirmed subject"))
+    species = str(identity.get("species") or "").strip()
+    category_detail = f"category {category}"
+    if species:
+        category_detail += f", species {species}"
+    return (
+        f"{POSE_PROMPT} The confirmed subject is {label} ({category_detail}). "
+        f"Runtime role: {role}. Requested pose: {option.instruction}. "
+        "Use only the approved Master as visual identity reference."
+    )
 
 
 @dataclass(frozen=True)

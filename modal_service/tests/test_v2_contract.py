@@ -23,6 +23,8 @@ def test_registered_job_is_public_and_never_claims_generation_scheduled():
     assert payload["status"] == "registered"
     assert payload["generationScheduled"] is False
     assert "user_id" not in payload and "source_key" not in payload
+    assert payload["subjectIdentity"]["category"] == "other"
+    assert set(payload["poseChoices"]) == {"normal", "listening", "transcribing"}
 
 
 def test_completed_modal_step_is_not_publicly_ready():

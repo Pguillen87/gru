@@ -17,7 +17,7 @@ O Modal aceita JWT HS256 curto em `Authorization: Bearer`. Claims obrigatórias:
 ```text
 iss=puleiro-bff
 aud=gru-modal
-sub=<Firebase UID verificado no BFF>
+sub=<Supabase user.id verificado no BFF>
 jti=<UUID>
 iat=<agora>
 exp=<agora + até 120 segundos>
@@ -37,6 +37,29 @@ O secret `PULEIRO_BFF_JWT_SECRET` pertence ao Modal Secret `gru-mascot-puleiro-b
 | POST | `/v2/mascot/jobs/{job_id}/master-generations` | exige flag e idempotência; bloqueado nesta fase |
 | POST | `/v2/mascot/jobs/{job_id}/masters/{master_id}/approve` | marca escolha; zero geração |
 | POST | `/v2/mascot/jobs/{job_id}/pose-generations` | kill switch independente; bloqueado |
+
+## Identidade confirmada
+
+O registro v2 exige `subject_identity` confirmado antes de qualquer geração:
+
+```json
+{
+  "category": "human | animal | object | other",
+  "label": "descrição curta",
+  "species": "obrigatória apenas para animal",
+  "confirmed": true
+}
+```
+
+O prompt do Master é montado por categoria. Pessoa permanece humana; animal preserva a espécie confirmada; objeto mantém sua construção e seus materiais. Estampas de roupa, cenário e texturas próximas não podem migrar para pele, pelo ou partes sem relação.
+
+## Escolha das poses
+
+Depois da aprovação do Master, o cliente seleciona exatamente um conceito para cada função `normal`, `listening` e `transcribing`. O endpoint de poses recebe `pose_choices`, valida papel e opção, e gera exatamente três imagens usando somente o Master aprovado como referência visual. A aprovação do Master continua sem iniciar esta operação.
+
+Enquanto `POSE_GENERATION_ENABLED=false`, a seleção pode ser persistida e revisada, mas o endpoint responde `409 POSE_GENERATION_DISABLED` e não agenda GPU.
+
+`X-Correlation-Id` acompanha o registro e é reutilizado nos eventos do worker para relacionar BFF, job e inferência sem registrar foto, token ou owner em claro.
 
 ## Kill switches
 

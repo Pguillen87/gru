@@ -104,6 +104,12 @@ class JobRecord:
     prompt_version: str = MASTER_PROMPT_VERSION
     template_version: str = POSE_TEMPLATE_VERSION
     pose_choices: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_POSE_CHOICES))
+    subject_identity: dict[str, object] = field(default_factory=lambda: {
+        "category": "other",
+        "label": "confirmed subject",
+        "species": None,
+    })
+    correlation_id: str | None = None
     attempts: int = 0
     error_code: str | None = None
     generation_reserved: bool = False

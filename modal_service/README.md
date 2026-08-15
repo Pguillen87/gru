@@ -29,3 +29,5 @@ The deployment must not proceed if the Firebase Admin Secret is absent. See [OPE
 # Contrato Puleiro v2
 
 A integração segura, não geradora e owner-scoped está documentada em [API_V2.md](API_V2.md). Nenhum deploy é implícito: testes locais não acionam GPU.
+
+O contrato v2 também exige confirmação explícita da categoria do sujeito antes do Master e separa a escolha de três poses da aprovação. Pessoa, animal e objeto recebem instruções de preservação distintas; a geração seletiva de poses permanece protegida por kill switch.

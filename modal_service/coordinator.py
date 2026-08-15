@@ -69,11 +69,18 @@ class JobCoordinator:
         key: str,
         source_key: str,
         pose_choices: dict[str, str] | None = None,
+        subject_identity: dict[str, object] | None = None,
         *,
         registration_only: bool = False,
         attempt_id: str | None = None,
+        correlation_id: str | None = None,
     ) -> tuple[JobRecord, bool]:
         selected_poses = validate_pose_choices(pose_choices or dict(DEFAULT_POSE_CHOICES))
+        confirmed_identity = subject_identity or {
+            "category": "other",
+            "label": "confirmed subject",
+            "species": None,
+        }
         request_key = f"create:{user_id}:{key}"
         existing_id = self.idempotency.get(request_key)
         if existing_id:
@@ -82,6 +89,8 @@ class JobCoordinator:
                 raise DomainError("Idempotency key was already used with different input.")
             if existing.pose_choices != selected_poses:
                 raise DomainError("Idempotency key was already used with different pose choices.")
+            if existing.subject_identity != confirmed_identity:
+                raise DomainError("Idempotency key was already used with a different subject identity.")
             if existing.attempt_id != attempt_id:
                 raise DomainError("Idempotency key was already used with a different attempt.")
             return existing, False
@@ -93,6 +102,8 @@ class JobCoordinator:
                 raise DomainError("Idempotency key was already used with different input.")
             if existing.pose_choices != selected_poses:
                 raise DomainError("Idempotency key was already used with different pose choices.")
+            if existing.subject_identity != confirmed_identity:
+                raise DomainError("Idempotency key was already used with a different subject identity.")
             if existing.attempt_id != attempt_id:
                 raise DomainError("Idempotency key was already used with a different attempt.")
             self.idempotency[request_key] = existing.job_id
@@ -113,7 +124,9 @@ class JobCoordinator:
             source_key=source_key,
             model_version="Qwen-Image-Edit-2511",
             pose_choices=selected_poses,
+            subject_identity=confirmed_identity,
             attempt_id=attempt_id,
+            correlation_id=correlation_id,
         )
         if registration_only:
             job.state = JobState.REGISTERED
@@ -204,10 +217,16 @@ class JobCoordinator:
             self.save(job)
         return job, changed
 
-    def start_pose_generation(self, job_id: str) -> tuple[JobRecord, bool]:
+    def start_pose_generation(self, job_id: str, pose_choices: dict[str, str]) -> tuple[JobRecord, bool]:
         job = self.get(job_id)
         if job.state in TERMINAL_STATES:
             return job, False
+        selected_poses = validate_pose_choices(pose_choices)
+        if job.state is JobState.GENERATING_POSES:
+            if job.pose_choices != selected_poses:
+                raise DomainError("Pose generation is already active with different choices.")
+            return job, False
+        job.pose_choices = selected_poses
         changed = job.start_pose_generation()
         if changed:
             self.save(job)
