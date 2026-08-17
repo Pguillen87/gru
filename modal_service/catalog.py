@@ -6,17 +6,17 @@ from dataclasses import dataclass
 from typing import Mapping
 
 
-MASTER_PROMPT_VERSION = "master-v4-confirmed-category"
-POSE_PROMPT_VERSION = "pose-v5-confirmed-identity"
+MASTER_PROMPT_VERSION = "master-v5-object-integrity"
+POSE_PROMPT_VERSION = "pose-v6-object-integrity"
 POSE_TEMPLATE_VERSION = "poses-v4-three-selected"
 
 MASTER_PROMPT = (
-    "Create one full-body 2D editorial cartoon mascot from the confirmed primary subject. "
+    "Create one centered 2D editorial-cartoon mascot from the confirmed primary subject. "
     "Use the supplied photo only as identity evidence, never as permission to invent or hybridize anatomy. "
     "Preserve only visual evidence that belongs to the confirmed subject. Do not transfer clothing prints, "
     "background colors, shadows, scenery, or nearby textures onto unrelated body regions. "
-    "Recompose one centered character in a balanced neutral pose, facing mostly forward, with a complete body "
-    "and a clear silhouette for small Android sizes. Use the approved GRU matte editorial-cartoon finish, "
+    "Show the complete confirmed subject, fully visible with a clear silhouette for small Android sizes. "
+    "Use the approved GRU matte editorial-cartoon finish, "
     "controlled outlines, and one solid warm-ivory editorial background. Never render a checkerboard, transparency grid, "
     "or background scenery. No text, watermark, additional subject, "
     "invented accessory, duplicated limb, or background scenery."
@@ -33,8 +33,11 @@ CATEGORY_PROMPTS = {
         "coat, scales, or feather pattern only where naturally applicable. Do not turn it into another species."
     ),
     "object": (
-        "The confirmed subject is an object. Preserve its recognizable construction, materials, colors, proportions, "
-        "and defining parts. Personify it only through restrained editorial expression without adding animal anatomy."
+        "The confirmed subject is an object and must remain the complete object itself. Preserve its recognizable "
+        "construction, materials, colors, proportions, controls, and defining parts. If it has expression, place only "
+        "restrained eyes or a mouth directly on the object's own surface. Do not place the object on, inside, or above "
+        "a humanoid, robot, animal, or character body. Do not add torso, arms, legs, hands, feet, clothing, armor, "
+        "or a separate head."
     ),
     "other": (
         "The confirmed subject belongs to the explicitly described category. Preserve that category, construction, "
@@ -45,7 +48,7 @@ CATEGORY_PROMPTS = {
 CATEGORY_NEGATIVE_PROMPTS = {
     "human": "animal ears, fur, muzzle, paws, tail, horns, feathers, animal markings, hybrid anatomy, clothing pattern on skin",
     "animal": "wrong species, human ears, human skin, species hybrid, invented markings, clothing pattern on fur",
-    "object": "animal ears, fur, paws, tail, human skin, species hybrid, organic anatomy",
+    "object": "humanoid, human body, robot body, character body, torso, arms, legs, hands, feet, gloves, boots, clothing, armor, separate head, animal ears, fur, paws, tail, human skin, species hybrid, organic anatomy",
     "other": "category change, species hybrid, invented anatomy, unrelated materials",
 }
 
@@ -67,12 +70,27 @@ def build_master_negative_prompt(identity: Mapping[str, object]) -> str:
 
 POSE_PROMPT = (
     "Preserve exactly the same GRU mascot identity and subject category from the master reference: "
-    "same human or animal species, natural anatomy, colors, markings, face, proportions, and graphic style. "
+    "same confirmed category, colors, markings, materials, proportions, and graphic style. "
     "A human must remain fully human with no animal ears, tail, muzzle, paws, fur, horns, or hybrid features. "
     "Treat the master as identity and style evidence only. Do not copy its posture. Apply the requested posture, "
     "gesture, gaze, and expression while keeping every identity detail stable. Single character, clean anatomy, "
     "one solid warm-ivory editorial background, never a checkerboard or transparency grid, no text, watermark, or extra objects."
 )
+
+OBJECT_POSE_INSTRUCTIONS = {
+    "normal": (
+        "Keep the complete object centered and fully visible in a clear idle state. Any expression or indicator must "
+        "be integrated on the object's own surface; do not add a body or limbs."
+    ),
+    "listening": (
+        "Show listening through subtle signal marks, an indicator, or expression integrated on the object itself. "
+        "Do not add a head tilt, torso, arms, hands, legs, or ears."
+    ),
+    "transcribing": (
+        "Show processing or transcription through a restrained display, light, indicator, or symbols integrated on the "
+        "object itself. Do not add a keyboard, pencil, notes, hands, arms, torso, legs, or any humanoid body."
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -130,9 +148,11 @@ def build_pose_prompt(identity: Mapping[str, object], role: str, option: PoseOpt
     category_detail = f"category {category}"
     if species:
         category_detail += f", species {species}"
+    category_constraint = OBJECT_POSE_INSTRUCTIONS.get(role, "") if category == "object" else ""
     return (
         f"{POSE_PROMPT} The confirmed subject is {label} ({category_detail}). "
         f"Runtime role: {role}. Requested pose: {option.instruction}. "
+        f"{category_constraint} "
         "Use only the approved Master as visual identity reference."
     )
 

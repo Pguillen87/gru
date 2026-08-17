@@ -30,4 +30,4 @@ def test_persistent_worker_preserves_approved_generation_identity():
     assert MASTER_SEEDS == (0, 1, 2)
     assert PERSISTENT_WORKER_MAX_CONTAINERS == 1
     assert WORKER_SCALEDOWN_SECONDS == 45
-    assert inference_config_hash() == "f686a19c27ae3a2c"
+    assert inference_config_hash() == "49323975904a2347"
