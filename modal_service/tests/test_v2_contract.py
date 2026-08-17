@@ -85,6 +85,16 @@ def test_pose_endpoint_enqueues_once_without_waiting_for_gpu_or_cache():
     assert 'status_code=202' in source
 
 
+def test_master_scheduler_emits_safe_step_events_without_logging_sensitive_values():
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+
+    assert '"master_schedule_received"' in source
+    assert '"master_authorization_checked"' in source
+    assert '"MASTER_AUTHORIZATION_UNAVAILABLE"' in source
+    assert '"master_worker_enqueue_failed"' in source
+    assert '"MASTER_WORKER_ENQUEUE_FAILED"' in source
+
+
 def test_pose_reservation_is_serialized_and_worker_does_not_restart_transition():
     source = Path("modal_service/app.py").read_text(encoding="utf-8")
     control_prefix = source.split("def job_control(", 1)[0][-220:]

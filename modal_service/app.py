@@ -583,22 +583,70 @@ def job_control(
         return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
 
 
-def _schedule_master(job_id: str, user_id: str) -> dict[str, object]:
+def _master_schedule_event(
+    event: str,
+    job: JobRecord,
+    *,
+    result: str | None = None,
+    duration_ms: int | None = None,
+    safe_error_code: str | None = None,
+) -> None:
+    structured_event(
+        event,
+        environment=ENVIRONMENT.value,
+        result=result,
+        durationMs=duration_ms,
+        puleiroTraceId=_trace_id_for_record(job),
+        attemptId=job.attempt_id,
+        jobId=job.job_id,
+        safeErrorCode=safe_error_code,
+    )
+
+
+def _master_remote_step(job: JobRecord, event: str, unavailable_code: str, operation) -> dict[str, object]:
+    try:
+        result = operation()
+        _raise_guard_error(result)
+        return result
+    except GuardRejected as error:
+        _master_schedule_event(event, job, result="rejected", safe_error_code=error.code)
+        raise
+    except Exception:
+        _master_schedule_event(event, job, result="failure", safe_error_code=unavailable_code)
+        raise GuardRejected(unavailable_code, "The master generation service is temporarily unavailable.") from None
+
+
+def _schedule_master(job: JobRecord, user_id: str) -> dict[str, object]:
+    started_at = time.monotonic()
+    _master_schedule_event("master_schedule_received", job)
     if GPU_GENERATION_ENABLED:
-        cache = model_cache_status.remote()
-        _raise_guard_error(cache)
-    authorization = job_control.remote(JobOperation.AUTHORIZE_GENERATION.value, job_id, user_id)
-    _raise_guard_error(authorization)
+        _master_remote_step(job, "master_cache_checked", "MASTER_CACHE_UNAVAILABLE", model_cache_status.remote)
+    authorization = _master_remote_step(
+        job,
+        "master_authorization_checked",
+        "MASTER_AUTHORIZATION_UNAVAILABLE",
+        lambda: job_control.remote(JobOperation.AUTHORIZE_GENERATION.value, job.job_id, user_id),
+    )
     job_data = dict(authorization["job"])
     if not may_schedule_gpu(GPU_GENERATION_ENABLED, bool(authorization["changed"])):
+        _master_schedule_event("master_schedule_replayed", job, result="replayed", duration_ms=_elapsed_ms(started_at))
         return job_data
     InferenceObserver(_trace_id_for_record(_deserialize(job_data))).event(
         "job_queued",
         {"cache_revision": MODEL_CACHE_SPEC.cache_revision, "gpu_type": MASTER_GPU},
     )
-    function_call = QwenMasterWorker().generate.spawn(job_id)
-    recorded = job_control.remote(JobOperation.RECORD_GPU_CALL.value, job_id, call_id=function_call.object_id)
-    _raise_guard_error(recorded)
+    try:
+        function_call = QwenMasterWorker().generate.spawn(job.job_id)
+    except Exception:
+        _master_schedule_event("master_worker_enqueue_failed", job, result="failure", safe_error_code="MASTER_WORKER_ENQUEUE_FAILED")
+        raise GuardRejected("MASTER_WORKER_ENQUEUE_FAILED", "The master worker could not be queued.") from None
+    recorded = _master_remote_step(
+        job,
+        "master_worker_record_checked",
+        "MASTER_WORKER_RECORD_UNAVAILABLE",
+        lambda: job_control.remote(JobOperation.RECORD_GPU_CALL.value, job.job_id, call_id=function_call.object_id),
+    )
+    _master_schedule_event("master_worker_spawned", job, result="spawned", duration_ms=_elapsed_ms(started_at))
     return dict(recorded["job"])
 
 
@@ -1451,7 +1499,7 @@ def api():
             _ensure_owner(job, identity.user_id)
             if not MASTER_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
                 raise GuardRejected("GENERATION_DISABLED", "Master generation is disabled.")
-            return public_job(_deserialize(_schedule_master(job_id, identity.user_id)))
+            return public_job(_deserialize(_schedule_master(job, identity.user_id)))
         except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
             raise _api_error(error) from error
 
