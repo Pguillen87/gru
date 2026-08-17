@@ -1054,7 +1054,7 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
 
 
 def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
-    from modal_service.image_processing import remove_connected_flat_background
+    from modal_service.image_processing import normalize_pose_presentation
 
     expected_options = tuple(pose_option(job.pose_choices[role]) for role in ("normal", "listening", "transcribing"))
     if set(outputs) != {option.option_id for option in expected_options} or job.master_id is None:
@@ -1069,7 +1069,7 @@ def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
         pose_id = f"pose_{index:02d}"
         pose_ids[option.option_id] = pose_id
         filename = f"{pose_id}.png"
-        content = remove_connected_flat_background(outputs[option.option_id])
+        content = normalize_pose_presentation(outputs[option.option_id])
         (staging / filename).write_bytes(content)
         poses.append(
             {

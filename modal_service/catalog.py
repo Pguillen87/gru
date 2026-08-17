@@ -17,7 +17,8 @@ MASTER_PROMPT = (
     "background colors, shadows, scenery, or nearby textures onto unrelated body regions. "
     "Recompose one centered character in a balanced neutral pose, facing mostly forward, with a complete body "
     "and a clear silhouette for small Android sizes. Use the approved GRU matte editorial-cartoon finish, "
-    "controlled outlines, and transparent background when supported. No text, watermark, additional subject, "
+    "controlled outlines, and one solid warm-ivory editorial background. Never render a checkerboard, transparency grid, "
+    "or background scenery. No text, watermark, additional subject, "
     "invented accessory, duplicated limb, or background scenery."
 )
 
@@ -70,7 +71,7 @@ POSE_PROMPT = (
     "A human must remain fully human with no animal ears, tail, muzzle, paws, fur, horns, or hybrid features. "
     "Treat the master as identity and style evidence only. Do not copy its posture. Apply the requested posture, "
     "gesture, gaze, and expression while keeping every identity detail stable. Single character, clean anatomy, "
-    "transparent background when supported, no text, watermark, or extra objects."
+    "one solid warm-ivory editorial background, never a checkerboard or transparency grid, no text, watermark, or extra objects."
 )
 
 

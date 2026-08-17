@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from collections import deque
 from io import BytesIO
 
 from PIL import Image, ImageDraw
+
+
+POSE_BACKGROUND = (241, 230, 201, 255)
+POSE_CANVAS_SIZE = 1024
 
 
 def remove_connected_flat_background(content: bytes, threshold: int = 24) -> bytes:
@@ -29,6 +34,50 @@ def remove_connected_flat_background(content: bytes, threshold: int = 24) -> byt
     output = BytesIO()
     image.save(output, format="PNG", optimize=True)
     return output.getvalue()
+
+
+def normalize_pose_presentation(content: bytes) -> bytes:
+    """Return a complete opaque pose canvas on Puleiro's editorial backdrop."""
+    with Image.open(BytesIO(content)) as source:
+        image = source.convert("RGBA")
+    image = _remove_checkerboard_border(image)
+    image = _crop_transparent_margin(image)
+    image.thumbnail((int(POSE_CANVAS_SIZE * 0.8), int(POSE_CANVAS_SIZE * 0.8)), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (POSE_CANVAS_SIZE, POSE_CANVAS_SIZE), POSE_BACKGROUND)
+    offset = ((POSE_CANVAS_SIZE - image.width) // 2, (POSE_CANVAS_SIZE - image.height) // 2)
+    canvas.alpha_composite(image, offset)
+    output = BytesIO()
+    canvas.convert("RGB").save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
+def _remove_checkerboard_border(image: Image.Image) -> Image.Image:
+    """Erase neutral border-connected grid pixels while retaining the central subject."""
+    width, height = image.size
+    pixels = image.load()
+    visited: set[tuple[int, int]] = set()
+    queue: deque[tuple[int, int]] = deque()
+    for x in range(width):
+        queue.extend(((x, 0), (x, height - 1)))
+    for y in range(height):
+        queue.extend(((0, y), (width - 1, y)))
+    while queue:
+        x, y = queue.popleft()
+        if (x, y) in visited:
+            continue
+        visited.add((x, y))
+        red, green, blue, alpha = pixels[x, y]
+        if alpha == 0 or not _is_neutral_background(red, green, blue):
+            continue
+        pixels[x, y] = (0, 0, 0, 0)
+        for next_x, next_y in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= next_x < width and 0 <= next_y < height and (next_x, next_y) not in visited:
+                queue.append((next_x, next_y))
+    return image
+
+
+def _is_neutral_background(red: int, green: int, blue: int) -> bool:
+    return max(red, green, blue) - min(red, green, blue) <= 18
 
 
 def _crop_transparent_margin(image: Image.Image) -> Image.Image:

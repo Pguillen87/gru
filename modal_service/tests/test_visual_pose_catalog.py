@@ -13,7 +13,7 @@ class _Volume:
 def test_pose_persistence_exposes_exactly_three_selected_images(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "ASSET_ROOT", str(tmp_path))
     monkeypatch.setattr(app, "assets", _Volume())
-    monkeypatch.setattr("modal_service.image_processing.remove_connected_flat_background", lambda value: value)
+    monkeypatch.setattr("modal_service.image_processing.normalize_pose_presentation", lambda value: value)
     job = JobRecord("job-1", "user", "key", "source", master_id="master_1")
     selected = [option for option in POSE_OPTIONS if option.option_id in DEFAULT_POSE_CHOICES.values()]
     outputs = {option.option_id: f"image-{option.option_id}".encode() for option in selected}
