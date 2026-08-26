@@ -24,18 +24,34 @@ class RuntimeLimits:
     generations_per_user_per_day: int
     global_jobs_per_day: int
     user_daily_cost_cap_usd: float
+    global_requests_per_minute: int
+    reads_per_user_per_minute: int
+    writes_per_user_per_minute: int
+    worker_lease_seconds: int
+    estimated_gpu_hourly_usd: float
     generation_enabled: bool = False
 
 
 LIMITS = {
-    Environment.DEVELOPMENT: RuntimeLimits(1, 1, 6, 30.00, 1.00, 900, 100, 30, 100, 30.00, False),
-    Environment.STAGING: RuntimeLimits(1, 1, 6, 10.0, 0.20, 600, 10, 3, 50, 0.60, False),
-    Environment.PRODUCTION: RuntimeLimits(2, 2, 6, 100.0, 0.20, 600, 20, 5, 1_000, 1.00, False),
+    Environment.DEVELOPMENT: RuntimeLimits(1, 1, 6, 30.00, 1.00, 900, 100, 30, 100, 30.00, 120, 120, 12, 1_020, 0.0, False),
+    Environment.STAGING: RuntimeLimits(1, 1, 6, 10.0, 0.20, 600, 10, 3, 50, 0.60, 120, 60, 6, 720, 0.0, False),
+    # A controlled production rollout: one Master set per request, with a
+    # hard daily reservation ceiling while the web flow is being validated.
+    Environment.PRODUCTION: RuntimeLimits(1, 1, 3, 10.0, 1.00, 1_800, 10, 3, 10, 1.00, 120, 60, 6, 1_800, 0.0, False),
 }
 
 
 def limits_for(value: str) -> RuntimeLimits:
     return LIMITS[Environment(value)]
+
+
+def required_environment(value: str | None) -> Environment:
+    if value is None or not value.strip():
+        raise RuntimeError("GRU_MASCOT_ENV must be explicitly configured for deployment.")
+    try:
+        return Environment(value.strip().lower())
+    except ValueError as error:
+        raise RuntimeError("GRU_MASCOT_ENV must be development, staging, or production.") from error
 
 
 def generation_enabled(environment: Environment, override: str | None = None) -> bool:

@@ -1,0 +1,126 @@
+{
+  "version": "web-poses-v1",
+  "catalog_version": "web-poses-v1",
+  "poses": [
+    {
+      "role": "normal",
+      "option_id": "normal_attentive",
+      "template_id": "normal_attentive",
+      "name": "Pronto e atento",
+      "reference": "references/normal_attentive.png",
+      "instruction": "Balanced upright posture and attentive expression.",
+      "version": "web-poses-v1",
+      "sha256": "d07ba8ac8b2aac900479f60323a37420fa1195a347bc9b6f0ec528c15da51306"
+    },
+    {
+      "role": "normal",
+      "option_id": "normal_relaxed",
+      "template_id": "normal_relaxed",
+      "name": "Relaxado",
+      "reference": "references/normal_relaxed.png",
+      "instruction": "Relaxed natural posture with a calm expression.",
+      "version": "web-poses-v1",
+      "sha256": "9797c5cc042f52d6e360d506fcbbbb3cd82ec566935ba98347eacea5b074d700"
+    },
+    {
+      "role": "normal",
+      "option_id": "normal_curious",
+      "template_id": "normal_curious",
+      "name": "Observador",
+      "reference": "references/normal_curious.png",
+      "instruction": "Curious observing posture while preserving the silhouette.",
+      "version": "web-poses-v1",
+      "sha256": "6319238d0a67162a4759483517fa742dfe5cdbff02dbf6c2eb79d987a42ae44c"
+    },
+    {
+      "role": "normal",
+      "option_id": "normal_firm",
+      "template_id": "normal_firm",
+      "name": "Sereno",
+      "reference": "references/normal_firm.png",
+      "instruction": "Calm, confident waiting posture.",
+      "version": "web-poses-v1",
+      "sha256": "415894c7f989f7d6b0323535a5bd53ad80734d34b0535bbca8a3596b80a6646b"
+    },
+    {
+      "role": "listening",
+      "option_id": "listening_focus",
+      "template_id": "listening_focus",
+      "name": "Gesto de escuta",
+      "reference": "references/listening_focus.png",
+      "instruction": "Clear listening gesture adapted to the subject anatomy.",
+      "version": "web-poses-v1",
+      "sha256": "fac4713000e1cd3baa2a3d9c9c8a6d58def0ed499b3b208bf86d4971c26655b5"
+    },
+    {
+      "role": "listening",
+      "option_id": "listening_process",
+      "template_id": "listening_process",
+      "name": "Inclinado para ouvir",
+      "reference": "references/listening_process.png",
+      "instruction": "Body slightly oriented toward a sound source.",
+      "version": "web-poses-v1",
+      "sha256": "5159f4b61e210e4d75c7382e8f210f38a869ffcaa528d69a7ca9d48ebf3abaa3"
+    },
+    {
+      "role": "listening",
+      "option_id": "listening_natural",
+      "template_id": "listening_natural",
+      "name": "Reação natural",
+      "reference": "references/listening_natural.png",
+      "instruction": "Natural listening reaction using only anatomically valid parts.",
+      "version": "web-poses-v1",
+      "sha256": "80c9402006fbd2299a8498480160e6a8d43d874de819bd615cbee6b033a4aa63"
+    },
+    {
+      "role": "listening",
+      "option_id": "listening_ready",
+      "template_id": "listening_ready",
+      "name": "Cabeça inclinada",
+      "reference": "references/listening_ready.png",
+      "instruction": "Focused head tilt or equivalent anatomical listening cue.",
+      "version": "web-poses-v1",
+      "sha256": "5b808f8ebb9e9b4601a894422fa6380cd2d3b0642f0239193f14fececcc93282"
+    },
+    {
+      "role": "transcribing",
+      "option_id": "transcribing_notes",
+      "template_id": "transcribing_notes",
+      "name": "Anotando",
+      "reference": "references/transcribing_notes.png",
+      "instruction": "Simple note-taking action with one compact support object when needed.",
+      "version": "web-poses-v1",
+      "sha256": "e055143a0d9f7aad3b16be1dfe148df86e9562cb7587893871baa4e7fc3418d7"
+    },
+    {
+      "role": "transcribing",
+      "option_id": "transcribing_fast",
+      "template_id": "transcribing_fast",
+      "name": "Digitando",
+      "reference": "references/transcribing_fast.png",
+      "instruction": "Focused typing action with a compact device.",
+      "version": "web-poses-v1",
+      "sha256": "e824553ca4d7c1b7c5b5c4691e96e9427512e363044f8e060ccbc53ce97e6527"
+    },
+    {
+      "role": "transcribing",
+      "option_id": "transcribing_thought",
+      "template_id": "transcribing_thought",
+      "name": "Organizando ideias",
+      "reference": "references/transcribing_thought.png",
+      "instruction": "Attentive processing pose without excessive accessories.",
+      "version": "web-poses-v1",
+      "sha256": "c0805d31e73559b6b9fc47d97b0664419b11adb1aa241f3a8d4b4d53927684d2"
+    },
+    {
+      "role": "transcribing",
+      "option_id": "transcribing_active",
+      "template_id": "transcribing_active",
+      "name": "Processando",
+      "reference": "references/transcribing_active.png",
+      "instruction": "Clear active gesture representing speech becoming written content.",
+      "version": "web-poses-v1",
+      "sha256": "286b82eb070b343223630ac6d54bea25ef5707a305b41215baade5ece9b60416"
+    }
+  ]
+}

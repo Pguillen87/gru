@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from modal_service.catalog import POSE_CATALOG_VERSION, POSE_BY_OPTION
 from modal_service.validation import validate_image
 
 
@@ -15,7 +16,7 @@ class TemplatePackageError(ValueError):
     code = "INVALID_TEMPLATE_PACKAGE"
 
 
-POSE_ID_PATTERN = re.compile(r"^pose_[0-9]{2}$")
+POSE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
@@ -36,43 +37,39 @@ def validate_template_package(root: Path) -> ValidatedTemplatePackage:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     version = str(manifest.get("version", "")).strip()
     poses = manifest.get("poses")
-    if not VERSION_PATTERN.fullmatch(version) or not isinstance(poses, list) or not 6 <= len(poses) <= 20:
-        raise TemplatePackageError("A version and 6 to 20 poses are required.")
-    ids = [str(pose.get("pose_id", "")) for pose in poses if isinstance(pose, dict)]
+    if version != POSE_CATALOG_VERSION or not isinstance(poses, list) or len(poses) != len(POSE_BY_OPTION):
+        raise TemplatePackageError("The immutable web-poses-v1 package with all 12 poses is required.")
+    ids = [str(pose.get("option_id", "")) for pose in poses if isinstance(pose, dict)]
     if len(ids) != len(poses) or len(set(ids)) != len(ids) or not all(POSE_ID_PATTERN.fullmatch(value) for value in ids):
         raise TemplatePackageError("Pose identifiers must be present and unique.")
-    consistency = manifest.get("consistency_pose_ids")
-    mvp = manifest.get("mvp_pose_ids")
-    if (
-        not isinstance(consistency, list)
-        or len(consistency) != 3
-        or len(set(consistency)) != 3
-        or not set(consistency).issubset(ids)
-    ):
-        raise TemplatePackageError("Exactly three valid consistency poses are required.")
-    if not isinstance(mvp, list) or len(mvp) != 6 or len(set(mvp)) != 6 or not set(mvp).issubset(ids):
-        raise TemplatePackageError("Exactly six valid MVP poses are required.")
+    if set(ids) != set(POSE_BY_OPTION):
+        raise TemplatePackageError("Template options must exactly match the Web pose catalog.")
     referenced = [manifest_path]
     for pose in poses:
         reference = _safe_reference(root, str(pose.get("reference", "")))
+        option_id = str(pose.get("option_id", ""))
+        definition = POSE_BY_OPTION.get(option_id)
+        role = str(pose.get("role", ""))
+        template_id = str(pose.get("template_id", ""))
         name = str(pose.get("name", "")).strip()
         pose_version = str(pose.get("version", "")).strip()
-        difficulty = str(pose.get("difficulty", "")).strip()
         instruction = str(pose.get("instruction", "")).strip()
         expected_hash = str(pose.get("sha256", "")).lower()
         if (
-            not name
+            definition is None
+            or role != definition.role
+            or template_id != definition.template_id
+            or not name
             or not VERSION_PATTERN.fullmatch(pose_version)
-            or not difficulty
             or not instruction
             or not SHA256_PATTERN.fullmatch(expected_hash)
             or not reference.is_file()
         ):
-            raise TemplatePackageError(f"Pose {pose.get('pose_id')} is incomplete.")
+            raise TemplatePackageError(f"Pose {option_id} is incomplete or incompatible.")
         content = reference.read_bytes()
         validate_image(content, None)
         if hashlib.sha256(content).hexdigest() != expected_hash:
-            raise TemplatePackageError(f"Pose {pose.get('pose_id')} checksum does not match.")
+            raise TemplatePackageError(f"Pose {option_id} checksum does not match.")
         referenced.append(reference)
     return ValidatedTemplatePackage(root, version, manifest, tuple(referenced))
 

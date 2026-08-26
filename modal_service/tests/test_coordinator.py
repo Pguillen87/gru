@@ -2,7 +2,7 @@ import pytest
 from dataclasses import replace
 
 from modal_service.config import Environment, limits_for
-from modal_service.coordinator import JobCoordinator
+from modal_service.coordinator import JobCoordinator, owner_counter_id
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
 from modal_service.domain import DomainError, JobNotFound, JobState
 
@@ -12,44 +12,48 @@ def coordinator(*, limits=None):
     return JobCoordinator(jobs, idempotency, usage, limits or limits_for(Environment.DEVELOPMENT), "2026-08-03"), usage
 
 
+def register(service: JobCoordinator, user_id: str, key: str, source: str):
+    return service.register(user_id, key, source, "image-processing-v1")
+
+
 def test_create_replay_returns_same_job_without_new_quota_or_cost():
     service, usage = coordinator()
-    first, created = service.register("uid-a", "key-x", "original/hash")
-    replay, replay_created = service.register("uid-a", "key-x", "original/hash")
+    first, created = register(service, "uid-a", "key-x", "original/hash")
+    replay, replay_created = register(service, "uid-a", "key-x", "original/hash")
     assert created and not replay_created
     assert replay.job_id == first.job_id
-    assert usage["user-jobs:2026-08-03:uid-a"] == 1
+    assert usage[f"user-jobs:2026-08-03:{owner_counter_id('uid-a')}"] == 1
     assert usage["global-jobs:2026-08-03"] == 1
     assert all("cost" not in key for key in usage)
 
 
 def test_response_loss_recovery_uses_deterministic_job_without_new_quota():
     service, usage = coordinator()
-    first, _ = service.register("uid-a", "key-x", "original/hash")
+    first, _ = register(service, "uid-a", "key-x", "original/hash")
     service.idempotency.clear()
-    replay, created = service.register("uid-a", "key-x", "original/hash")
+    replay, created = register(service, "uid-a", "key-x", "original/hash")
     assert not created and replay.job_id == first.job_id
-    assert usage["user-jobs:2026-08-03:uid-a"] == 1
+    assert usage[f"user-jobs:2026-08-03:{owner_counter_id('uid-a')}"] == 1
     assert usage["global-jobs:2026-08-03"] == 1
 
 
 def test_replay_rejects_a_different_image_for_the_same_key():
     service, _ = coordinator()
-    service.register("uid-a", "key-x", "original/first")
+    register(service, "uid-a", "key-x", "original/first")
     with pytest.raises(DomainError, match="different input"):
-        service.register("uid-a", "key-x", "original/second")
+        register(service, "uid-a", "key-x", "original/second")
 
 
 def test_different_uid_cannot_read_job_metadata():
     service, _ = coordinator()
-    job, _ = service.register("uid-a", "key-x", "original/hash")
+    job, _ = register(service, "uid-a", "key-x", "original/hash")
     with pytest.raises(JobNotFound):
         service.ensure_owner(job, "uid-b")
 
 
 def test_disabled_generation_has_no_cost_and_keeps_ready_state():
     service, usage = coordinator()
-    job, _ = service.register("uid-a", "key-x", "original/hash")
+    job, _ = register(service, "uid-a", "key-x", "original/hash")
     assert not service.authorize_generation(job.job_id, "uid-a", enabled=False)
     assert service.get(job.job_id).state is JobState.READY_FOR_GENERATION
     assert all("cost" not in key for key in usage)
@@ -57,12 +61,44 @@ def test_disabled_generation_has_no_cost_and_keeps_ready_state():
 
 def test_generation_reservation_is_idempotent_and_enforces_caps():
     service, usage = coordinator()
-    job, _ = service.register("uid-a", "key-x", "original/hash")
+    job, _ = register(service, "uid-a", "key-x", "original/hash")
     assert service.authorize_generation(job.job_id, "uid-a", enabled=True)
     first_cost = usage["global-cost:2026-08-03"]
     assert not service.authorize_generation(job.job_id, "uid-a", enabled=True)
     assert usage["global-cost:2026-08-03"] == first_cost
-    assert usage["user-generations:2026-08-03:uid-a"] == 1
+    assert usage[f"user-generations:2026-08-03:{owner_counter_id('uid-a')}"] == 1
+
+
+def test_preempted_master_resumes_same_job_without_a_second_reservation():
+    service, usage = coordinator()
+    job, _ = register(service, "uid-a", "key-x", "original/hash")
+    assert service.authorize_generation(job.job_id, "uid-a", enabled=True)
+    reserved_cost = usage["global-cost:2026-08-03"]
+    service.transition_if_active(job.job_id, JobState.VALIDATING_INPUT, JobState.GENERATING_MASTER)
+    service.transition_if_active(job.job_id, JobState.GENERATING_MASTER, JobState.RECOVERY_REQUIRED, "WORKER_LOST")
+
+    resumed, changed = service.resume_preempted_master(job.job_id, "uid-a")
+
+    assert changed
+    assert resumed.state is JobState.VALIDATING_INPUT
+    assert resumed.generation_reserved
+    assert usage["global-cost:2026-08-03"] == reserved_cost
+
+
+def test_fixed_master_failure_can_resume_without_a_second_reservation():
+    service, usage = coordinator()
+    job, _ = register(service, "uid-a", "key-x", "original/hash")
+    assert service.authorize_generation(job.job_id, "uid-a", enabled=True)
+    reserved_cost = usage["global-cost:2026-08-03"]
+    service.transition_if_active(job.job_id, JobState.VALIDATING_INPUT, JobState.GENERATING_MASTER)
+    service.transition_if_active(job.job_id, JobState.GENERATING_MASTER, JobState.FAILED, "MASTER_GENERATION_FAILED")
+
+    resumed, changed = service.resume_preempted_master(job.job_id, "uid-a")
+
+    assert changed
+    assert resumed.state is JobState.VALIDATING_INPUT
+    assert resumed.generation_reserved
+    assert usage["global-cost:2026-08-03"] == reserved_cost
 
 
 def test_generation_quota_is_separate_from_free_validation_jobs():
@@ -73,48 +109,48 @@ def test_generation_quota_is_separate_from_free_validation_jobs():
         generations_per_user_per_day=1,
     )
     service, usage = coordinator(limits=limits)
-    first, _ = service.register("uid-a", "key-a", "original/a")
-    second, _ = service.register("uid-a", "key-b", "original/b")
+    first, _ = register(service, "uid-a", "key-a", "original/a")
+    second, _ = register(service, "uid-a", "key-b", "original/b")
 
     assert service.authorize_generation(first.job_id, "uid-a", enabled=True)
     with pytest.raises(RateLimitExceeded):
         service.authorize_generation(second.job_id, "uid-a", enabled=True)
 
-    assert usage["user-jobs:2026-08-03:uid-a"] == 2
-    assert usage["user-generations:2026-08-03:uid-a"] == 1
+    assert usage[f"user-jobs:2026-08-03:{owner_counter_id('uid-a')}"] == 2
+    assert usage[f"user-generations:2026-08-03:{owner_counter_id('uid-a')}"] == 1
 
 
 def test_uid_job_quota_is_separate_from_generation_cost():
     limits = limits_for(Environment.DEVELOPMENT)
     service, usage = coordinator(limits=limits)
     for index in range(limits.jobs_per_user_per_day):
-        service.register("uid-a", f"key-{index}", f"original/{index}")
+        register(service, "uid-a", f"key-{index}", f"original/{index}")
     with pytest.raises(RateLimitExceeded):
-        service.register("uid-a", "over", "original/over")
+        register(service, "uid-a", "over", "original/over")
     assert all("cost" not in key for key in usage)
 
 
 def test_global_cost_cap_blocks_before_mutating_usage():
     service, usage = coordinator()
-    job, _ = service.register("uid-a", "key-x", "original/hash")
+    job, _ = register(service, "uid-a", "key-x", "original/hash")
     usage["global-cost:2026-08-03"] = service.limits.daily_cost_cap_usd
     with pytest.raises(CostLimitExceeded):
         service.authorize_generation(job.job_id, "uid-a", enabled=True)
     assert usage["global-cost:2026-08-03"] == service.limits.daily_cost_cap_usd
-    assert "user-cost:2026-08-03:uid-a" not in usage
+    assert f"user-cost:2026-08-03:{owner_counter_id('uid-a')}" not in usage
 
 
 def test_global_job_quota_blocks_many_anonymous_uids():
     limits = replace(limits_for(Environment.DEVELOPMENT), global_jobs_per_day=1)
     service, _ = coordinator(limits=limits)
-    service.register("uid-a", "key-a", "original/a")
+    register(service, "uid-a", "key-a", "original/a")
     with pytest.raises(RateLimitExceeded):
-        service.register("uid-b", "key-b", "original/b")
+        register(service, "uid-b", "key-b", "original/b")
 
 
 def test_worker_success_cannot_overwrite_canceled_or_promote_files():
     service, _ = coordinator()
-    job, _ = service.register("uid-a", "key-x", "original/hash")
+    job, _ = register(service, "uid-a", "key-x", "original/hash")
     assert service.authorize_generation(job.job_id, "uid-a", enabled=True)
     _, started = service.transition_if_active(job.job_id, JobState.VALIDATING_INPUT, JobState.GENERATING_MASTER)
     assert started
@@ -130,7 +166,7 @@ def test_worker_success_cannot_overwrite_canceled_or_promote_files():
 
 def test_worker_failure_cannot_overwrite_canceled():
     service, _ = coordinator()
-    job, _ = service.register("uid-a", "key-x", "original/hash")
+    job, _ = register(service, "uid-a", "key-x", "original/hash")
     assert service.authorize_generation(job.job_id, "uid-a", enabled=True)
     service.transition_if_active(job.job_id, JobState.VALIDATING_INPUT, JobState.GENERATING_MASTER)
     service.cancel(job.job_id, "uid-a")
@@ -146,7 +182,7 @@ def test_worker_failure_cannot_overwrite_canceled():
 @pytest.mark.parametrize("terminal", [JobState.COMPLETED, JobState.FAILED, JobState.CANCELED])
 def test_stale_worker_cannot_overwrite_any_terminal_state(terminal):
     service, _ = coordinator()
-    job, _ = service.register("uid-a", "key-x", "original/hash")
+    job, _ = register(service, "uid-a", "key-x", "original/hash")
     service.jobs[job.job_id]["state"] = terminal.value
     promoted = []
 

@@ -33,12 +33,12 @@ After the debug build starts, capture the official App Check debug token from Lo
 ```powershell
 modal profile current
 modal secret list
-$env:GRU_MASCOT_ENV='development'
+$env:GRU_MASCOT_ENV='production'
 $env:GPU_GENERATION_ENABLED='false'
 modal deploy -m modal_service.app
 ```
 
-After deploy, `/health` must report `generation_enabled: false`. If it does not, stop and roll back before any write test.
+After deploy, `/health/ready` must return 200 and `/health/generation` must report `generation_enabled: false`. If it does not, stop and roll back before any write test.
 
 ## Smoke without GPU
 
@@ -111,7 +111,7 @@ cost caps. Enabling GPU generation is still a separate explicit operation.
 
 ## Retention
 
-Originals and rejected Masters are temporary. Approved Masters and poses are private persistent assets. Cleanup must remain idempotent and job-scoped; no cleanup deployment is enabled until retention durations are product-approved.
+Originals, temporary files and rejected Masters expire after 72 hours. Private approved results remain until the authenticated user deletes them. Operational events expire after 30 days; minimal deletion receipts after 12 months. Cleanup is idempotent and job-scoped. Global-library publication remains disabled.
 
 ## Play Store release gate
 

@@ -4,38 +4,38 @@ import json
 import pytest
 from PIL import Image
 
+from modal_service.catalog import POSES, POSE_TEMPLATE_VERSION
 from modal_service.templates import TemplatePackageError, validate_template_package
 
 
 def test_complete_template_package_is_validated(tmp_path):
     poses = []
-    for index in range(1, 7):
-        pose_id = f"pose_{index:02d}"
-        folder = tmp_path / pose_id
+    for index, definition in enumerate(POSES, start=1):
+        folder = tmp_path / definition.option_id
         folder.mkdir()
         reference = folder / "reference.png"
         Image.new("RGB", (256, 256), (index, 20, 30)).save(reference)
         poses.append({
-            "pose_id": pose_id,
-            "name": f"pose {index}",
-            "version": "test-v1",
-            "difficulty": "simple" if index == 1 else "intermediate",
-            "reference": f"{pose_id}/reference.png",
-            "instruction": "Preserve identity and apply this posture.",
+            "role": definition.role,
+            "option_id": definition.option_id,
+            "template_id": definition.template_id,
+            "name": definition.name,
+            "version": POSE_TEMPLATE_VERSION,
+            "reference": f"{definition.option_id}/reference.png",
+            "instruction": definition.instruction,
             "sha256": hashlib.sha256(reference.read_bytes()).hexdigest(),
         })
     manifest = {
-        "version": "test-v1",
+        "version": POSE_TEMPLATE_VERSION,
+        "catalog_version": POSE_TEMPLATE_VERSION,
         "poses": poses,
-        "consistency_pose_ids": ["pose_01", "pose_03", "pose_05"],
-        "mvp_pose_ids": [pose["pose_id"] for pose in poses],
     }
     (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     package = validate_template_package(tmp_path)
 
-    assert package.version == "test-v1"
-    assert len(package.files) == 7
+    assert package.version == POSE_TEMPLATE_VERSION
+    assert len(package.files) == 13
 
 
 def test_template_package_rejects_path_escape(tmp_path):
