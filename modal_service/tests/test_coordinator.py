@@ -80,6 +80,29 @@ def test_pose_generation_locks_exactly_one_choice_per_role():
     assert started.pose_choices == choices
 
 
+def test_configuration_is_owner_scoped_revisioned_and_does_not_start_gpu():
+    service, usage = coordinator()
+    job, _ = service.register("uid-a", "key-x", "original/hash")
+    service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
+    choices = {
+        "normal": "normal_relaxed",
+        "listening": "listening_ready",
+        "transcribing": "transcribing_notes",
+    }
+
+    updated, changed = service.update_configuration(job.job_id, "uid-a", "Paulinho", choices, 0)
+
+    assert changed and updated.display_name == "Paulinho"
+    assert updated.pose_choices == choices and updated.configuration_revision == 1
+    assert all("cost" not in key for key in usage)
+    replay, replay_changed = service.update_configuration(job.job_id, "uid-a", "Paulinho", choices, 0)
+    assert not replay_changed and replay.configuration_revision == 1
+    with pytest.raises(DomainError, match="another session"):
+        service.update_configuration(job.job_id, "uid-a", "Outro", choices, 0)
+    with pytest.raises(JobNotFound):
+        service.update_configuration(job.job_id, "uid-b", None, choices, 1)
+
+
 def test_pose_worker_call_is_reserved_once_and_then_recorded():
     service, _ = coordinator()
     job, _ = service.register("uid-a", "key-x", "original/hash")

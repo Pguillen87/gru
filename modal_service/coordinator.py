@@ -10,7 +10,7 @@ from enum import StrEnum
 
 from modal_service.config import RuntimeLimits
 from modal_service.costs import generation_reservation, require_job_quota
-from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, TERMINAL_STATES
+from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, TERMINAL_STATES, utc_now
 from modal_service.catalog import DEFAULT_POSE_CHOICES, validate_pose_choices
 
 
@@ -24,6 +24,7 @@ class JobOperation(StrEnum):
     RESERVE_POSE_GPU_CALL = "RESERVE_POSE_GPU_CALL"
     RECORD_POSE_GPU_CALL = "RECORD_POSE_GPU_CALL"
     APPROVE_MASTER = "APPROVE_MASTER"
+    UPDATE_CONFIGURATION = "UPDATE_CONFIGURATION"
     START_POSES = "START_POSES"
     COMMIT_POSES = "COMMIT_POSES"
     FAIL_POSES = "FAIL_POSES"
@@ -234,6 +235,38 @@ class JobCoordinator:
         changed = job.approve_master(master_id)
         if changed:
             job.prompt_version = prompt_version
+            self.save(job)
+        return job, changed
+
+    def update_configuration(
+        self,
+        job_id: str,
+        user_id: str,
+        display_name: str | None,
+        pose_choices: dict[str, str] | None,
+        expected_revision: int,
+    ) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        self.ensure_owner(job, user_id)
+        if job.state not in {JobState.CONSISTENCY_TEST, JobState.READY_FOR_POSES}:
+            raise DomainError("Mascot configuration is not available for this job.")
+        next_choices = validate_pose_choices(pose_choices) if pose_choices is not None else job.pose_choices
+        next_name = display_name if display_name is not None else job.display_name
+        if expected_revision != job.configuration_revision:
+            # A transport retry may arrive after the first write. It is safe
+            # only when it describes the state already persisted; divergent
+            # stale edits remain a visible conflict.
+            if next_choices == job.pose_choices and next_name == job.display_name:
+                return job, False
+            error = DomainError("Mascot configuration was changed in another session.")
+            error.code = "POSE_CONFIGURATION_CONFLICT"
+            raise error
+        changed = next_choices != job.pose_choices or next_name != job.display_name
+        if changed:
+            job.pose_choices = next_choices
+            job.display_name = next_name
+            job.configuration_revision += 1
+            job.updated_at = utc_now()
             self.save(job)
         return job, changed
 

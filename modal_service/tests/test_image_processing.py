@@ -2,7 +2,7 @@ from io import BytesIO
 
 from PIL import Image, ImageDraw
 
-from modal_service.image_processing import POSE_BACKGROUND, normalize_pose_presentation, remove_connected_flat_background, transparency_ratio
+from modal_service.image_processing import POSE_BACKGROUND, master_transparency_qc, normalize_pose_presentation, remove_connected_flat_background, transparency_ratio
 
 
 def test_flat_border_background_becomes_transparent_without_erasing_subject():
@@ -21,6 +21,20 @@ def test_flat_border_background_becomes_transparent_without_erasing_subject():
     assert result.height < 64
     assert result.getchannel("A").getbbox() is not None
     assert transparency_ratio(normalized) > 0.1
+    qc = master_transparency_qc(normalized)
+    assert qc["status"] == "passed"
+    assert qc["alpha_ratio"] > 0
+
+
+def test_alpha_qc_rejects_a_solid_master_without_mutating_it():
+    image = Image.new("RGBA", (32, 32), (80, 45, 34, 255))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    qc = master_transparency_qc(source.getvalue())
+
+    assert qc["status"] == "failed"
+    assert "ALPHA_INSUFFICIENT" in qc["safe_reasons"]
 
 
 def test_pose_presentation_replaces_checkerboard_with_one_editorial_background():

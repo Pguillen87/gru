@@ -97,6 +97,7 @@ SCHEDULER_CONFIG = {
 WORKER_SCALEDOWN_SECONDS = 45
 MASTER_RECONCILE_AFTER_SECONDS = 15
 MASTER_STALE_AFTER_SECONDS = 300
+WEB_POSE_CATALOG_VERSION = "web-poses-v1"
 PERSISTENT_WORKER_MAX_CONTAINERS = 1
 MODEL_CACHE_SPEC = ModelCacheSpec(
     model_id=QWEN_MODEL_ID,
@@ -147,6 +148,13 @@ class CreateJobV2Request(BaseModel):
 
 class PoseGenerationV2Request(BaseModel):
     pose_choices: dict[str, str]
+    catalog_version: str | None = None
+
+
+class MascotConfigurationV2Request(BaseModel):
+    display_name: str | None = Field(default=None, min_length=2, max_length=32)
+    pose_choices: dict[str, str] | None = None
+    configuration_revision: int = Field(ge=0)
 
 
 def _normalized_subject_identity(request: SubjectIdentityRequest) -> dict[str, object]:
@@ -168,6 +176,16 @@ def _normalized_subject_identity(request: SubjectIdentityRequest) -> dict[str, o
 def _safe_identity_text(value: str) -> bool:
     punctuation = " .,'()/_-"
     return all(character.isalnum() or character in punctuation for character in value)
+
+
+def _normalized_display_name(value: str) -> str:
+    normalized = " ".join(value.split())
+    allowed = " .'-"
+    if not 2 <= len(normalized) <= 32 or not all(character.isalnum() or character in allowed for character in normalized):
+        error = DomainError("Mascot name must contain 2 to 32 letters, numbers, spaces, apostrophes, hyphens, or periods.")
+        error.code = "INVALID_DISPLAY_NAME"
+        raise error
+    return normalized
 
 
 def _safe_correlation_id(value: str | None) -> str | None:
@@ -328,19 +346,27 @@ def _refresh_result_assets(job: JobRecord) -> None:
         assets.reload()
 
 
-def _master_references(job: JobRecord) -> list[dict[str, str]]:
-    references: list[dict[str, str]] = []
+def _master_references(job: JobRecord) -> list[dict[str, object]]:
+    references: list[dict[str, object]] = []
+    qc_by_master: dict[str, object] = {}
+    qc_path = _asset_path(job.job_id, "masters", "qc.json")
+    if qc_path.is_file():
+        try:
+            qc_by_master = json.loads(qc_path.read_text(encoding="utf-8")).get("masters", {})
+        except (OSError, ValueError, TypeError):
+            qc_by_master = {}
     for index in range(1, 5):
         master_id = f"master_{index}"
         path = _asset_path(job.job_id, "masters", f"{master_id}.png")
         if path.is_file():
-            references.append(
-                {
-                    "id": master_id,
-                    "download_path": f"/v1/mascot/jobs/{job.job_id}/masters/{master_id}",
-                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-                }
-            )
+            reference: dict[str, object] = {
+                "id": master_id,
+                "download_path": f"/v1/mascot/jobs/{job.job_id}/masters/{master_id}",
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+            if isinstance(qc_by_master.get(master_id), dict):
+                reference["qc"] = qc_by_master[master_id]
+            references.append(reference)
     return references
 
 
@@ -518,6 +544,8 @@ def job_control(
     call_id: str = "",
     outputs: list[bytes] | None = None,
     pose_choices: dict[str, str] | None = None,
+    display_name: str | None = None,
+    configuration_revision: int = 0,
     operation_id: str = "",
     operation_fingerprint: str = "",
     correlation_id: str = "",
@@ -557,6 +585,14 @@ def job_control(
             job, changed = coordinator.record_pose_gpu_call(job_id, call_id)
         elif command is JobOperation.APPROVE_MASTER:
             job, changed = coordinator.approve_master(job_id, user_id, master_id, POSE_PROMPT_VERSION)
+        elif command is JobOperation.UPDATE_CONFIGURATION:
+            job, changed = coordinator.update_configuration(
+                job_id,
+                user_id,
+                display_name,
+                pose_choices,
+                configuration_revision,
+            )
         elif command is JobOperation.START_POSES:
             job, changed = coordinator.start_pose_generation(job_id, pose_choices or dict(DEFAULT_POSE_CHOICES))
         elif command is JobOperation.ENQUEUE_POSES:
@@ -1026,7 +1062,13 @@ def _generate_qwen_poses(
     if job.master_id is None:
         raise DomainError("An approved Master is required for pose generation.")
     master_bytes = _asset_path(job.job_id, "masters", f"{job.master_id}.png").read_bytes()
-    master = Image.open(BytesIO(master_bytes)).convert("RGB")
+    source = Image.open(BytesIO(master_bytes)).convert("RGBA")
+    # Inference expects RGB. Preserve the approved alpha edge by composing it
+    # onto the canonical neutral backdrop instead of flattening it to black.
+    master = Image.new("RGBA", source.size, (244, 238, 222, 255))
+    master.alpha_composite(source)
+    source.close()
+    master = master.convert("RGB")
     master.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
     option_seeds = {option.option_id: 100 + index for index, option in enumerate(POSE_OPTIONS)}
     outputs: dict[str, bytes] = {}
@@ -1068,13 +1110,23 @@ def _master_prompt(job: JobRecord) -> str:
 
 
 def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
-    from modal_service.image_processing import remove_connected_flat_background
+    from modal_service.image_processing import master_transparency_qc, remove_connected_flat_background
 
     if not outputs:
         raise DomainError("Master generation returned no images.")
     observer = InferenceObserver(_trace_id_for_record(job))
     postprocess_started = observer.mark()
+    raw_target = Path(ASSET_ROOT, "masters_raw", job.job_id)
+    raw_target.mkdir(parents=True, exist_ok=True)
+    for index, content in enumerate(outputs, start=1):
+        raw_path = raw_target / f"master_{index}.png"
+        if not raw_path.exists():
+            raw_path.write_bytes(content)
     normalized = [remove_connected_flat_background(content) for content in outputs]
+    qc = {f"master_{index}": master_transparency_qc(content) for index, content in enumerate(normalized, start=1)}
+    if any(result.get("status") != "passed" for result in qc.values()):
+        assets.commit()
+        raise DomainError("Master alpha quality verification failed.")
     observer.event(
         "postprocess_completed",
         {"outputs": len(normalized), "postprocess_ms": observer.elapsed_ms(postprocess_started)},
@@ -1087,6 +1139,7 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
     for index, content in enumerate(normalized, start=1):
         destination = staging / f"master_{index}.png"
         destination.write_bytes(content)
+    (staging / "qc.json").write_text(json.dumps({"masters": qc}, ensure_ascii=False), encoding="utf-8")
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     staging.replace(target)
@@ -1177,6 +1230,14 @@ def _master_outputs_ready(job: JobRecord) -> bool:
 def _verify_master_outputs(job: JobRecord) -> None:
     if not _master_outputs_ready(job):
         raise DomainError("Master outputs are incomplete.")
+    qc_path = _asset_path(job.job_id, "masters", "qc.json")
+    try:
+        masters = json.loads(qc_path.read_text(encoding="utf-8")).get("masters", {})
+    except (OSError, ValueError, TypeError) as error:
+        raise DomainError("Master alpha quality metadata is unavailable.") from error
+    expected = {f"master_{index}" for index in range(1, len(MASTER_SEEDS) + 1)}
+    if set(masters) != expected or any(item.get("status") != "passed" for item in masters.values()):
+        raise DomainError("Master alpha quality verification failed.")
 
 
 def _job_age_seconds(job: JobRecord) -> float:
@@ -1192,19 +1253,42 @@ def _should_reconcile_master(job: JobRecord) -> bool:
 
 @app.function(image=api_image, volumes={ASSET_ROOT: assets}, max_containers=1)
 def normalize_master_assets(job_id: str) -> dict[str, object]:
-    """Administrative CPU-only migration for Masters created before alpha cleanup."""
-    from modal_service.image_processing import remove_connected_flat_background, transparency_ratio
+    """Create alpha derivatives without mutating the private raw Master source."""
+    from modal_service.image_processing import master_transparency_qc, remove_connected_flat_background
 
     if not job_id.startswith("job_") or not job_id[4:].isalnum() or len(job_id) > 96:
         raise ValueError("Invalid job identifier.")
+    raw_target = Path(ASSET_ROOT, "masters_raw", job_id)
+    source_target = raw_target if raw_target.is_dir() else Path(ASSET_ROOT, "masters", job_id)
+    if source_target != raw_target:
+        raw_target.mkdir(parents=True, exist_ok=True)
+        for source in source_target.glob("master_[1-4].png"):
+            raw_path = raw_target / source.name
+            if not raw_path.exists():
+                shutil.copy2(source, raw_path)
+        source_target = raw_target
     target = Path(ASSET_ROOT, "masters", job_id)
+    staging = Path(ASSET_ROOT, "temporary", job_id, "normalized-masters")
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
     updated: list[dict[str, object]] = []
-    for path in sorted(target.glob("master_[1-4].png")):
+    qc: dict[str, object] = {}
+    for path in sorted(source_target.glob("master_[1-4].png")):
         normalized = remove_connected_flat_background(path.read_bytes())
-        path.write_bytes(normalized)
-        updated.append({"master_id": path.stem, "transparency_ratio": round(transparency_ratio(normalized), 4)})
+        result = master_transparency_qc(normalized)
+        qc[path.stem] = result
+        if result.get("status") == "passed":
+            (staging / path.name).write_bytes(normalized)
+        updated.append({"master_id": path.stem, "qc_status": result.get("status")})
     if not updated:
         raise ValueError("No Master assets found.")
+    if any(result.get("status") != "passed" for result in qc.values()):
+        shutil.rmtree(staging, ignore_errors=True)
+        raise ValueError("Master alpha quality verification failed.")
+    (staging / "qc.json").write_text(json.dumps({"masters": qc}, ensure_ascii=False), encoding="utf-8")
+    shutil.rmtree(target, ignore_errors=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging.replace(target)
     assets.commit()
     return {"job_id": job_id, "masters": updated}
 
@@ -1393,6 +1477,44 @@ def api():
             "pose_catalog_version": POSE_TEMPLATE_VERSION,
         }
 
+    @service.get("/v2/mascot/capabilities")
+    async def capabilities_v2(identity: BffIdentity = Depends(verified_bff_identity)) -> dict[str, object]:
+        del identity
+        templates_ready = _templates_installed()
+        pose_reasons: list[str] = []
+        if not POSE_GENERATION_ENABLED:
+            pose_reasons.append("POSE_GENERATION_DISABLED")
+        if not GPU_GENERATION_ENABLED:
+            pose_reasons.append("GPU_GENERATION_DISABLED")
+        if not templates_ready:
+            pose_reasons.append("POSE_TEMPLATES_UNAVAILABLE")
+        master_reasons = [] if MASTER_GENERATION_ENABLED and GPU_GENERATION_ENABLED else ["GENERATION_DISABLED"]
+        return {
+            "contractVersion": "v2",
+            "master": {
+                "ready": not master_reasons,
+                "reasonCode": master_reasons[0] if master_reasons else None,
+                "reasons": master_reasons,
+                "modelVersion": "qwen-image-edit-2511",
+                "promptVersion": MASTER_PROMPT_VERSION,
+            },
+            "poses": {
+                "ready": not pose_reasons,
+                "reasonCode": pose_reasons[0] if pose_reasons else None,
+                "reasons": pose_reasons,
+                "catalogVersion": WEB_POSE_CATALOG_VERSION,
+                "templateVersion": POSE_TEMPLATE_VERSION,
+                "workerVersion": "qwen-image-edit-2511",
+            },
+            # Keep the published Web v2 capability shape: each runtime role
+            # maps to its accepted option IDs. Labels remain in the local
+            # presentation catalog and no client contract is replaced here.
+            "poseCatalog": {
+                role: [option.option_id for option in POSE_OPTIONS if option.role == role]
+                for role in ("normal", "listening", "transcribing")
+            },
+        }
+
     @service.post("/v1/mascot/jobs", status_code=202)
     async def create_job(request: CreateJobRequest, context: tuple[str, str] = Depends(cost_context)):
         user_id, key = context
@@ -1527,6 +1649,32 @@ def api():
         except DomainError as error:
             raise _api_error(error) from error
 
+    @service.patch("/v2/mascot/jobs/{job_id}/configuration")
+    async def update_mascot_configuration_v2(
+        job_id: str,
+        request: MascotConfigurationV2Request,
+        context: tuple[BffIdentity, str, str] = Depends(bff_operation_context),
+    ):
+        identity, _, _ = context
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            choices = validate_pose_choices(request.pose_choices) if request.pose_choices is not None else None
+            updated = job_control.remote(
+                JobOperation.UPDATE_CONFIGURATION.value,
+                job_id,
+                identity.user_id,
+                pose_choices=choices,
+                display_name=_normalized_display_name(request.display_name) if request.display_name is not None else None,
+                configuration_revision=request.configuration_revision,
+            )
+            _raise_guard_error(updated)
+            current = _deserialize(dict(updated["job"]))
+            _refresh_result_assets(current)
+            return public_job(current, _master_references(current), _pose_references(current))
+        except (DomainError, ValueError) as error:
+            raise _api_error(error) from error
+
     @service.get("/v2/mascot/jobs/{job_id}/masters/{master_id}")
     async def download_master_v2(
         job_id: str,
@@ -1581,6 +1729,8 @@ def api():
             _ensure_owner(job, identity.user_id)
             if not POSE_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
                 raise GuardRejected("POSE_GENERATION_DISABLED", "Pose generation is disabled.")
+            if request.catalog_version is not None and request.catalog_version != WEB_POSE_CATALOG_VERSION:
+                raise GuardRejected("POSE_CATALOG_INCOMPATIBLE", "Pose catalog is not compatible with this service.")
             choices = validate_pose_choices(request.pose_choices)
             request_id = CURRENT_REQUEST_ID.get()
             correlation_id = _trace_id_for_record(job)
