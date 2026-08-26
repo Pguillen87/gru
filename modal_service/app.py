@@ -14,38 +14,185 @@ import os
 import shutil
 import secrets
 import time
-from dataclasses import asdict
+from contextvars import ContextVar
+from dataclasses import asdict, fields
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 import modal
 from pydantic import BaseModel, Field
 
-from modal_service.catalog import POSE_PROMPT_VERSION
-from modal_service.config import Environment, generation_enabled, limits_for
+from modal_service.catalog import (
+    DEFAULT_POSE_CHOICES,
+    MASTER_PROMPT,
+    MASTER_PROMPT_VERSION,
+    POSE_PROMPT,
+    POSE_PROMPT_VERSION,
+    POSE_TEMPLATE_VERSION,
+    POSE_OPTIONS,
+    build_master_negative_prompt,
+    build_master_prompt,
+    build_pose_prompt,
+    pose_option,
+    validate_pose_choices,
+)
+from modal_service.bff_auth import BffAuthenticationRejected, BffIdentity, consume_jti, verify_bff_token
+from modal_service.config import Environment, feature_enabled, generation_enabled, limits_for
 from modal_service.coordinator import JobCoordinator, JobOperation
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
 from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState
+from modal_service.inference_observability import InferenceObserver, trace_id_for_job
+from modal_service.model_cache import (
+    ModelCacheNotReady,
+    ModelCacheSpec,
+    activate_cached_revision,
+    prepare_model_cache as prepare_cache,
+    validate_active_cache,
+)
+from modal_service.persistent_runtime import PersistentPipelineRuntime
 from modal_service.security import AuthenticationRejected, app_check_token, bearer_token, may_schedule_gpu, valid_firebase_claims
 from modal_service.validation import ImageValidationError, validate_image
+from modal_service.v2_contract import public_job
+from modal_service.structured_observability import structured_event
 
-APP_NAME = "gru-mascot"
+APP_NAME = os.getenv("GRU_MASCOT_APP_NAME", "gru-mascot")
 FIREBASE_PROJECT_ID = "gru-mascote"
 FIREBASE_PROJECT_NUMBER = "816774877835"
 ASSET_ROOT = "/gru-assets"
 MODEL_ROOT = "/gru-models"
 ENVIRONMENT = Environment(os.getenv("GRU_MASCOT_ENV", Environment.DEVELOPMENT))
+FIREBASE_SECRET_ENVIRONMENT = os.getenv("GRU_FIREBASE_SECRET_ENVIRONMENT") or None
+RESOURCE_PREFIX = os.getenv("GRU_MASCOT_RESOURCE_PREFIX", "gru-mascot")
+FIREBASE_SECRET_NAME = os.getenv("GRU_FIREBASE_SECRET_NAME", "gru-mascot-firebase-admin")
+PULEIRO_BFF_SECRET_NAME = os.getenv("GRU_PULEIRO_BFF_SECRET_NAME", "gru-mascot-puleiro-bff")
 LIMITS = limits_for(ENVIRONMENT)
 GPU_GENERATION_ENABLED = generation_enabled(ENVIRONMENT, os.getenv("GPU_GENERATION_ENABLED"))
+REGISTRATION_ENABLED = feature_enabled(os.getenv("REGISTRATION_ENABLED"), default=True)
+MASTER_GENERATION_ENABLED = feature_enabled(os.getenv("MASTER_GENERATION_ENABLED"))
+POSE_GENERATION_ENABLED = feature_enabled(os.getenv("POSE_GENERATION_ENABLED"))
+CURRENT_REQUEST_ID: ContextVar[str] = ContextVar("modal_request_id", default="")
 MASTER_GPU = "H100"
 QWEN_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
 QWEN_MODEL_REVISION = "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
 LIGHTNING_MODEL_ID = "lightx2v/Qwen-Image-Edit-2511-Lightning"
 LIGHTNING_MODEL_REVISION = "d74eba145674fd7e31b949324e148e21e7118abd"
 LIGHTNING_WEIGHT = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors"
+MASTER_SEEDS = (0, 1, 2)
+SCHEDULER_CONFIG = {
+    "base_image_seq_len": 256,
+    "base_shift": 1.0986122886681098,
+    "invert_sigmas": False,
+    "max_image_seq_len": 8192,
+    "max_shift": 1.0986122886681098,
+    "num_train_timesteps": 1000,
+    "shift": 1.0,
+    "shift_terminal": None,
+    "stochastic_sampling": False,
+    "time_shift_type": "exponential",
+    "use_beta_sigmas": False,
+    "use_dynamic_shifting": True,
+    "use_exponential_sigmas": False,
+    "use_karras_sigmas": False,
+}
+WORKER_SCALEDOWN_SECONDS = 45
+MASTER_RECONCILE_AFTER_SECONDS = 15
+MASTER_STALE_AFTER_SECONDS = 300
+PERSISTENT_WORKER_MAX_CONTAINERS = 1
+MODEL_CACHE_SPEC = ModelCacheSpec(
+    model_id=QWEN_MODEL_ID,
+    model_revision=QWEN_MODEL_REVISION,
+    lora_id=LIGHTNING_MODEL_ID,
+    lora_revision=LIGHTNING_MODEL_REVISION,
+    lora_weight=LIGHTNING_WEIGHT,
+)
+
+
+def inference_config_hash() -> str:
+    payload = {
+        "model_id": QWEN_MODEL_ID,
+        "model_revision": QWEN_MODEL_REVISION,
+        "lora_id": LIGHTNING_MODEL_ID,
+        "lora_revision": LIGHTNING_MODEL_REVISION,
+        "lora_weight": LIGHTNING_WEIGHT,
+        "dtype": "bfloat16",
+        "steps": 4,
+        "seeds": MASTER_SEEDS,
+        "true_cfg_scale": 1.0,
+        "negative_prompt": " ",
+        "prompt": MASTER_PROMPT,
+        "scheduler": SCHEDULER_CONFIG,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
 
 
 class CreateJobRequest(BaseModel):
     image_base64: str = Field(min_length=1, max_length=14_000_000)
     content_type: str | None = None
+    pose_choices: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_POSE_CHOICES))
+
+
+class SubjectIdentityRequest(BaseModel):
+    category: Literal["human", "animal", "object", "other"]
+    label: str = Field(min_length=1, max_length=64)
+    species: str | None = Field(default=None, max_length=64)
+    confirmed: bool
+
+
+class CreateJobV2Request(BaseModel):
+    image_base64: str = Field(min_length=1, max_length=14_000_000)
+    content_type: str | None = None
+    attempt_id: str = Field(pattern=r"^[A-Za-z0-9:_-]{1,160}$")
+    subject_identity: SubjectIdentityRequest
+
+
+class PoseGenerationV2Request(BaseModel):
+    pose_choices: dict[str, str]
+
+
+def _normalized_subject_identity(request: SubjectIdentityRequest) -> dict[str, object]:
+    if not request.confirmed:
+        raise DomainError("The subject identity must be confirmed before generation.")
+    label = " ".join(request.label.split())
+    species = " ".join((request.species or "").split()) or None
+    if not label:
+        raise DomainError("A confirmed subject label is required.")
+    if not _safe_identity_text(label) or (species and not _safe_identity_text(species)):
+        raise DomainError("Subject identity must be a short description, not an instruction.")
+    if request.category == "animal" and not species:
+        raise DomainError("A confirmed animal species is required.")
+    if request.category != "animal":
+        species = None
+    return {"category": request.category, "label": label, "species": species}
+
+
+def _safe_identity_text(value: str) -> bool:
+    punctuation = " .,'()/_-"
+    return all(character.isalnum() or character in punctuation for character in value)
+
+
+def _safe_correlation_id(value: str | None) -> str | None:
+    if not value or not 8 <= len(value) <= 64:
+        return None
+    return value if all(character.isalnum() or character in "_:-" for character in value) else None
+
+
+def _safe_operation_id(value: str | None) -> str | None:
+    return _safe_correlation_id(value)
+
+
+def _pose_operation_fingerprint(identity: BffIdentity, job: JobRecord, choices: dict[str, str]) -> str:
+    payload = {
+        "owner": identity.user_id,
+        "attempt": identity.attempt_id,
+        "job": job.job_id,
+        "master": job.master_id,
+        "choices": choices,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _trace_id_for_record(job: JobRecord) -> str:
+    return job.correlation_id or trace_id_for_job(job.job_id)
 
 
 class ApproveMasterRequest(BaseModel):
@@ -59,8 +206,16 @@ api_image = (
     modal.Image.debian_slim(python_version="3.12")
     .env(
         {
+            "GRU_MASCOT_APP_NAME": APP_NAME,
+            "GRU_MASCOT_RESOURCE_PREFIX": RESOURCE_PREFIX,
             "GRU_MASCOT_ENV": ENVIRONMENT.value,
             "GPU_GENERATION_ENABLED": "true" if GPU_GENERATION_ENABLED else "false",
+            "REGISTRATION_ENABLED": "true" if REGISTRATION_ENABLED else "false",
+            "MASTER_GENERATION_ENABLED": "true" if MASTER_GENERATION_ENABLED else "false",
+            "POSE_GENERATION_ENABLED": "true" if POSE_GENERATION_ENABLED else "false",
+            "PULEIRO_BFF_JWT_ISSUER": os.getenv("PULEIRO_BFF_JWT_ISSUER", "puleiro-bff"),
+            "PULEIRO_BFF_JWT_AUDIENCE": os.getenv("PULEIRO_BFF_JWT_AUDIENCE", "gru-modal"),
+            "PULEIRO_BFF_JWT_MAX_TTL_SECONDS": os.getenv("PULEIRO_BFF_JWT_MAX_TTL_SECONDS", "120"),
         }
     )
     .pip_install(
@@ -69,6 +224,7 @@ api_image = (
         "httpx>=0.28,<1",
         "google-auth>=2.38,<3",
         "firebase-admin>=6.6,<7",
+        "PyJWT>=2.10,<3",
     )
 )
 gpu_image = api_image.pip_install(
@@ -80,13 +236,21 @@ gpu_image = api_image.pip_install(
     "peft>=0.17,<1",
     "safetensors>=0.5",
 )
+cache_image = api_image.pip_install("huggingface_hub>=0.34,<1")
 app = modal.App(APP_NAME)
-assets = modal.Volume.from_name("gru-mascot-assets", create_if_missing=True)
-models = modal.Volume.from_name("gru-mascot-models", create_if_missing=True)
-jobs = modal.Dict.from_name("gru-mascot-jobs", create_if_missing=True)
-idempotency = modal.Dict.from_name("gru-mascot-idempotency", create_if_missing=True)
-usage = modal.Dict.from_name("gru-mascot-usage", create_if_missing=True)
-firebase_admin_secret = modal.Secret.from_name("gru-mascot-firebase-admin")
+assets = modal.Volume.from_name(f"{RESOURCE_PREFIX}-assets", create_if_missing=True)
+models = modal.Volume.from_name(f"{RESOURCE_PREFIX}-models", create_if_missing=True)
+jobs = modal.Dict.from_name(f"{RESOURCE_PREFIX}-jobs", create_if_missing=True)
+idempotency = modal.Dict.from_name(f"{RESOURCE_PREFIX}-idempotency", create_if_missing=True)
+usage = modal.Dict.from_name(f"{RESOURCE_PREFIX}-usage", create_if_missing=True)
+firebase_admin_secret = modal.Secret.from_name(
+    FIREBASE_SECRET_NAME,
+    environment_name=FIREBASE_SECRET_ENVIRONMENT,
+)
+puleiro_bff_secret = modal.Secret.from_name(
+    PULEIRO_BFF_SECRET_NAME,
+    environment_name=FIREBASE_SECRET_ENVIRONMENT,
+)
 
 
 def _record_key(user_id: str, idempotency_key: str) -> str:
@@ -95,6 +259,10 @@ def _record_key(user_id: str, idempotency_key: str) -> str:
 
 def _operation_key(user_id: str, operation: str) -> str:
     return f"operation:{user_id}:{operation}"
+
+
+def _attempt_key(user_id: str, attempt_id: str) -> str:
+    return f"attempt:{user_id}:{attempt_id}"
 
 
 def _asset_path(job_id: str, folder: str, name: str) -> Path:
@@ -151,6 +319,15 @@ def _serialize(job: JobRecord) -> dict[str, object]:
     return payload
 
 
+def _refresh_result_assets(job: JobRecord) -> None:
+    """Refresh a long-lived API container before exposing worker artifacts."""
+    if job.state in {
+        JobState.AWAITING_MASTER_APPROVAL,
+        JobState.COMPLETED,
+    } or job.master_id is not None:
+        assets.reload()
+
+
 def _master_references(job: JobRecord) -> list[dict[str, str]]:
     references: list[dict[str, str]] = []
     for index in range(1, 5):
@@ -167,8 +344,32 @@ def _master_references(job: JobRecord) -> list[dict[str, str]]:
     return references
 
 
+def _pose_references(job: JobRecord) -> list[dict[str, str]]:
+    manifest_path = _asset_path(job.job_id, "poses", "manifest.json")
+    if job.state is not JobState.COMPLETED or not manifest_path.is_file():
+        return []
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    references: list[dict[str, str]] = []
+    for item in manifest.get("poses", []):
+        references.append(
+            {
+                "id": str(item["poseId"]),
+                "role": str(item["runtimeRole"]),
+                "optionId": str(item["optionId"]),
+                "label": str(item["name"]),
+                "sha256": str(item["sha256"]),
+            }
+        )
+    return references
+
+
 def _deserialize(record: dict[str, object]) -> JobRecord:
-    return JobRecord(**(record | {"state": JobState(record["state"])}))
+    # API responses may include presentation-only fields (for example, the
+    # signed master references). Persisted JobRecord data must remain the sole
+    # input to the domain object when a response is reconciled back into state.
+    record_fields = {field.name for field in fields(JobRecord)}
+    persisted = {key: value for key, value in record.items() if key in record_fields}
+    return JobRecord(**(persisted | {"state": JobState(str(persisted["state"]))}))
 
 
 def _get_job(job_id: str) -> JobRecord:
@@ -237,13 +438,74 @@ def _endpoint_name(request) -> str:
 
 @app.function(image=api_image, max_containers=1)
 @modal.concurrent(max_inputs=1)
-def register_job(user_id: str, idempotency_key: str, source_key: str) -> dict[str, object]:
+def register_job(
+    user_id: str,
+    idempotency_key: str,
+    source_key: str,
+    pose_choices: dict[str, str] | None = None,
+    subject_identity: dict[str, object] | None = None,
+    registration_only: bool = False,
+    attempt_id: str | None = None,
+    correlation_id: str | None = None,
+) -> dict[str, object]:
     try:
         coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
-        job, created = coordinator.register(user_id, idempotency_key, source_key)
+        job, created = coordinator.register(
+            user_id,
+            idempotency_key,
+            source_key,
+            pose_choices,
+            subject_identity,
+            registration_only=registration_only,
+            attempt_id=attempt_id,
+            correlation_id=correlation_id,
+        )
+        if attempt_id:
+            coordinator.idempotency[_attempt_key(user_id, attempt_id)] = job.job_id
         return {"job": _serialize(job), "created": created}
     except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
         return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
+
+
+@app.function(image=api_image, max_containers=1)
+@modal.concurrent(max_inputs=1)
+def consume_bff_jti(jti: str, expires_at: int) -> dict[str, object]:
+    try:
+        consume_jti(idempotency, jti, expires_at)
+        return {"accepted": True}
+    except BffAuthenticationRejected as error:
+        return {"error_code": "BFF_TOKEN_REPLAYED", "error_message": str(error)}
+
+
+@app.function(image=api_image, max_containers=1, volumes={ASSET_ROOT: assets})
+def prepare_benchmark_job(benchmark_key: str) -> dict[str, object]:
+    """Create a non-personal synthetic development job without bypassing coordination."""
+    if ENVIRONMENT is not Environment.DEVELOPMENT:
+        raise RuntimeError("Synthetic benchmark jobs are development-only.")
+    from io import BytesIO
+    from PIL import Image, ImageDraw
+
+    canvas = Image.new("RGB", (1024, 1024), (225, 210, 180))
+    draw = ImageDraw.Draw(canvas)
+    draw.ellipse((220, 100, 804, 840), fill=(126, 91, 61), outline=(48, 38, 30), width=18)
+    draw.ellipse((320, 260, 500, 440), fill=(250, 244, 220), outline=(48, 38, 30), width=12)
+    draw.ellipse((524, 260, 704, 440), fill=(250, 244, 220), outline=(48, 38, 30), width=12)
+    draw.ellipse((385, 315, 445, 375), fill=(30, 28, 25))
+    draw.ellipse((579, 315, 639, 375), fill=(30, 28, 25))
+    draw.polygon(((512, 390), (450, 490), (574, 490)), fill=(214, 154, 42))
+    output = BytesIO()
+    canvas.save(output, format="PNG", optimize=True)
+    content = output.getvalue()
+    digest = hashlib.sha256(content).hexdigest()
+    coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
+    job, created = coordinator.register("modal-benchmark", benchmark_key, f"synthetic/{digest}")
+    if created:
+        destination = _asset_path(job.job_id, "original", "source.bin")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+        assets.commit()
+    coordinator.authorize_generation(job.job_id, "modal-benchmark", GPU_GENERATION_ENABLED)
+    return {"job_id": job.job_id, "created": created, "source_bytes": len(content)}
 
 
 @app.function(image=api_image, max_containers=1, volumes={ASSET_ROOT: assets})
@@ -255,159 +517,554 @@ def job_control(
     master_id: str = "",
     call_id: str = "",
     outputs: list[bytes] | None = None,
+    pose_choices: dict[str, str] | None = None,
+    operation_id: str = "",
+    operation_fingerprint: str = "",
+    correlation_id: str = "",
+    request_id: str = "",
 ) -> dict[str, object]:
     try:
         coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
         command = JobOperation(operation)
         changed = False
+        reserved = False
         if command is JobOperation.AUTHORIZE_GENERATION:
             changed = coordinator.authorize_generation(job_id, user_id, GPU_GENERATION_ENABLED)
             job = coordinator.get(job_id)
         elif command is JobOperation.START_MASTER:
             job, changed = coordinator.transition_if_active(job_id, JobState.VALIDATING_INPUT, JobState.GENERATING_MASTER)
         elif command is JobOperation.COMMIT_MASTER:
-            job, changed = coordinator.commit_master_outputs(
-                job_id, lambda current: _persist_master_outputs(current, outputs or [])
-            )
+            assets.reload()
+            job, changed = coordinator.commit_master_outputs(job_id, _verify_master_outputs)
+        elif command is JobOperation.RECONCILE_MASTER:
+            job = coordinator.get(job_id)
+            changed = False
+            if job.state is JobState.GENERATING_MASTER:
+                assets.reload()
+                if _master_outputs_ready(job):
+                    job, changed = coordinator.commit_master_outputs(job_id, _verify_master_outputs)
+                elif _job_age_seconds(job) >= MASTER_STALE_AFTER_SECONDS:
+                    job, changed = coordinator.fail_stale_master(job_id, "MASTER_WORKER_STALE")
         elif command is JobOperation.FAIL_MASTER:
             job, changed = coordinator.transition_if_active(
                 job_id, JobState.GENERATING_MASTER, JobState.FAILED, "MASTER_GENERATION_FAILED"
             )
         elif command is JobOperation.RECORD_GPU_CALL:
             job, changed = coordinator.record_gpu_call(job_id, call_id)
+        elif command is JobOperation.RESERVE_POSE_GPU_CALL:
+            job, changed = coordinator.reserve_pose_gpu_call(job_id)
+        elif command is JobOperation.RECORD_POSE_GPU_CALL:
+            job, changed = coordinator.record_pose_gpu_call(job_id, call_id)
         elif command is JobOperation.APPROVE_MASTER:
             job, changed = coordinator.approve_master(job_id, user_id, master_id, POSE_PROMPT_VERSION)
+        elif command is JobOperation.START_POSES:
+            job, changed = coordinator.start_pose_generation(job_id, pose_choices or dict(DEFAULT_POSE_CHOICES))
+        elif command is JobOperation.ENQUEUE_POSES:
+            job, changed, reserved = coordinator.enqueue_pose_generation(
+                job_id,
+                user_id,
+                pose_choices or dict(DEFAULT_POSE_CHOICES),
+                operation_id,
+                operation_fingerprint,
+                _safe_correlation_id(correlation_id),
+                _safe_correlation_id(request_id),
+            )
+        elif command is JobOperation.COMMIT_POSES:
+            assets.reload()
+            job, changed = coordinator.commit_pose_outputs(job_id, _verify_pose_outputs)
+        elif command is JobOperation.FAIL_POSES:
+            job, changed = coordinator.fail_pose_generation(job_id, "POSE_GENERATION_FAILED")
         elif command is JobOperation.CANCEL:
             job, changed = coordinator.cancel(job_id, user_id)
         else:  # StrEnum exhaustiveness guard.
             raise DomainError("Unsupported job operation.")
-        return {"job": _serialize(job), "changed": changed}
+        return {"job": _serialize(job), "changed": changed, "reserved": reserved}
     except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
         return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
 
 
-def _schedule_master(job_id: str, user_id: str) -> dict[str, object]:
-    authorization = job_control.remote(JobOperation.AUTHORIZE_GENERATION.value, job_id, user_id)
-    _raise_guard_error(authorization)
+def _master_schedule_event(
+    event: str,
+    job: JobRecord,
+    *,
+    result: str | None = None,
+    duration_ms: int | None = None,
+    safe_error_code: str | None = None,
+) -> None:
+    structured_event(
+        event,
+        environment=ENVIRONMENT.value,
+        result=result,
+        durationMs=duration_ms,
+        puleiroTraceId=_trace_id_for_record(job),
+        attemptId=job.attempt_id,
+        jobId=job.job_id,
+        safeErrorCode=safe_error_code,
+    )
+
+
+def _master_remote_step(job: JobRecord, event: str, unavailable_code: str, operation) -> dict[str, object]:
+    try:
+        result = operation()
+        _raise_guard_error(result)
+        return result
+    except GuardRejected as error:
+        _master_schedule_event(event, job, result="rejected", safe_error_code=error.code)
+        raise
+    except Exception:
+        _master_schedule_event(event, job, result="failure", safe_error_code=unavailable_code)
+        raise GuardRejected(unavailable_code, "The master generation service is temporarily unavailable.") from None
+
+
+def _schedule_master(job: JobRecord, user_id: str) -> dict[str, object]:
+    started_at = time.monotonic()
+    _master_schedule_event("master_schedule_received", job)
+    if GPU_GENERATION_ENABLED:
+        _master_remote_step(job, "master_cache_checked", "MASTER_CACHE_UNAVAILABLE", model_cache_status.remote)
+    authorization = _master_remote_step(
+        job,
+        "master_authorization_checked",
+        "MASTER_AUTHORIZATION_UNAVAILABLE",
+        lambda: job_control.remote(JobOperation.AUTHORIZE_GENERATION.value, job.job_id, user_id),
+    )
     job_data = dict(authorization["job"])
     if not may_schedule_gpu(GPU_GENERATION_ENABLED, bool(authorization["changed"])):
+        _master_schedule_event("master_schedule_replayed", job, result="replayed", duration_ms=_elapsed_ms(started_at))
         return job_data
-    function_call = generate_master.spawn(job_id)
-    recorded = job_control.remote(JobOperation.RECORD_GPU_CALL.value, job_id, call_id=function_call.object_id)
-    _raise_guard_error(recorded)
+    InferenceObserver(_trace_id_for_record(_deserialize(job_data))).event(
+        "job_queued",
+        {"cache_revision": MODEL_CACHE_SPEC.cache_revision, "gpu_type": MASTER_GPU},
+    )
+    try:
+        function_call = QwenMasterWorker().generate.spawn(job.job_id)
+    except Exception:
+        _master_schedule_event("master_worker_enqueue_failed", job, result="failure", safe_error_code="MASTER_WORKER_ENQUEUE_FAILED")
+        raise GuardRejected("MASTER_WORKER_ENQUEUE_FAILED", "The master worker could not be queued.") from None
+    recorded = _master_remote_step(
+        job,
+        "master_worker_record_checked",
+        "MASTER_WORKER_RECORD_UNAVAILABLE",
+        lambda: job_control.remote(JobOperation.RECORD_GPU_CALL.value, job.job_id, call_id=function_call.object_id),
+    )
+    _master_schedule_event("master_worker_spawned", job, result="spawned", duration_ms=_elapsed_ms(started_at))
     return dict(recorded["job"])
 
 
-@app.function(
+@app.function(image=api_image, volumes={MODEL_ROOT: models}, max_containers=1)
+def model_cache_status() -> dict[str, object]:
+    started = time.perf_counter()
+    observer = InferenceObserver("cache_status")
+    observer.event("model_cache_validation_start")
+    try:
+        cache = validate_active_cache(Path(MODEL_ROOT), MODEL_CACHE_SPEC)
+        observer.event(
+            "model_cache_validated",
+            {
+                "cache_revision": cache.cache_revision,
+                "cache_validation_ms": observer.elapsed_ms(started),
+                "outcome": "ready",
+            },
+        )
+        return {"cache_revision": cache.cache_revision, "ready": True}
+    except ModelCacheNotReady as error:
+        observer.event(
+            "model_cache_validated",
+            {
+                "cache_validation_ms": observer.elapsed_ms(started),
+                "error_code": error.code,
+                "outcome": "not_ready",
+            },
+        )
+        return {"error_code": error.code, "error_message": "The model cache is not ready."}
+
+
+@app.function(image=cache_image, volumes={MODEL_ROOT: models}, max_containers=1, timeout=3_600)
+def prepare_model_cache() -> dict[str, object]:
+    """Administrative CPU operation. It never requests a GPU."""
+    from huggingface_hub import hf_hub_download, snapshot_download
+
+    cache = prepare_cache(
+        Path(MODEL_ROOT),
+        MODEL_CACHE_SPEC,
+        snapshot_download=snapshot_download,
+        hf_hub_download=hf_hub_download,
+    )
+    models.commit()
+    return {
+        "cache_revision": cache.cache_revision,
+        "expected_files": len(cache.expected_files),
+        "expected_size": cache.expected_size,
+        "ready": True,
+    }
+
+
+@app.function(image=api_image, volumes={MODEL_ROOT: models}, max_containers=1)
+def activate_model_cache_revision(cache_revision: str) -> dict[str, object]:
+    """Administrative rollback pointer. Previous cache artifacts remain intact."""
+    activate_cached_revision(Path(MODEL_ROOT), cache_revision)
+    models.commit()
+    return {"cache_revision": cache_revision, "active": True}
+
+
+@app.cls(
     image=gpu_image,
     gpu=MASTER_GPU,
     timeout=LIMITS.model_timeout_seconds,
     min_containers=0,
-    max_containers=LIMITS.max_containers,
-    scaledown_window=30,
+    max_containers=PERSISTENT_WORKER_MAX_CONTAINERS,
+    buffer_containers=0,
+    scaledown_window=WORKER_SCALEDOWN_SECONDS,
     volumes={ASSET_ROOT: assets, MODEL_ROOT: models},
 )
-def generate_master(job_id: str) -> None:
-    """GPU boundary. The Qwen provider is enabled only after a smoke fixture exists."""
-    if not GPU_GENERATION_ENABLED:
-        logging.warning("generation_blocked job_id=%s", job_id)
-        return
-    started = job_control.remote(JobOperation.START_MASTER.value, job_id)
-    _raise_guard_error(started)
-    if not bool(started["changed"]):
-        return
-    job = _deserialize(dict(started["job"]))
-    try:
-        outputs = _generate_qwen_masters(job)
-        committed = job_control.remote(JobOperation.COMMIT_MASTER.value, job_id, outputs=outputs)
-        _raise_guard_error(committed)
-    except Exception as error:  # GPU libraries expose unstable exception classes.
-        logging.exception("master_generation_failed job_id=%s", job.job_id)
-        failed = job_control.remote(JobOperation.FAIL_MASTER.value, job_id)
-        _raise_guard_error(failed)
-        if bool(failed["changed"]):
-            raise error
+@modal.concurrent(max_inputs=1)
+class QwenMasterWorker:
+    @modal.enter()
+    def startup(self) -> None:
+        self.loaded_at = time.perf_counter()
+        self.container_observer = InferenceObserver(secrets.token_hex(6))
+        self.container_observer.event("container_start", {"cold_start": True, "gpu_type": MASTER_GPU})
+        self.runtime = PersistentPipelineRuntime(lambda: _load_qwen_pipeline(self.container_observer))
+        self.runtime.start()
+        self.container_observer.event(
+            "worker_ready",
+            {
+                "cache_revision": MODEL_CACHE_SPEC.cache_revision,
+                "container_start_ms": self.container_observer.elapsed_ms(self.loaded_at),
+                "gpu_type": MASTER_GPU,
+                "jobs_in_container": 0,
+            },
+        )
+
+    @modal.method()
+    def generate(self, job_id: str) -> None:
+        """GPU boundary. One method call owns one job; the pipeline remains container-scoped."""
+        observer = InferenceObserver(_trace_id_for_record(_get_job(job_id)))
+        worker_started = observer.mark()
+        next_job = self.runtime.jobs_processed + 1
+        observer.event(
+            "job_started",
+            {
+                "cold_start": next_job == 1,
+                "container_reused": next_job > 1,
+                "gpu_type": MASTER_GPU,
+                "inference_config_hash": inference_config_hash(),
+                "jobs_in_container": next_job,
+                "worker_age_ms": observer.elapsed_ms(self.loaded_at),
+            },
+        )
+        if next_job > 1:
+            observer.event("container_reused", {"container_reused": True, "jobs_in_container": next_job})
+        if not GPU_GENERATION_ENABLED:
+            observer.event("job_failed", {"error_code": "GENERATION_DISABLED", "outcome": "blocked"})
+            return
+        started = job_control.remote(JobOperation.START_MASTER.value, job_id)
+        _raise_guard_error(started)
+        if not bool(started["changed"]):
+            return
+        job = _deserialize(dict(started["job"]))
+        try:
+            assets.reload()
+            outputs = self.runtime.run(lambda pipeline: _generate_qwen_masters(job, pipeline, observer))
+            _persist_master_outputs(job, outputs)
+            committed = job_control.remote(JobOperation.COMMIT_MASTER.value, job_id)
+            _raise_guard_error(committed)
+            observer.event(
+                "job_completed",
+                {
+                    "jobs_in_container": self.runtime.jobs_processed,
+                    "outputs": len(outputs),
+                    "result_bytes": sum(len(output) for output in outputs),
+                    "total_worker_ms": observer.elapsed_ms(worker_started),
+                    "outcome": "success",
+                },
+            )
+        except Exception as error:  # GPU libraries expose unstable exception classes.
+            code = "WORKER_CORRUPTED" if not self.runtime.healthy else "JOB_LOCAL_FAILURE"
+            observer.event(
+                "job_failed",
+                {
+                    "error_code": code,
+                    "error_type": type(error).__name__[:96],
+                    "total_worker_ms": observer.elapsed_ms(worker_started),
+                    "outcome": "failure",
+                },
+            )
+            failed = job_control.remote(JobOperation.FAIL_MASTER.value, job_id)
+            _raise_guard_error(failed)
+            if bool(failed["changed"]):
+                raise error
+
+    @modal.method()
+    def generate_poses(self, job_id: str) -> None:
+        """Generate the three user-selected runtime poses from the approved Master."""
+        job = _get_job(job_id)
+        observer = InferenceObserver(_trace_id_for_record(job))
+        worker_started = observer.mark()
+        structured_event(
+            "pose_worker_started",
+            environment=ENVIRONMENT.value,
+            result="started",
+            puleiroTraceId=_trace_id_for_record(job),
+            attemptId=job.attempt_id,
+            operationId=job.pose_operation_id,
+            requestId=job.pose_request_id,
+            jobId=job_id,
+            masterId=job.master_id,
+        )
+        if not GPU_GENERATION_ENABLED:
+            observer.event("pose_job_failed", {"error_code": "GENERATION_DISABLED", "outcome": "blocked"})
+            structured_event(
+                "pose_worker_failed",
+                environment=ENVIRONMENT.value,
+                result="blocked",
+                puleiroTraceId=_trace_id_for_record(job),
+                attemptId=job.attempt_id,
+                operationId=job.pose_operation_id,
+                requestId=job.pose_request_id,
+                jobId=job_id,
+                masterId=job.master_id,
+                safeErrorCode="GENERATION_DISABLED",
+            )
+            return
+        if job.state is not JobState.GENERATING_POSES:
+            observer.event("pose_job_skipped", {"state": job.state.value, "outcome": "not_active"})
+            return
+        try:
+            assets.reload()
+            outputs = self.runtime.run(lambda pipeline: _generate_qwen_poses(job, pipeline, observer))
+            _persist_pose_outputs(job, outputs)
+            committed = job_control.remote(JobOperation.COMMIT_POSES.value, job_id)
+            _raise_guard_error(committed)
+            structured_event(
+                "pose_assets_verified",
+                environment=ENVIRONMENT.value,
+                result="verified",
+                puleiroTraceId=_trace_id_for_record(job),
+                attemptId=job.attempt_id,
+                operationId=job.pose_operation_id,
+                requestId=job.pose_request_id,
+                jobId=job_id,
+                masterId=job.master_id,
+            )
+            structured_event(
+                "pose_worker_completed",
+                environment=ENVIRONMENT.value,
+                result="completed",
+                durationMs=observer.elapsed_ms(worker_started),
+                puleiroTraceId=_trace_id_for_record(job),
+                attemptId=job.attempt_id,
+                operationId=job.pose_operation_id,
+                requestId=job.pose_request_id,
+                jobId=job_id,
+                masterId=job.master_id,
+            )
+            structured_event(
+                "pose_set_ready",
+                environment=ENVIRONMENT.value,
+                result="ready",
+                durationMs=observer.elapsed_ms(worker_started),
+                puleiroTraceId=_trace_id_for_record(job),
+                attemptId=job.attempt_id,
+                operationId=job.pose_operation_id,
+                requestId=job.pose_request_id,
+                jobId=job_id,
+                masterId=job.master_id,
+            )
+            observer.event(
+                "pose_job_completed",
+                {
+                    "outputs": len(outputs),
+                    "total_worker_ms": observer.elapsed_ms(worker_started),
+                    "outcome": "success",
+                },
+            )
+        except Exception as error:
+            structured_event(
+                "pose_worker_failed",
+                environment=ENVIRONMENT.value,
+                result="failed",
+                durationMs=observer.elapsed_ms(worker_started),
+                puleiroTraceId=_trace_id_for_record(job),
+                attemptId=job.attempt_id,
+                operationId=job.pose_operation_id,
+                requestId=job.pose_request_id,
+                jobId=job_id,
+                masterId=job.master_id,
+                safeErrorCode="POSE_GENERATION_FAILED",
+            )
+            observer.event(
+                "pose_job_failed",
+                {
+                    "error_code": "POSE_GENERATION_FAILED",
+                    "error_type": type(error).__name__[:96],
+                    "total_worker_ms": observer.elapsed_ms(worker_started),
+                    "outcome": "failure",
+                },
+            )
+            failed = job_control.remote(JobOperation.FAIL_POSES.value, job_id)
+            _raise_guard_error(failed)
+            if bool(failed["changed"]):
+                raise error
+
+    @modal.exit()
+    def shutdown(self) -> None:
+        jobs = getattr(getattr(self, "runtime", None), "jobs_processed", 0)
+        observer = getattr(self, "container_observer", InferenceObserver("container_exit"))
+        observer.event("container_shutdown", {"jobs_in_container": jobs})
 
 
-def _generate_qwen_masters(job: JobRecord) -> list[bytes]:
-    """Generate exactly three Lightning Masters from the approved source."""
-    from io import BytesIO
-    import math
-
+def _load_qwen_pipeline(observer: InferenceObserver):
+    """Load the pinned local cache once during container startup."""
     import torch
     from diffusers import FlowMatchEulerDiscreteScheduler, QwenImageEditPlusPipeline
     from diffusers.models import QwenImageTransformer2DModel
-    from huggingface_hub import hf_hub_download
-    from PIL import Image
 
-    source = Image.open(_asset_path(job.job_id, "original", "source.bin")).convert("RGB")
-    source.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-    load_started = time.monotonic()
+    cache_started = observer.mark()
+    observer.event("model_cache_validation_start")
+    cache = validate_active_cache(Path(MODEL_ROOT), MODEL_CACHE_SPEC)
+    observer.event(
+        "model_cache_validated",
+        {"cache_revision": cache.cache_revision, "cache_validation_ms": observer.elapsed_ms(cache_started)},
+    )
+    model_started = observer.mark()
+    observer.event("model_load_start", {"cache_revision": cache.cache_revision})
     transformer = QwenImageTransformer2DModel.from_pretrained(
-        QWEN_MODEL_ID,
+        str(cache.model_snapshot),
         subfolder="transformer",
-        revision=QWEN_MODEL_REVISION,
         torch_dtype=torch.bfloat16,
-        cache_dir=MODEL_ROOT,
+        local_files_only=True,
     )
-    scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-        {
-            "base_image_seq_len": 256,
-            "base_shift": math.log(3),
-            "invert_sigmas": False,
-            "max_image_seq_len": 8192,
-            "max_shift": math.log(3),
-            "num_train_timesteps": 1000,
-            "shift": 1.0,
-            "shift_terminal": None,
-            "stochastic_sampling": False,
-            "time_shift_type": "exponential",
-            "use_beta_sigmas": False,
-            "use_dynamic_shifting": True,
-            "use_exponential_sigmas": False,
-            "use_karras_sigmas": False,
-        }
-    )
+    model_read_ms = observer.elapsed_ms(model_started)
+    observer.event("model_load_completed", {"cache_revision": cache.cache_revision, "model_read_ms": model_read_ms})
+    pipeline_started = observer.mark()
+    observer.event("pipeline_build_start")
+    scheduler = FlowMatchEulerDiscreteScheduler.from_config(SCHEDULER_CONFIG)
     pipeline = QwenImageEditPlusPipeline.from_pretrained(
-        QWEN_MODEL_ID,
+        str(cache.model_snapshot),
         transformer=transformer,
         scheduler=scheduler,
-        revision=QWEN_MODEL_REVISION,
         torch_dtype=torch.bfloat16,
-        cache_dir=MODEL_ROOT,
+        local_files_only=True,
     )
-    lora_path = hf_hub_download(
-        LIGHTNING_MODEL_ID,
-        LIGHTNING_WEIGHT,
-        revision=LIGHTNING_MODEL_REVISION,
-        cache_dir=MODEL_ROOT,
-    )
-    pipeline.load_lora_weights(lora_path)
+    observer.event("pipeline_build_completed", {"pipeline_build_ms": observer.elapsed_ms(pipeline_started)})
+    lora_started = observer.mark()
+    pipeline.load_lora_weights(str(cache.lora_file))
+    observer.event("lora_load_completed", {"lora_load_ms": observer.elapsed_ms(lora_started)})
+    cuda_started = observer.mark()
+    observer.event("cuda_transfer_start", {"gpu_type": MASTER_GPU})
     pipeline = pipeline.to("cuda")
-    models.commit()
-    logging.info("event=model_loaded model=qwen-image-edit-2511-lightning duration_ms=%d", _elapsed_ms(load_started))
+    observer.event(
+        "cuda_transfer_completed",
+        {"cuda_transfer_ms": observer.elapsed_ms(cuda_started), "gpu_type": MASTER_GPU},
+    )
+    return pipeline
+
+
+def _generate_qwen_masters(job: JobRecord, pipeline, observer: InferenceObserver) -> list[bytes]:
+    """Generate the same three Lightning Masters without rebuilding the pipeline."""
+    from io import BytesIO
+
+    import torch
+    from PIL import Image
+
+    source_bytes = _asset_path(job.job_id, "original", "source.bin").read_bytes()
+    source = Image.open(BytesIO(source_bytes)).convert("RGB")
+    source.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+    torch.cuda.reset_peak_memory_stats()
     outputs: list[bytes] = []
-    for seed in range(3):
-        inference_started = time.monotonic()
-        generated = pipeline(
-            image=[source],
-            prompt=_master_prompt(),
-            negative_prompt=" ",
-            true_cfg_scale=1.0,
-            generator=torch.Generator("cuda").manual_seed(seed),
-            num_inference_steps=4,
-        ).images[0]
-        buffer = BytesIO()
-        generated.save(buffer, format="PNG")
-        outputs.append(buffer.getvalue())
-        logging.info("event=master_generated index=%d duration_ms=%d", seed + 1, _elapsed_ms(inference_started))
-    return outputs
+    try:
+        for seed in MASTER_SEEDS:
+            inference_started = observer.mark()
+            observer.event("master_generation_started", {"master_index": seed})
+            generated = pipeline(
+                image=[source],
+                prompt=_master_prompt(job),
+                negative_prompt=build_master_negative_prompt(job.subject_identity),
+                true_cfg_scale=1.0,
+                generator=torch.Generator("cuda").manual_seed(seed),
+                num_inference_steps=4,
+            ).images[0]
+            try:
+                buffer = BytesIO()
+                generated.save(buffer, format="PNG")
+                outputs.append(buffer.getvalue())
+            finally:
+                generated.close()
+            observer.event(
+                "master_generated",
+                {
+                    "generation_ms": observer.elapsed_ms(inference_started),
+                    "master_index": seed,
+                    "result_bytes": len(outputs[-1]),
+                },
+            )
+        observer.event(
+            "generation_completed",
+            {
+                "gpu_peak_memory_bytes": int(torch.cuda.max_memory_allocated()),
+                "outputs": len(outputs),
+                "source_bytes": len(source_bytes),
+                "source_height": source.height,
+                "source_width": source.width,
+            },
+        )
+        return outputs
+    finally:
+        source.close()
 
 
-def _master_prompt() -> str:
-    from modal_service.catalog import MASTER_PROMPT
+def _generate_qwen_poses(
+    job: JobRecord,
+    pipeline,
+    observer: InferenceObserver,
+) -> dict[str, bytes]:
+    from io import BytesIO
 
-    return MASTER_PROMPT
+    import torch
+    from PIL import Image
+
+    if job.master_id is None:
+        raise DomainError("An approved Master is required for pose generation.")
+    master_bytes = _asset_path(job.job_id, "masters", f"{job.master_id}.png").read_bytes()
+    master = Image.open(BytesIO(master_bytes)).convert("RGB")
+    master.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+    option_seeds = {option.option_id: 100 + index for index, option in enumerate(POSE_OPTIONS)}
+    outputs: dict[str, bytes] = {}
+    try:
+        for role in ("normal", "listening", "transcribing"):
+            option = pose_option(job.pose_choices[role])
+            started = observer.mark()
+            observer.event("pose_generation_started", {"pose_role": role, "pose_option": option.option_id})
+            generated = pipeline(
+                image=[master],
+                prompt=build_pose_prompt(job.subject_identity, role, option),
+                negative_prompt=build_master_negative_prompt(job.subject_identity),
+                true_cfg_scale=1.0,
+                generator=torch.Generator("cuda").manual_seed(option_seeds[option.option_id]),
+                num_inference_steps=4,
+            ).images[0]
+            try:
+                buffer = BytesIO()
+                generated.save(buffer, format="PNG")
+                outputs[option.option_id] = buffer.getvalue()
+            finally:
+                generated.close()
+            observer.event(
+                "pose_generated",
+                {
+                    "generation_ms": observer.elapsed_ms(started),
+                    "pose_role": role,
+                    "pose_option": option.option_id,
+                    "result_bytes": len(outputs[option.option_id]),
+                },
+            )
+        return outputs
+    finally:
+        master.close()
+
+
+def _master_prompt(job: JobRecord) -> str:
+    return build_master_prompt(job.subject_identity)
 
 
 def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
@@ -415,17 +1072,122 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
 
     if not outputs:
         raise DomainError("Master generation returned no images.")
+    observer = InferenceObserver(_trace_id_for_record(job))
+    postprocess_started = observer.mark()
+    normalized = [remove_connected_flat_background(content) for content in outputs]
+    observer.event(
+        "postprocess_completed",
+        {"outputs": len(normalized), "postprocess_ms": observer.elapsed_ms(postprocess_started)},
+    )
+    write_started = observer.mark()
     staging = Path(ASSET_ROOT, "temporary", job.job_id, "masters")
     target = Path(ASSET_ROOT, "masters", job.job_id)
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True, exist_ok=True)
-    for index, content in enumerate(outputs, start=1):
+    for index, content in enumerate(normalized, start=1):
         destination = staging / f"master_{index}.png"
-        destination.write_bytes(remove_connected_flat_background(content))
+        destination.write_bytes(content)
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     staging.replace(target)
     assets.commit()
+    observer.event(
+        "result_write_completed",
+        {
+            "outputs": len(normalized),
+            "result_bytes": sum(len(content) for content in normalized),
+            "result_write_ms": observer.elapsed_ms(write_started),
+        },
+    )
+
+
+def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
+    from modal_service.image_processing import normalize_pose_presentation
+
+    expected_options = tuple(pose_option(job.pose_choices[role]) for role in ("normal", "listening", "transcribing"))
+    if set(outputs) != {option.option_id for option in expected_options} or job.master_id is None:
+        raise DomainError("Pose generation returned an incomplete result.")
+    staging = Path(ASSET_ROOT, "temporary", job.job_id, "poses")
+    target = Path(ASSET_ROOT, "poses", job.job_id)
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    poses: list[dict[str, object]] = []
+    pose_ids: dict[str, str] = {}
+    for index, option in enumerate(expected_options, start=1):
+        pose_id = f"pose_{index:02d}"
+        pose_ids[option.option_id] = pose_id
+        filename = f"{pose_id}.png"
+        content = normalize_pose_presentation(outputs[option.option_id])
+        (staging / filename).write_bytes(content)
+        poses.append(
+            {
+                "poseId": pose_id,
+                "runtimeRole": option.role,
+                "optionId": option.option_id,
+                "name": option.label,
+                "fileName": filename,
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        )
+    manifest = {
+        "poseSetId": job.job_id,
+        "masterId": job.master_id,
+        "version": POSE_TEMPLATE_VERSION,
+        "modelVersion": job.model_version,
+        "promptVersion": POSE_PROMPT_VERSION,
+        "idlePoseId": pose_ids[job.pose_choices["normal"]],
+        "listeningPoseId": pose_ids[job.pose_choices["listening"]],
+        "transcribingPoseId": pose_ids[job.pose_choices["transcribing"]],
+        "poses": poses,
+    }
+    (staging / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    shutil.rmtree(target, ignore_errors=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging.replace(target)
+    assets.commit()
+
+
+def _verify_pose_outputs(job: JobRecord) -> None:
+    manifest = _asset_path(job.job_id, "poses", "manifest.json")
+    if not manifest.is_file():
+        raise DomainError("Pose result metadata is unavailable.")
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    poses = payload.get("poses", [])
+    expected_ids = {"pose_01", "pose_02", "pose_03"}
+    expected_roles = {"normal", "listening", "transcribing"}
+    actual_ids = {str(item.get("poseId")) for item in poses}
+    actual_roles = {str(item.get("runtimeRole")) for item in poses}
+    selected = {str(item.get("runtimeRole")): str(item.get("optionId")) for item in poses}
+    if len(poses) != 3 or actual_ids != expected_ids or actual_roles != expected_roles:
+        raise DomainError("Pose outputs are incomplete.")
+    if selected != job.pose_choices:
+        raise DomainError("Pose outputs do not match the reserved choices.")
+    for item in poses:
+        path = _asset_path(job.job_id, "poses", Path(str(item["fileName"])).name)
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item.get("sha256"):
+            raise DomainError("Pose output checksum is invalid.")
+
+
+def _master_outputs_ready(job: JobRecord) -> bool:
+    target = Path(ASSET_ROOT, "masters", job.job_id)
+    expected = tuple(target / f"master_{index}.png" for index in range(1, len(MASTER_SEEDS) + 1))
+    return all(path.is_file() and path.stat().st_size > 0 for path in expected)
+
+
+def _verify_master_outputs(job: JobRecord) -> None:
+    if not _master_outputs_ready(job):
+        raise DomainError("Master outputs are incomplete.")
+
+
+def _job_age_seconds(job: JobRecord) -> float:
+    updated = datetime.fromisoformat(job.updated_at)
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=UTC)
+    return max(0.0, (datetime.now(UTC) - updated).total_seconds())
+
+
+def _should_reconcile_master(job: JobRecord) -> bool:
+    return job.state is JobState.GENERATING_MASTER and _job_age_seconds(job) >= MASTER_RECONCILE_AFTER_SECONDS
 
 
 @app.function(image=api_image, volumes={ASSET_ROOT: assets}, max_containers=1)
@@ -447,7 +1209,12 @@ def normalize_master_assets(job_id: str) -> dict[str, object]:
     return {"job_id": job_id, "masters": updated}
 
 
-@app.function(image=api_image, volumes={ASSET_ROOT: assets}, secrets=[firebase_admin_secret], max_containers=1)
+@app.function(
+    image=api_image,
+    volumes={ASSET_ROOT: assets},
+    secrets=[firebase_admin_secret, puleiro_bff_secret],
+    max_containers=1,
+)
 @modal.asgi_app()
 def api():
     from fastapi import Depends, FastAPI, Header
@@ -460,32 +1227,62 @@ def api():
     from google.oauth2 import id_token
 
     service = FastAPI(title="GRU Mascot API", docs_url=None, redoc_url=None)
-    credentials_json = os.environ.get("FIREBASE_ADMIN_CREDENTIALS_JSON")
-    if not credentials_json:
-        raise RuntimeError("Firebase Admin credentials are required for protected API startup.")
-    try:
-        firebase_admin.get_app()
-    except ValueError:
+    def ensure_firebase_admin() -> None:
+        """Initialize Firebase only for legacy v1 requests.
+
+        Modal v2 authenticates the Puleiro BFF with its short-lived service
+        token and must remain independently startable in an isolated staging
+        environment without copying production Firebase credentials.
+        """
+        try:
+            firebase_admin.get_app()
+            return
+        except ValueError:
+            pass
+        credentials_json = os.environ.get("FIREBASE_ADMIN_CREDENTIALS_JSON")
+        if not credentials_json:
+            raise RuntimeError("Firebase Admin credentials are unavailable for legacy v1 authentication.")
         firebase_admin.initialize_app(credentials.Certificate(json.loads(credentials_json)))
 
     @service.middleware("http")
     async def request_observability(request, call_next):
         request_id = secrets.token_hex(6)
+        request.state.request_id = request_id
+        request_token = CURRENT_REQUEST_ID.set(request_id)
+        correlation_id = _safe_correlation_id(request.headers.get("x-correlation-id"))
+        operation_id = _safe_operation_id(request.headers.get("x-operation-id"))
         started = time.monotonic()
         try:
             response = await call_next(request)
         except Exception as error:
-            logging.exception(
-                "event=http_request request_id=%s method=%s endpoint=%s outcome=failure error_class=%s duration_ms=%d",
-                request_id, request.method, _endpoint_name(request), type(error).__name__, _elapsed_ms(started),
+            structured_event(
+                "http_request_failed",
+                environment=ENVIRONMENT.value,
+                result="failure",
+                durationMs=_elapsed_ms(started),
+                puleiroTraceId=correlation_id,
+                operationId=operation_id,
+                requestId=request_id,
+                safeErrorCode=type(error).__name__,
             )
+            CURRENT_REQUEST_ID.reset(request_token)
             raise
         response.headers["X-Request-ID"] = request_id
-        logging.info(
-            "event=http_request request_id=%s method=%s endpoint=%s status=%d duration_ms=%d content_length=%s",
-            request_id, request.method, _endpoint_name(request), response.status_code, _elapsed_ms(started),
-            request.headers.get("content-length", "unknown"),
+        if correlation_id:
+            response.headers.setdefault("X-Correlation-Id", correlation_id)
+        if operation_id:
+            response.headers.setdefault("X-Operation-Id", operation_id)
+        structured_event(
+            "http_request_completed",
+            environment=ENVIRONMENT.value,
+            result="success" if response.status_code < 400 else "rejected",
+            durationMs=_elapsed_ms(started),
+            puleiroTraceId=correlation_id,
+            operationId=operation_id,
+            requestId=request_id,
+            httpStatus=response.status_code,
         )
+        CURRENT_REQUEST_ID.reset(request_token)
         return response
 
     @service.exception_handler(RequestValidationError)
@@ -509,6 +1306,7 @@ def api():
             from fastapi import HTTPException
             raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": str(error)}) from error
         try:
+            ensure_firebase_admin()
             claims = id_token.verify_firebase_token(token, GoogleRequest(), audience="gru-mascote")
             if not valid_firebase_claims(claims, FIREBASE_PROJECT_ID):
                 raise ValueError("Unexpected Firebase token claims.")
@@ -525,6 +1323,7 @@ def api():
             from fastapi import HTTPException
             raise HTTPException(status_code=401, detail={"code": "APP_CHECK_REQUIRED", "message": str(error)}) from error
         try:
+            ensure_firebase_admin()
             firebase_app_check.verify_token(token)
         except Exception as error:
             logging.info("firebase_app_check_rejected type=%s", type(error).__name__)
@@ -544,24 +1343,65 @@ def api():
     ) -> str:
         return user_id
 
+    async def verified_bff_identity(authorization: str | None = Header(default=None)) -> BffIdentity:
+        try:
+            token = bearer_token(authorization)
+            identity = verify_bff_token(token, os.environ.get("PULEIRO_BFF_JWT_SECRET", ""))
+            replay = consume_bff_jti.remote(identity.jti, identity.expires_at)
+            if replay.get("error_code"):
+                raise BffAuthenticationRejected("A BFF token cannot be replayed.")
+            return identity
+        except (AuthenticationRejected, BffAuthenticationRejected) as error:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "BFF_UNAUTHENTICATED", "message": "A valid BFF identity is required."},
+            ) from error
+
+    async def bff_operation_context(
+        identity: BffIdentity = Depends(verified_bff_identity),
+        x_idempotency_key: str | None = Header(default=None),
+        x_operation_id: str | None = Header(default=None),
+    ) -> tuple[BffIdentity, str, str]:
+        if not x_idempotency_key or not x_idempotency_key.strip():
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "IDEMPOTENCY_KEY_REQUIRED", "message": "An idempotency key is required."},
+            )
+        operation_id = _safe_operation_id(x_operation_id)
+        if not operation_id:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "OPERATION_ID_REQUIRED", "message": "An operation id is required."},
+            )
+        return identity, x_idempotency_key.strip(), operation_id
+
     @service.get("/health")
     async def health() -> dict[str, object]:
         return {
             "service": APP_NAME,
             "environment": ENVIRONMENT.value,
             "generation_enabled": GPU_GENERATION_ENABLED,
+            "registration_enabled": REGISTRATION_ENABLED,
+            "master_generation_enabled": MASTER_GENERATION_ENABLED,
+            "pose_generation_enabled": POSE_GENERATION_ENABLED,
             "templates_installed": _templates_installed(),
             "model_configured": True,
+            "pose_catalog_size": len(POSE_OPTIONS),
+            "pose_catalog_version": POSE_TEMPLATE_VERSION,
         }
 
     @service.post("/v1/mascot/jobs", status_code=202)
     async def create_job(request: CreateJobRequest, context: tuple[str, str] = Depends(cost_context)):
         user_id, key = context
         try:
+            pose_choices = validate_pose_choices(request.pose_choices)
             content = _decode_image(request.image_base64)
             _, _, _ = validate_image(content, request.content_type)
             digest = hashlib.sha256(content).hexdigest()
-            registration = register_job.remote(user_id, key, f"original/{digest}")
+            registration = register_job.remote(user_id, key, f"original/{digest}", pose_choices)
             _raise_guard_error(registration)
             job_data = dict(registration["job"])
             destination = _asset_path(str(job_data["job_id"]), "original", "source.bin")
@@ -573,12 +1413,267 @@ def api():
             return job_data | {"idempotent_replay": not bool(registration["created"])}
         except (ImageValidationError, DomainError, CostLimitExceeded, RateLimitExceeded) as error:
             raise _api_error(error) from error
+        except ValueError as error:
+            raise _api_error(DomainError("Invalid pose selection.")) from error
+
+    @service.post("/v2/mascot/jobs", status_code=202)
+    async def create_job_v2(
+        request: CreateJobV2Request,
+        context: tuple[BffIdentity, str, str] = Depends(bff_operation_context),
+        x_correlation_id: str | None = Header(default=None),
+    ):
+        identity, key, _ = context
+        if not REGISTRATION_ENABLED:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "REGISTRATION_DISABLED", "message": "Job registration is disabled."},
+            )
+        if request.attempt_id != identity.attempt_id:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "ATTEMPT_MISMATCH", "message": "The attempt does not belong to this identity."},
+            )
+        try:
+            subject_identity = _normalized_subject_identity(request.subject_identity)
+            content = _decode_image(request.image_base64)
+            validate_image(content, request.content_type)
+            digest = hashlib.sha256(content).hexdigest()
+            registration = register_job.remote(
+                identity.user_id,
+                key,
+                f"original/{digest}",
+                subject_identity=subject_identity,
+                registration_only=True,
+                attempt_id=request.attempt_id,
+                correlation_id=_safe_correlation_id(x_correlation_id),
+            )
+            _raise_guard_error(registration)
+            job = _deserialize(dict(registration["job"]))
+            destination = _asset_path(job.job_id, "original", "source.bin")
+            if not destination.is_file() or hashlib.sha256(destination.read_bytes()).hexdigest() != digest:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
+                assets.commit()
+            return public_job(job) | {"idempotentReplay": not bool(registration["created"])}
+        except (ImageValidationError, DomainError, CostLimitExceeded, RateLimitExceeded) as error:
+            raise _api_error(error) from error
+
+    @service.get("/v2/mascot/jobs")
+    async def recover_job_v2(
+        attempt_id: str,
+        identity: BffIdentity = Depends(verified_bff_identity),
+    ):
+        if attempt_id != identity.attempt_id:
+            raise _api_error(JobNotFound("Job was not found."))
+        try:
+            job_id = str(idempotency[_attempt_key(identity.user_id, attempt_id)])
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            return public_job(job, _master_references(job), _pose_references(job))
+        except KeyError as error:
+            raise _api_error(JobNotFound("Job was not found.")) from error
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.get("/v2/mascot/jobs/{job_id}")
+    async def read_job_v2(job_id: str, identity: BffIdentity = Depends(verified_bff_identity)):
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            return public_job(job, _master_references(job), _pose_references(job))
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.post("/v2/mascot/jobs/{job_id}/master-generations", status_code=202)
+    async def start_master_generation_v2(
+        job_id: str,
+        context: tuple[BffIdentity, str, str] = Depends(bff_operation_context),
+    ):
+        identity, _, _ = context
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            if not MASTER_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
+                raise GuardRejected("GENERATION_DISABLED", "Master generation is disabled.")
+            return public_job(_deserialize(_schedule_master(job, identity.user_id)))
+        except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
+            raise _api_error(error) from error
+
+    @service.post("/v2/mascot/jobs/{job_id}/masters/{master_id}/approve")
+    async def approve_master_v2(
+        job_id: str,
+        master_id: str,
+        context: tuple[BffIdentity, str, str] = Depends(bff_operation_context),
+    ):
+        identity, _, _ = context
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            if master_id not in {reference["id"] for reference in _master_references(job)}:
+                raise JobNotFound("Master was not found.")
+            approval = job_control.remote(
+                JobOperation.APPROVE_MASTER.value,
+                job_id,
+                identity.user_id,
+                master_id=master_id,
+            )
+            _raise_guard_error(approval)
+            return public_job(_deserialize(dict(approval["job"])), _master_references(job))
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.get("/v2/mascot/jobs/{job_id}/masters/{master_id}")
+    async def download_master_v2(
+        job_id: str,
+        master_id: str,
+        identity: BffIdentity = Depends(verified_bff_identity),
+    ):
+        from fastapi.responses import FileResponse
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            if master_id not in {reference["id"] for reference in _master_references(job)}:
+                raise JobNotFound("Master was not found.")
+            path = _asset_path(job_id, "masters", f"{master_id}.png")
+            if not path.is_file():
+                raise JobNotFound("Master was not found.")
+            return FileResponse(path, media_type="image/png", filename=f"{master_id}.png")
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.get("/v2/mascot/jobs/{job_id}/poses/{role}")
+    async def download_pose_v2(
+        job_id: str,
+        role: Literal["normal", "listening", "transcribing"],
+        identity: BffIdentity = Depends(verified_bff_identity),
+    ):
+        from fastapi.responses import FileResponse
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            pose = next((item for item in _pose_references(job) if item["role"] == role), None)
+            if pose is None:
+                raise JobNotFound("Pose was not found.")
+            path = _asset_path(job_id, "poses", f"{pose['id']}.png")
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != pose["sha256"]:
+                raise JobNotFound("Pose was not found.")
+            return FileResponse(path, media_type="image/png", filename=f"{role}.png")
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.post("/v2/mascot/jobs/{job_id}/pose-generations", status_code=202)
+    async def start_pose_generation_v2(
+        job_id: str,
+        request: PoseGenerationV2Request,
+        context: tuple[BffIdentity, str, str] = Depends(bff_operation_context),
+    ):
+        started_at = time.monotonic()
+        identity, _, operation_id = context
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            if not POSE_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
+                raise GuardRejected("POSE_GENERATION_DISABLED", "Pose generation is disabled.")
+            choices = validate_pose_choices(request.pose_choices)
+            request_id = CURRENT_REQUEST_ID.get()
+            correlation_id = _trace_id_for_record(job)
+            operation_fingerprint = _pose_operation_fingerprint(identity, job, choices)
+            structured_event(
+                "pose_request_received",
+                environment=ENVIRONMENT.value,
+                puleiroTraceId=correlation_id,
+                attemptId=identity.attempt_id,
+                operationId=operation_id,
+                requestId=request_id,
+                jobId=job_id,
+                masterId=job.master_id,
+            )
+            enqueued = job_control.remote(
+                JobOperation.ENQUEUE_POSES.value,
+                job_id,
+                user_id=identity.user_id,
+                pose_choices=choices,
+                operation_id=operation_id,
+                operation_fingerprint=operation_fingerprint,
+                correlation_id=correlation_id,
+                request_id=request_id,
+            )
+            _raise_guard_error(enqueued)
+            response_job = dict(enqueued["job"])
+            created = bool(enqueued["changed"])
+            reserved = bool(enqueued["reserved"])
+            structured_event(
+                "pose_operation_created" if created else "pose_operation_replayed",
+                environment=ENVIRONMENT.value,
+                result="created" if created else "replayed",
+                durationMs=_elapsed_ms(started_at),
+                puleiroTraceId=correlation_id,
+                attemptId=identity.attempt_id,
+                operationId=str(response_job.get("pose_operation_id") or operation_id),
+                requestId=request_id,
+                jobId=job_id,
+                masterId=job.master_id,
+            )
+            if reserved:
+                structured_event(
+                    "pose_queue_reserved",
+                    environment=ENVIRONMENT.value,
+                    result="reserved",
+                    puleiroTraceId=correlation_id,
+                    attemptId=identity.attempt_id,
+                    operationId=operation_id,
+                    requestId=request_id,
+                    jobId=job_id,
+                    masterId=job.master_id,
+                )
+                observer = InferenceObserver(_trace_id_for_record(job))
+                observer.event("pose_job_queued", {"outputs": 3, "gpu_type": MASTER_GPU})
+                pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
+                recorded = job_control.remote(
+                    JobOperation.RECORD_POSE_GPU_CALL.value,
+                    job_id,
+                    call_id=pose_call.object_id,
+                )
+                _raise_guard_error(recorded)
+                response_job = dict(recorded["job"])
+                structured_event(
+                    "pose_worker_spawned",
+                    environment=ENVIRONMENT.value,
+                    result="spawned",
+                    puleiroTraceId=correlation_id,
+                    attemptId=identity.attempt_id,
+                    operationId=operation_id,
+                    requestId=request_id,
+                    jobId=job_id,
+                    masterId=job.master_id,
+                )
+            response_operation_id = str(response_job.get("pose_operation_id") or operation_id)
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=202,
+                content=public_job(_deserialize(response_job)) | {"idempotentReplay": not created},
+                headers={"X-Operation-Id": response_operation_id},
+            )
+        except (DomainError, ValueError) as error:
+            raise _api_error(error) from error
 
     @service.get("/v1/mascot/jobs/{job_id}")
     async def read_job(job_id: str, user_id: str = Depends(secure_user)):
         try:
             job = _get_job(job_id)
             _ensure_owner(job, user_id)
+            if _should_reconcile_master(job):
+                reconciled = job_control.remote(JobOperation.RECONCILE_MASTER.value, job_id)
+                _raise_guard_error(reconciled)
+                job = _deserialize(dict(reconciled["job"]))
+            _refresh_result_assets(job)
             return _serialize(job)
         except DomainError as error:
             raise _api_error(error) from error
@@ -589,6 +1684,7 @@ def api():
             job_id = str(idempotency[_record_key(user_id, idempotency_key)])
             job = _get_job(job_id)
             _ensure_owner(job, user_id)
+            _refresh_result_assets(job)
             return _serialize(job)
         except KeyError as error:
             raise _api_error(JobNotFound("Job was not found.")) from error
@@ -620,6 +1716,7 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, context[0])
+            _refresh_result_assets(job)
             operation_key = _operation_key(context[0], f"approve:{job_id}:{request.master_id}")
             if operation_key in idempotency:
                 return _serialize(job)
@@ -629,8 +1726,18 @@ def api():
                 JobOperation.APPROVE_MASTER.value, job_id, context[0], master_id=request.master_id
             )
             _raise_guard_error(approval)
+            approved_job = _deserialize(dict(approval["job"]))
+            if bool(approval["changed"]):
+                pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
+                recorded = job_control.remote(
+                    JobOperation.RECORD_GPU_CALL.value,
+                    job_id,
+                    call_id=pose_call.object_id,
+                )
+                _raise_guard_error(recorded)
+                idempotency[_operation_key(context[0], f"generate-poses:{job_id}")] = job_id
             idempotency[operation_key] = job.job_id
-            return dict(approval["job"])
+            return _serialize(approved_job)
         except DomainError as error:
             raise _api_error(error) from error
 
@@ -659,6 +1766,7 @@ def api():
             _ensure_owner(job, user_id)
             if job.state is not JobState.COMPLETED:
                 raise DomainError("Mascot result is not ready.")
+            _refresh_result_assets(job)
             return _result_payload(job)
         except DomainError as error:
             raise _api_error(error) from error
@@ -670,6 +1778,7 @@ def api():
             raise _api_error(JobNotFound("Master was not found."))
         job = _get_job(job_id)
         _ensure_owner(job, user_id)
+        _refresh_result_assets(job)
         path = _asset_path(job_id, "masters", f"{master_id}.png")
         if not path.is_file():
             raise _api_error(JobNotFound("Master was not found."))
@@ -703,7 +1812,25 @@ def api():
 
     @service.post("/v1/mascot/jobs/{job_id}/generate-poses", status_code=202)
     async def generate_poses(job_id: str, context: tuple[str, str] = Depends(cost_context)):
-        return _template_assets_required(job_id, context[0])
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, context[0])
+            if job.state in {JobState.GENERATING_POSES, JobState.COMPLETED}:
+                return _serialize(job)
+            if job.state is not JobState.CONSISTENCY_TEST:
+                raise DomainError("Pose generation is not available for this job.")
+            if not GPU_GENERATION_ENABLED:
+                raise GuardRejected("GENERATION_DISABLED", "GPU generation is disabled.")
+            operation_key = _operation_key(context[0], f"generate-poses:{job_id}")
+            if operation_key in idempotency:
+                return _serialize(_get_job(job_id))
+            pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
+            recorded = job_control.remote(JobOperation.RECORD_GPU_CALL.value, job_id, call_id=pose_call.object_id)
+            _raise_guard_error(recorded)
+            idempotency[operation_key] = job.job_id
+            return _serialize(job)
+        except DomainError as error:
+            raise _api_error(error) from error
 
     @service.post("/v1/mascot/jobs/{job_id}/retry-pose", status_code=202)
     async def retry_pose(

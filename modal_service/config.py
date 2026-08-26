@@ -42,3 +42,10 @@ def generation_enabled(environment: Environment, override: str | None = None) ->
     if override is None:
         return LIMITS[environment].generation_enabled
     return override.strip().lower() == "true"
+
+
+def feature_enabled(override: str | None, *, default: bool = False) -> bool:
+    """Parse an explicit feature switch; cost-bearing switches fail closed."""
+    if override is None:
+        return default
+    return override.strip().lower() == "true"

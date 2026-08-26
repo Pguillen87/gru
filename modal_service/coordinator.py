@@ -11,15 +11,23 @@ from enum import StrEnum
 from modal_service.config import RuntimeLimits
 from modal_service.costs import generation_reservation, require_job_quota
 from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, TERMINAL_STATES
+from modal_service.catalog import DEFAULT_POSE_CHOICES, validate_pose_choices
 
 
 class JobOperation(StrEnum):
     AUTHORIZE_GENERATION = "AUTHORIZE_GENERATION"
     START_MASTER = "START_MASTER"
     COMMIT_MASTER = "COMMIT_MASTER"
+    RECONCILE_MASTER = "RECONCILE_MASTER"
     FAIL_MASTER = "FAIL_MASTER"
     RECORD_GPU_CALL = "RECORD_GPU_CALL"
+    RESERVE_POSE_GPU_CALL = "RESERVE_POSE_GPU_CALL"
+    RECORD_POSE_GPU_CALL = "RECORD_POSE_GPU_CALL"
     APPROVE_MASTER = "APPROVE_MASTER"
+    START_POSES = "START_POSES"
+    COMMIT_POSES = "COMMIT_POSES"
+    FAIL_POSES = "FAIL_POSES"
+    ENQUEUE_POSES = "ENQUEUE_POSES"
     CANCEL = "CANCEL"
 
 
@@ -58,13 +66,36 @@ class JobCoordinator:
         if job.user_id != user_id:
             raise JobNotFound("Job was not found.")
 
-    def register(self, user_id: str, key: str, source_key: str) -> tuple[JobRecord, bool]:
+    def register(
+        self,
+        user_id: str,
+        key: str,
+        source_key: str,
+        pose_choices: dict[str, str] | None = None,
+        subject_identity: dict[str, object] | None = None,
+        *,
+        registration_only: bool = False,
+        attempt_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> tuple[JobRecord, bool]:
+        selected_poses = validate_pose_choices(pose_choices or dict(DEFAULT_POSE_CHOICES))
+        confirmed_identity = subject_identity or {
+            "category": "other",
+            "label": "confirmed subject",
+            "species": None,
+        }
         request_key = f"create:{user_id}:{key}"
         existing_id = self.idempotency.get(request_key)
         if existing_id:
             existing = self.get(str(existing_id))
             if existing.source_key != source_key:
                 raise DomainError("Idempotency key was already used with different input.")
+            if existing.pose_choices != selected_poses:
+                raise DomainError("Idempotency key was already used with different pose choices.")
+            if existing.subject_identity != confirmed_identity:
+                raise DomainError("Idempotency key was already used with a different subject identity.")
+            if existing.attempt_id != attempt_id:
+                raise DomainError("Idempotency key was already used with a different attempt.")
             return existing, False
 
         job_id = deterministic_job_id(user_id, key)
@@ -72,6 +103,12 @@ class JobCoordinator:
             existing = self.get(job_id)
             if existing.source_key != source_key:
                 raise DomainError("Idempotency key was already used with different input.")
+            if existing.pose_choices != selected_poses:
+                raise DomainError("Idempotency key was already used with different pose choices.")
+            if existing.subject_identity != confirmed_identity:
+                raise DomainError("Idempotency key was already used with a different subject identity.")
+            if existing.attempt_id != attempt_id:
+                raise DomainError("Idempotency key was already used with a different attempt.")
             self.idempotency[request_key] = existing.job_id
             return existing, False
         except JobNotFound:
@@ -89,9 +126,17 @@ class JobCoordinator:
             idempotency_key=key,
             source_key=source_key,
             model_version="Qwen-Image-Edit-2511",
+            pose_choices=selected_poses,
+            subject_identity=confirmed_identity,
+            attempt_id=attempt_id,
+            correlation_id=correlation_id,
         )
-        job.transition_to(JobState.VALIDATING_INPUT)
-        job.transition_to(JobState.READY_FOR_GENERATION)
+        if registration_only:
+            job.state = JobState.REGISTERED
+            job.updated_at = job.created_at
+        else:
+            job.transition_to(JobState.VALIDATING_INPUT)
+            job.transition_to(JobState.READY_FOR_GENERATION)
         self.save(job)
         self.idempotency[request_key] = job.job_id
         return job, True
@@ -101,7 +146,7 @@ class JobCoordinator:
             return False
         job = self.get(job_id)
         self.ensure_owner(job, user_id)
-        if job.state is not JobState.READY_FOR_GENERATION or job.generation_reserved:
+        if job.state not in {JobState.REGISTERED, JobState.READY_FOR_GENERATION} or job.generation_reserved:
             return False
         generation_key = f"user-generations:{self.day_key}:{user_id}"
         next_user_generations = require_job_quota(
@@ -152,11 +197,32 @@ class JobCoordinator:
         self.save(job)
         return job, True
 
+    def fail_stale_master(self, job_id: str, error_code: str) -> tuple[JobRecord, bool]:
+        """Fail only a still-running Master job; terminal/newer states win."""
+        return self.transition_if_active(job_id, JobState.GENERATING_MASTER, JobState.FAILED, error_code)
+
     def record_gpu_call(self, job_id: str, call_id: str) -> tuple[JobRecord, bool]:
         job = self.get(job_id)
         if job.state in TERMINAL_STATES:
             return job, False
         job.gpu_call_id = call_id
+        self.save(job)
+        return job, True
+
+    def reserve_pose_gpu_call(self, job_id: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state is not JobState.GENERATING_POSES or job.pose_gpu_call_id is not None:
+            return job, False
+        job.pose_gpu_call_id = "reserved"
+        self.save(job)
+        return job, True
+
+    def record_pose_gpu_call(self, job_id: str, call_id: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state is not JobState.GENERATING_POSES or job.pose_gpu_call_id == call_id:
+            return job, False
+        job.pose_gpu_call_id = call_id
+        job.pose_operation_status = "running"
         self.save(job)
         return job, True
 
@@ -169,6 +235,75 @@ class JobCoordinator:
         if changed:
             job.prompt_version = prompt_version
             self.save(job)
+        return job, changed
+
+    def start_pose_generation(self, job_id: str, pose_choices: dict[str, str]) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state in TERMINAL_STATES:
+            return job, False
+        selected_poses = validate_pose_choices(pose_choices)
+        if job.state is JobState.GENERATING_POSES:
+            if job.pose_choices != selected_poses:
+                raise DomainError("Pose generation is already active with different choices.")
+            return job, False
+        job.pose_choices = selected_poses
+        changed = job.start_pose_generation()
+        if changed:
+            self.save(job)
+        return job, changed
+
+    def enqueue_pose_generation(
+        self,
+        job_id: str,
+        user_id: str,
+        pose_choices: dict[str, str],
+        operation_id: str,
+        operation_fingerprint: str,
+        correlation_id: str | None,
+        request_id: str | None,
+    ) -> tuple[JobRecord, bool, bool]:
+        job = self.get(job_id)
+        self.ensure_owner(job, user_id)
+        selected_poses = validate_pose_choices(pose_choices)
+        if job.pose_operation_id:
+            if job.pose_operation_fingerprint != operation_fingerprint or job.pose_choices != selected_poses:
+                raise DomainError("Pose choices cannot change after the operation is reserved.")
+            return job, False, False
+        if not job.master_id:
+            raise DomainError("An approved Master is required for pose generation.")
+
+        job.pose_choices = selected_poses
+        job.pose_operation_id = operation_id
+        job.pose_operation_fingerprint = operation_fingerprint
+        job.pose_operation_status = "queued"
+        job.pose_request_id = request_id
+        if correlation_id:
+            job.correlation_id = correlation_id
+        job.start_pose_generation()
+        job.pose_operation_created_at = job.updated_at
+        job.pose_gpu_call_id = "reserved"
+        self.save(job)
+        return job, True, True
+
+    def fail_pose_generation(self, job_id: str, error_code: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state is not JobState.GENERATING_POSES:
+            return job, False
+        changed = job.transition(JobState.FAILED)
+        if changed:
+            job.error_code = error_code
+            job.pose_operation_status = "failed"
+            self.save(job)
+        return job, changed
+
+    def commit_pose_outputs(self, job_id: str, persist: Callable[[JobRecord], None]) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state in TERMINAL_STATES or job.state is not JobState.GENERATING_POSES:
+            return job, False
+        persist(job)
+        changed = job.complete_pose_generation(job.job_id)
+        job.pose_operation_status = "completed"
+        self.save(job)
         return job, changed
 
     def cancel(self, job_id: str, user_id: str) -> tuple[JobRecord, bool]:
