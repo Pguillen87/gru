@@ -10,6 +10,8 @@ from PIL import Image, ImageDraw
 
 POSE_BACKGROUND = (241, 230, 201, 255)
 POSE_CANVAS_SIZE = 1024
+MIN_MASTER_ALPHA_RATIO = 0.01
+MAX_MASTER_BORDER_OPAQUE_RATIO = 0.02
 
 
 def remove_connected_flat_background(content: bytes, threshold: int = 24) -> bytes:
@@ -99,3 +101,32 @@ def transparency_ratio(content: bytes) -> float:
         alpha = image.convert("RGBA").getchannel("A")
         histogram = alpha.histogram()
     return sum(histogram[:250]) / max(1, image.width * image.height)
+
+
+def master_transparency_qc(content: bytes) -> dict[str, object]:
+    """Validate a derived Master without ever changing its source artifact."""
+    with Image.open(BytesIO(content)) as source:
+        image = source.convert("RGBA")
+    width, height = image.size
+    alpha = image.getchannel("A")
+    histogram = alpha.histogram()
+    alpha_ratio = sum(histogram[:250]) / max(1, width * height)
+    border = []
+    for x in range(width):
+        border.extend((alpha.getpixel((x, 0)), alpha.getpixel((x, height - 1))))
+    for y in range(1, max(1, height - 1)):
+        border.extend((alpha.getpixel((0, y)), alpha.getpixel((width - 1, y))))
+    border_opaque_ratio = sum(value >= 250 for value in border) / max(1, len(border))
+    reasons: list[str] = []
+    if alpha_ratio < MIN_MASTER_ALPHA_RATIO:
+        reasons.append("ALPHA_INSUFFICIENT")
+    if border_opaque_ratio > MAX_MASTER_BORDER_OPAQUE_RATIO:
+        reasons.append("BACKGROUND_CONNECTED_TO_BORDER")
+    return {
+        "status": "passed" if not reasons else "failed",
+        "safe_reasons": reasons,
+        "alpha_ratio": round(alpha_ratio, 6),
+        "border_opaque_ratio": round(border_opaque_ratio, 6),
+        "width": width,
+        "height": height,
+    }

@@ -24,8 +24,8 @@ PUBLIC_STATUS_BY_STATE = {
 
 def public_job(
     job: JobRecord,
-    masters: list[dict[str, str]] | None = None,
-    poses: list[dict[str, str]] | None = None,
+    masters: list[dict[str, object]] | None = None,
+    poses: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     status = PUBLIC_STATUS_BY_STATE[job.state]
     payload: dict[str, object] = {
@@ -37,6 +37,11 @@ def public_job(
         "updatedAt": job.updated_at,
         "subjectIdentity": job.subject_identity,
         "poseChoices": job.pose_choices,
+        "configuration": {
+            "displayName": job.display_name,
+            "poseChoices": job.pose_choices,
+            "configurationRevision": job.configuration_revision,
+        },
     }
     if status == "awaiting_master_approval":
         payload["masters"] = masters or []

@@ -104,6 +104,8 @@ class JobRecord:
     prompt_version: str = MASTER_PROMPT_VERSION
     template_version: str = POSE_TEMPLATE_VERSION
     pose_choices: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_POSE_CHOICES))
+    display_name: str = "Mascote GRU"
+    configuration_revision: int = 0
     subject_identity: dict[str, object] = field(default_factory=lambda: {
         "category": "other",
         "label": "confirmed subject",

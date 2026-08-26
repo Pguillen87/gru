@@ -22,6 +22,11 @@ def test_registered_job_is_public_and_never_claims_generation_scheduled():
     payload = public_job(record(JobState.REGISTERED))
     assert payload["status"] == "registered"
     assert payload["generationScheduled"] is False
+    assert payload["configuration"] == {
+        "displayName": "Mascote GRU",
+        "poseChoices": record(JobState.REGISTERED).pose_choices,
+        "configurationRevision": 0,
+    }
     assert "user_id" not in payload and "source_key" not in payload
     assert payload["subjectIdentity"]["category"] == "other"
     assert set(payload["poseChoices"]) == {"normal", "listening", "transcribing"}
