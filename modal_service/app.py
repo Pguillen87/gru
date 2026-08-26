@@ -1273,7 +1273,10 @@ def normalize_master_assets(job_id: str) -> dict[str, object]:
     staging.mkdir(parents=True, exist_ok=True)
     updated: list[dict[str, object]] = []
     qc: dict[str, object] = {}
-    for path in sorted(source_target.glob("master_[1-4].png")):
+    canonical_paths = [source_target / f"master_{index}.png" for index in range(1, len(MASTER_SEEDS) + 1)]
+    for path in canonical_paths:
+        if not path.is_file():
+            continue
         normalized = remove_connected_flat_background(path.read_bytes())
         result = master_transparency_qc(normalized)
         qc[path.stem] = result
