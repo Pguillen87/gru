@@ -24,7 +24,7 @@ def test_staging_deploy_is_fail_closed_unless_gpu_test_is_explicit():
     assert "[switch]$EnableGpuTest" in source
     assert 'if ($EnableGpuTest) { "true" } else { "false" }' in source
     assert "$env:MASTER_GENERATION_ENABLED = $generationEnabled" in source
-    assert "$env:POSE_GENERATION_ENABLED = $generationEnabled" in source
+    assert '$env:POSE_GENERATION_ENABLED = "false"' in source
 
 
 def test_bff_auth_contract_is_environment_configurable_and_capped():
