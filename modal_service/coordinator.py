@@ -30,6 +30,7 @@ class JobOperation(StrEnum):
     FAIL_POSES = "FAIL_POSES"
     ENQUEUE_POSES = "ENQUEUE_POSES"
     CANCEL = "CANCEL"
+    DELETE = "DELETE"
 
 
 def deterministic_job_id(user_id: str, idempotency_key: str) -> str:
@@ -346,3 +347,12 @@ class JobCoordinator:
         if changed:
             self.save(job)
         return job, changed
+
+    def delete(self, job_id: str, user_id: str) -> JobRecord:
+        job = self.get(job_id)
+        self.ensure_owner(job, user_id)
+        del self.jobs[job_id]
+        for key in list(self.idempotency.keys()):
+            if self.idempotency.get(key) == job_id:
+                del self.idempotency[key]
+        return job

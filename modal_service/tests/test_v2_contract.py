@@ -78,6 +78,24 @@ def test_v2_master_download_is_owner_scoped():
     assert "_ensure_owner(job, identity.user_id)" in route
 
 
+def test_v2_delete_is_bff_authenticated_owner_and_attempt_scoped():
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+    route = source.split('@service.delete("/v2/mascot/jobs/{job_id}")', 1)[1].split(
+        '@service.post("/v2/mascot/jobs/{job_id}/master-generations"', 1
+    )[0]
+
+    assert "bff_operation_context" in route
+    assert "_ensure_owner(job, identity.user_id)" in route
+    assert "job.attempt_id != identity.attempt_id" in route
+    assert "JobOperation.DELETE" in route
+    assert "job_deletion_completed" in route
+
+
+def test_staging_deploy_keeps_poses_disabled_during_master_only_smokes():
+    script = Path("modal_service/deploy_v2_staging.ps1").read_text(encoding="utf-8")
+    assert '$env:POSE_GENERATION_ENABLED = "false"' in script
+
+
 def test_pose_endpoint_enqueues_once_without_waiting_for_gpu_or_cache():
     source = Path("modal_service/app.py").read_text(encoding="utf-8")
     route = source.split('@service.post("/v2/mascot/jobs/{job_id}/pose-generations", status_code=202)', 1)[1]

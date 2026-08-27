@@ -16,7 +16,9 @@ $generationEnabled = if ($EnableGpuTest) { "true" } else { "false" }
 $env:GPU_GENERATION_ENABLED = $generationEnabled
 $env:REGISTRATION_ENABLED = "true"
 $env:MASTER_GENERATION_ENABLED = $generationEnabled
-$env:POSE_GENERATION_ENABLED = $generationEnabled
+# A Master-only smoke must never make pose generation callable. Poses need a
+# separate explicit rollout after their own pre-flight and authorization.
+$env:POSE_GENERATION_ENABLED = "false"
 $env:PULEIRO_BFF_JWT_ISSUER = "puleiro-bff"
 $env:PULEIRO_BFF_JWT_AUDIENCE = "gru-modal"
 $env:PULEIRO_BFF_JWT_MAX_TTL_SECONDS = "120"

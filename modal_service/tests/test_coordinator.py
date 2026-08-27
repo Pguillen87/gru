@@ -189,6 +189,21 @@ def test_v2_attempt_is_owner_scoped_and_cannot_change_on_replay():
         )
 
 
+def test_delete_is_owner_scoped_and_removes_job_idempotency_entries():
+    service, _ = coordinator()
+    job, _ = service.register(
+        "uid-a", "registration-key", "original/hash", registration_only=True, attempt_id="attempt-1"
+    )
+
+    with pytest.raises(JobNotFound):
+        service.delete(job.job_id, "uid-b")
+
+    deleted = service.delete(job.job_id, "uid-a")
+    assert deleted.job_id == job.job_id
+    assert job.job_id not in service.jobs
+    assert all(value != job.job_id for value in service.idempotency.values())
+
+
 def test_v2_generation_is_not_authorized_when_switch_is_off():
     service, usage = coordinator()
     job, _ = service.register(

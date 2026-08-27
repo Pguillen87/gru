@@ -287,6 +287,16 @@ def _asset_path(job_id: str, folder: str, name: str) -> Path:
     return Path(ASSET_ROOT, folder, job_id, name)
 
 
+def _delete_job_assets(job_id: str) -> int:
+    deleted = 0
+    for folder in ("original", "temporary", "masters", "poses", "consistency"):
+        target = Path(ASSET_ROOT, folder, job_id)
+        if target.exists():
+            shutil.rmtree(target)
+            deleted += 1
+    return deleted
+
+
 def _templates_installed() -> bool:
     pointer = Path(ASSET_ROOT, "pose_templates", "active.json")
     if not pointer.is_file():
@@ -540,6 +550,7 @@ def job_control(
     operation: str,
     job_id: str,
     user_id: str = "",
+    attempt_id: str = "",
     master_id: str = "",
     call_id: str = "",
     outputs: list[bytes] | None = None,
@@ -612,6 +623,26 @@ def job_control(
             job, changed = coordinator.fail_pose_generation(job_id, "POSE_GENERATION_FAILED")
         elif command is JobOperation.CANCEL:
             job, changed = coordinator.cancel(job_id, user_id)
+        elif command is JobOperation.DELETE:
+            receipt_key = f"deleted:{job_id}"
+            try:
+                job = coordinator.get(job_id)
+                coordinator.ensure_owner(job, user_id)
+            except JobNotFound:
+                receipt = idempotency.get(receipt_key)
+                if receipt == {"user_id": user_id, "attempt_id": attempt_id}:
+                    return {"deleted": True, "idempotent_replay": True, "job_id": job_id}
+                raise
+            asset_groups_deleted = _delete_job_assets(job_id)
+            assets.commit()
+            coordinator.delete(job_id, user_id)
+            idempotency[receipt_key] = {"user_id": user_id, "attempt_id": attempt_id}
+            return {
+                "deleted": True,
+                "idempotent_replay": False,
+                "job_id": job_id,
+                "asset_groups_deleted": asset_groups_deleted,
+            }
         else:  # StrEnum exhaustiveness guard.
             raise DomainError("Unsupported job operation.")
         return {"job": _serialize(job), "changed": changed, "reserved": reserved}
@@ -1610,6 +1641,34 @@ def api():
             _ensure_owner(job, identity.user_id)
             _refresh_result_assets(job)
             return public_job(job, _master_references(job), _pose_references(job))
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.delete("/v2/mascot/jobs/{job_id}")
+    async def delete_job_v2(
+        job_id: str,
+        context: tuple[BffIdentity, str, str] = Depends(bff_operation_context),
+    ):
+        identity, _, _ = context
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            if job.attempt_id != identity.attempt_id:
+                raise JobNotFound("Job was not found.")
+            for call_id in (job.gpu_call_id, job.pose_gpu_call_id):
+                if call_id and call_id != "reserved":
+                    modal.FunctionCall.from_id(call_id).cancel()
+            deleted = job_control.remote(JobOperation.DELETE.value, job_id, identity.user_id, identity.attempt_id)
+            _raise_guard_error(deleted)
+            structured_event(
+                "job_deletion_completed",
+                environment=ENVIRONMENT.value,
+                result="deleted",
+                puleiroTraceId=_trace_id_for_record(job),
+                attemptId=identity.attempt_id,
+                jobId=job_id,
+            )
+            return deleted
         except DomainError as error:
             raise _api_error(error) from error
 
