@@ -2,7 +2,7 @@ from io import BytesIO
 
 from PIL import Image, ImageDraw
 
-from modal_service.image_processing import POSE_BACKGROUND, master_transparency_qc, normalize_pose_presentation, remove_connected_flat_background, transparency_ratio
+from modal_service.image_processing import POSE_BACKGROUND, master_transparency_qc, normalize_pose_presentation, pose_transparency_qc, remove_connected_flat_background, transparency_ratio
 
 
 def test_flat_border_background_becomes_transparent_without_erasing_subject():
@@ -35,6 +35,24 @@ def test_alpha_qc_rejects_a_solid_master_without_mutating_it():
 
     assert qc["status"] == "failed"
     assert "ALPHA_INSUFFICIENT" in qc["safe_reasons"]
+
+
+def test_alpha_qc_reports_hash_bbox_components_and_rejects_disconnected_noise():
+    image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    drawer = ImageDraw.Draw(image)
+    drawer.rectangle((18, 18, 44, 48), fill=(80, 45, 34, 255))
+    image.putpixel((2, 2), (80, 45, 34, 255))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    qc = pose_transparency_qc(source.getvalue())
+
+    assert qc["format"] == "PNG" and qc["mode"] == "RGBA"
+    assert len(qc["sha256"]) == 64
+    assert qc["bounding_box"] == [2, 2, 45, 49]
+    assert qc["component_count"] == 2
+    assert qc["status"] == "failed"
+    assert "DISCONNECTED_NOISE" in qc["safe_reasons"]
 
 
 def test_pose_presentation_replaces_checkerboard_with_one_editorial_background():

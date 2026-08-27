@@ -17,11 +17,29 @@ O contrato v2 usa JWT curto do BFF. A criação registra e persiste, mas não ch
 .\modal_service\deploy_v2_staging.ps1
 ```
 
-Para uma sessão deliberada de teste real, o parâmetro explícito abaixo habilita Master e poses somente no environment isolado de staging:
+Para um smoke de Master deliberadamente autorizado, use o modo explícito abaixo. Ele nunca habilita poses:
 
 ```powershell
-.\modal_service\deploy_v2_staging.ps1 -EnableGpuTest
+.\modal_service\deploy_v2_staging.ps1 -Mode master-only
 ```
+
+Para o futuro smoke de poses, use somente após o pre-flight dos templates e autorização financeira. Esse modo deixa Master desligado e habilita apenas GPU + poses:
+
+```powershell
+.\modal_service\deploy_v2_staging.ps1 -Mode poses-only
+```
+
+O modo sem parâmetro é sempre `fail-closed`: GPU, Master e poses ficam `false`.
+
+## Templates de poses
+
+As 12 referências oficiais do catálogo `web-poses-v1` são empacotadas com manifest, origem e SHA-256 em `modal_service/pose_templates/web-poses-v1`. A instalação abaixo grava exclusivamente no Volume de staging e não chama GPU:
+
+```powershell
+python -m modal_service.tools.install_pose_templates modal_service/pose_templates/web-poses-v1 --resource-prefix gru-mascot-v2-staging
+```
+
+O instalador recusa o prefixo de produção. Depois, `/health` deve retornar `templates_installed=true` e `template_version=web-poses-v1`; `/v2/mascot/capabilities` deve indicar `poses.preflightReady=true`. Com as flags fail-closed, `poses.ready` permanece `false` por desenho.
 
 O deploy não gera imagens por si. A GPU só é chamada por endpoints autenticados depois da ação do usuário. O modo padrão continua fail-closed.
 

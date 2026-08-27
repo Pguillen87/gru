@@ -54,6 +54,7 @@ from modal_service.security import AuthenticationRejected, app_check_token, bear
 from modal_service.validation import ImageValidationError, validate_image
 from modal_service.v2_contract import public_job
 from modal_service.structured_observability import structured_event
+from modal_service.templates import TemplatePackageError, validate_active_template_package
 
 APP_NAME = os.getenv("GRU_MASCOT_APP_NAME", "gru-mascot")
 FIREBASE_PROJECT_ID = "gru-mascote"
@@ -289,7 +290,7 @@ def _asset_path(job_id: str, folder: str, name: str) -> Path:
 
 def _delete_job_assets(job_id: str) -> int:
     deleted = 0
-    for folder in ("original", "temporary", "masters", "poses", "consistency"):
+    for folder in ("original", "temporary", "masters_raw", "masters", "poses_raw", "poses", "consistency"):
         target = Path(ASSET_ROOT, folder, job_id)
         if target.exists():
             shutil.rmtree(target)
@@ -298,21 +299,42 @@ def _delete_job_assets(job_id: str) -> int:
 
 
 def _templates_installed() -> bool:
-    pointer = Path(ASSET_ROOT, "pose_templates", "active.json")
-    if not pointer.is_file():
-        return False
     try:
-        version = str(json.loads(pointer.read_text(encoding="utf-8"))["version"])
-    except (KeyError, ValueError, TypeError, json.JSONDecodeError):
-        return False
-    package_root = Path(ASSET_ROOT, "pose_templates", "versions", version)
-    try:
-        from modal_service.templates import validate_template_package
-
-        validate_template_package(package_root)
+        validate_active_template_package(Path(ASSET_ROOT))
         return True
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (OSError, ValueError, json.JSONDecodeError, TemplatePackageError):
         return False
+
+
+def _active_pose_template(option_id: str) -> Path:
+    package = validate_active_template_package(Path(ASSET_ROOT))
+    return package.reference_for(option_id)
+
+
+def _active_pose_template_version() -> str | None:
+    """Expose only the installed template version; never an asset path."""
+    try:
+        return validate_active_template_package(Path(ASSET_ROOT)).version
+    except (OSError, ValueError, json.JSONDecodeError, TemplatePackageError):
+        return None
+
+
+def _promote_private_directory(staging: Path, target: Path) -> None:
+    """Replace a result set without exposing a partially written directory."""
+    backup = target.with_name(f".{target.name}.previous")
+    shutil.rmtree(backup, ignore_errors=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    had_previous = target.exists()
+    if had_previous:
+        target.replace(backup)
+    try:
+        staging.replace(target)
+    except Exception:
+        if had_previous and backup.exists() and not target.exists():
+            backup.replace(target)
+        raise
+    else:
+        shutil.rmtree(backup, ignore_errors=True)
 
 
 def _result_payload(job: JobRecord) -> dict[str, object]:
@@ -881,7 +903,7 @@ class QwenMasterWorker:
             jobId=job_id,
             masterId=job.master_id,
         )
-        if not GPU_GENERATION_ENABLED:
+        if not GPU_GENERATION_ENABLED or not POSE_GENERATION_ENABLED:
             observer.event("pose_job_failed", {"error_code": "GENERATION_DISABLED", "outcome": "blocked"})
             structured_event(
                 "pose_worker_failed",
@@ -1109,22 +1131,31 @@ def _generate_qwen_poses(
     try:
         for role in ("normal", "listening", "transcribing"):
             option = pose_option(job.pose_choices[role])
+            template_path = _active_pose_template(option.option_id)
+            with Image.open(template_path) as template_source:
+                pose_reference = template_source.convert("RGB")
             started = observer.mark()
-            observer.event("pose_generation_started", {"pose_role": role, "pose_option": option.option_id})
-            generated = pipeline(
-                image=[master],
-                prompt=build_pose_prompt(job.subject_identity, role, option),
-                negative_prompt=build_master_negative_prompt(job.subject_identity),
-                true_cfg_scale=1.0,
-                generator=torch.Generator("cuda").manual_seed(option_seeds[option.option_id]),
-                num_inference_steps=4,
-            ).images[0]
             try:
-                buffer = BytesIO()
-                generated.save(buffer, format="PNG")
-                outputs[option.option_id] = buffer.getvalue()
+                observer.event(
+                    "pose_generation_started",
+                    {"pose_role": role, "pose_option": option.option_id, "template_reference": "loaded"},
+                )
+                generated = pipeline(
+                    image=[master, pose_reference],
+                    prompt=build_pose_prompt(job.subject_identity, role, option),
+                    negative_prompt=build_master_negative_prompt(job.subject_identity),
+                    true_cfg_scale=1.0,
+                    generator=torch.Generator("cuda").manual_seed(option_seeds[option.option_id]),
+                    num_inference_steps=4,
+                ).images[0]
+                try:
+                    buffer = BytesIO()
+                    generated.save(buffer, format="PNG")
+                    outputs[option.option_id] = buffer.getvalue()
+                finally:
+                    generated.close()
             finally:
-                generated.close()
+                pose_reference.close()
             observer.event(
                 "pose_generated",
                 {
@@ -1174,9 +1205,7 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
         destination = staging / f"master_{index}.png"
         destination.write_bytes(content)
     (staging / "qc.json").write_text(json.dumps({"masters": qc}, ensure_ascii=False), encoding="utf-8")
-    shutil.rmtree(target, ignore_errors=True)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    staging.replace(target)
+    _promote_private_directory(staging, target)
     assets.commit()
     observer.event(
         "result_write_completed",
@@ -1189,22 +1218,35 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
 
 
 def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
-    from modal_service.image_processing import normalize_pose_presentation
+    from modal_service.image_processing import pose_transparency_qc, remove_connected_flat_background
 
     expected_options = tuple(pose_option(job.pose_choices[role]) for role in ("normal", "listening", "transcribing"))
     if set(outputs) != {option.option_id for option in expected_options} or job.master_id is None:
         raise DomainError("Pose generation returned an incomplete result.")
+    raw_target = Path(ASSET_ROOT, "poses_raw", job.job_id)
+    raw_target.mkdir(parents=True, exist_ok=True)
+    for option_id, content in outputs.items():
+        raw_path = raw_target / f"{option_id}.png"
+        if not raw_path.exists():
+            raw_path.write_bytes(content)
     staging = Path(ASSET_ROOT, "temporary", job.job_id, "poses")
     target = Path(ASSET_ROOT, "poses", job.job_id)
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True, exist_ok=True)
     poses: list[dict[str, object]] = []
     pose_ids: dict[str, str] = {}
+    qc: dict[str, object] = {}
     for index, option in enumerate(expected_options, start=1):
         pose_id = f"pose_{index:02d}"
         pose_ids[option.option_id] = pose_id
         filename = f"{pose_id}.png"
-        content = normalize_pose_presentation(outputs[option.option_id])
+        content = remove_connected_flat_background(outputs[option.option_id])
+        result = pose_transparency_qc(content)
+        qc[pose_id] = result
+        if result.get("status") != "passed":
+            shutil.rmtree(staging, ignore_errors=True)
+            assets.commit()
+            raise DomainError("Pose alpha quality verification failed.")
         (staging / filename).write_bytes(content)
         poses.append(
             {
@@ -1214,6 +1256,7 @@ def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
                 "name": option.label,
                 "fileName": filename,
                 "sha256": hashlib.sha256(content).hexdigest(),
+                "qc": result,
             }
         )
     manifest = {
@@ -1228,9 +1271,8 @@ def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
         "poses": poses,
     }
     (staging / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-    shutil.rmtree(target, ignore_errors=True)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    staging.replace(target)
+    (staging / "qc.json").write_text(json.dumps({"poses": qc}, ensure_ascii=False), encoding="utf-8")
+    _promote_private_directory(staging, target)
     assets.commit()
 
 
@@ -1249,10 +1291,26 @@ def _verify_pose_outputs(job: JobRecord) -> None:
         raise DomainError("Pose outputs are incomplete.")
     if selected != job.pose_choices:
         raise DomainError("Pose outputs do not match the reserved choices.")
+    qc_path = _asset_path(job.job_id, "poses", "qc.json")
+    try:
+        qc_payload = json.loads(qc_path.read_text(encoding="utf-8")).get("poses", {})
+    except (OSError, ValueError, TypeError) as error:
+        raise DomainError("Pose alpha quality metadata is unavailable.") from error
+    if set(qc_payload) != expected_ids:
+        raise DomainError("Pose alpha quality metadata is incomplete.")
     for item in poses:
         path = _asset_path(job.job_id, "poses", Path(str(item["fileName"])).name)
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item.get("sha256"):
             raise DomainError("Pose output checksum is invalid.")
+        qc = item.get("qc")
+        pose_id = str(item.get("poseId"))
+        if (
+            not isinstance(qc, dict)
+            or qc.get("status") != "passed"
+            or qc.get("sha256") != item.get("sha256")
+            or qc_payload.get(pose_id) != qc
+        ):
+            raise DomainError("Pose alpha quality verification failed.")
 
 
 def _master_outputs_ready(job: JobRecord) -> bool:
@@ -1272,6 +1330,10 @@ def _verify_master_outputs(job: JobRecord) -> None:
     expected = {f"master_{index}" for index in range(1, len(MASTER_SEEDS) + 1)}
     if set(masters) != expected or any(item.get("status") != "passed" for item in masters.values()):
         raise DomainError("Master alpha quality verification failed.")
+    for master_id, qc in masters.items():
+        path = _asset_path(job.job_id, "masters", f"{master_id}.png")
+        if not path.is_file() or qc.get("sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
+            raise DomainError("Master alpha asset checksum is invalid.")
 
 
 def _job_age_seconds(job: JobRecord) -> float:
@@ -1509,6 +1571,7 @@ def api():
             "master_generation_enabled": MASTER_GENERATION_ENABLED,
             "pose_generation_enabled": POSE_GENERATION_ENABLED,
             "templates_installed": _templates_installed(),
+            "template_version": _active_pose_template_version(),
             "model_configured": True,
             "pose_catalog_size": len(POSE_OPTIONS),
             "pose_catalog_version": POSE_TEMPLATE_VERSION,
@@ -1537,6 +1600,7 @@ def api():
             },
             "poses": {
                 "ready": not pose_reasons,
+                "preflightReady": templates_ready,
                 "reasonCode": pose_reasons[0] if pose_reasons else None,
                 "reasons": pose_reasons,
                 "catalogVersion": WEB_POSE_CATALOG_VERSION,
@@ -1825,9 +1889,13 @@ def api():
             _ensure_owner(job, identity.user_id)
             if not POSE_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
                 raise GuardRejected("POSE_GENERATION_DISABLED", "Pose generation is disabled.")
+            if not _templates_installed():
+                raise GuardRejected("POSE_TEMPLATES_UNAVAILABLE", "Pose templates are not installed.")
             if request.catalog_version is not None and request.catalog_version != WEB_POSE_CATALOG_VERSION:
                 raise GuardRejected("POSE_CATALOG_INCOMPATIBLE", "Pose catalog is not compatible with this service.")
             choices = validate_pose_choices(request.pose_choices)
+            _refresh_result_assets(job)
+            _verify_master_outputs(job)
             request_id = CURRENT_REQUEST_ID.get()
             correlation_id = _trace_id_for_record(job)
             operation_fingerprint = _pose_operation_fingerprint(identity, job, choices)

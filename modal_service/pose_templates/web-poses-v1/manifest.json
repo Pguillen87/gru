@@ -1,0 +1,109 @@
+{
+  "version": "web-poses-v1",
+  "catalog_version": "web-poses-v1",
+  "asset_provenance": {
+    "source_type": "internal_repository_asset",
+    "repository": "Pguillen87/PuleiroGru",
+    "commit": "e0098b50fb27d8cf79a97d3b3ca9967f7e9e5f0a",
+    "source_path": "public/assets/pose-reference-sheet.webp",
+    "rights_basis": "Repository-authored asset committed by the repository owner; internal GRU pose-reference use only."
+  },
+  "poses": [
+    {
+      "option_id": "normal_attentive",
+      "role": "normal",
+      "label": "Pronto e atento",
+      "instruction": "upright ready stance, attentive forward gaze, calm confidence",
+      "reference": "normal_attentive/reference.png",
+      "sha256": "e7fd76f05bd42e9d2b1b0051a7f07a326ca5f57365dac53d1683aa8091940717"
+    },
+    {
+      "option_id": "normal_relaxed",
+      "role": "normal",
+      "label": "Relaxado",
+      "instruction": "relaxed balanced stance, soft friendly expression, resting naturally",
+      "reference": "normal_relaxed/reference.png",
+      "sha256": "687c8100de513f1421d14feb391d7647fc8aaacef559d7f0a803aae71d3f1762"
+    },
+    {
+      "option_id": "normal_curious",
+      "role": "normal",
+      "label": "Observador",
+      "instruction": "observing the surroundings with an attentive gaze and composed posture",
+      "reference": "normal_curious/reference.png",
+      "sha256": "87936c1d2422d5b605f64d7958a2ec53e86e5e153ac38e42f2941606f94c4f34"
+    },
+    {
+      "option_id": "normal_firm",
+      "role": "normal",
+      "label": "Espera paciente",
+      "instruction": "patient waiting pose, calm body, gentle expectant expression",
+      "reference": "normal_firm/reference.png",
+      "sha256": "b0beac224cd734934be4f3cc4c0820869813388d543b5bbab62dcca65d487fde"
+    },
+    {
+      "option_id": "listening_focus",
+      "role": "listening",
+      "label": "Gesto de escuta",
+      "instruction": "clear listening response adapted to the subject's confirmed anatomy; never invent a human hand for an animal or object",
+      "reference": "listening_focus/reference.png",
+      "sha256": "64387cad0bd065763d9b57050f22c0f146d3fb599dc2def349a02bb522ff764d"
+    },
+    {
+      "option_id": "listening_process",
+      "role": "listening",
+      "label": "Inclinado para ouvir",
+      "instruction": "leaning the upper body slightly toward the sound with attentive eyes",
+      "reference": "listening_process/reference.png",
+      "sha256": "1f713d93f2d2bbae049daa3c7077ee36559606b5b1f533e4636521084c5934f7"
+    },
+    {
+      "option_id": "listening_natural",
+      "role": "listening",
+      "label": "Reação natural",
+      "instruction": "natural listening reaction using gaze, head, ears, wings, posture, or object affordances appropriate to the confirmed subject",
+      "reference": "listening_natural/reference.png",
+      "sha256": "62acbf7d74b003227d418ce1eb62a71bfb1de16dd8a398763d2ffe1048b3febc"
+    },
+    {
+      "option_id": "listening_ready",
+      "role": "listening",
+      "label": "Cabeça inclinada",
+      "instruction": "head tilted toward the sound, alert and clearly listening",
+      "reference": "listening_ready/reference.png",
+      "sha256": "99cb3a8d17e9b7d893b292e51d014e3d846c95297b776b8850b6f3878dbcc97e"
+    },
+    {
+      "option_id": "transcribing_notes",
+      "role": "transcribing",
+      "label": "Escrevendo",
+      "instruction": "writing clearly with a simple pencil and note surface, focused expression",
+      "reference": "transcribing_notes/reference.png",
+      "sha256": "dbb3769496eaaae310c2294105c7c7893f11efdb64333712a36837dabac967ba"
+    },
+    {
+      "option_id": "transcribing_fast",
+      "role": "transcribing",
+      "label": "Digitando",
+      "instruction": "typing with focused energy on a simple compact keyboard, clean silhouette",
+      "reference": "transcribing_fast/reference.png",
+      "sha256": "98efd7f1616f3b6f2907355065aecdf55203b4fe29e7ecfc102b87a94d50f908"
+    },
+    {
+      "option_id": "transcribing_thought",
+      "role": "transcribing",
+      "label": "Organizando ideias",
+      "instruction": "organizing ideas thoughtfully with a composed pose and subtle visual planning gesture",
+      "reference": "transcribing_thought/reference.png",
+      "sha256": "265ce5c74f6d6507e72a7854298386cf4fe46ed93d2c938f558fef0f31bf8968"
+    },
+    {
+      "option_id": "transcribing_active",
+      "role": "transcribing",
+      "label": "Anotando",
+      "instruction": "taking concise notes with an attentive expression and purposeful writing gesture",
+      "reference": "transcribing_active/reference.png",
+      "sha256": "26499bcdc50b043275037fc160a6a7e6cf2efc812178e93c24295478a50418e5"
+    }
+  ]
+}

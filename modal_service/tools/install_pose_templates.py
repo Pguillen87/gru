@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -18,9 +19,16 @@ from modal_service.templates import validate_template_package
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("package", type=Path)
+    parser.add_argument(
+        "--resource-prefix",
+        default=os.getenv("GRU_MASCOT_RESOURCE_PREFIX", "gru-mascot"),
+        help="Modal resource prefix. The staging deploy uses gru-mascot-v2-staging.",
+    )
     args = parser.parse_args()
     package = validate_template_package(args.package)
-    volume = modal.Volume.from_name("gru-mascot-assets", create_if_missing=False)
+    if args.resource_prefix == "gru-mascot":
+        raise SystemExit("Refusing the production resource prefix. Pass an explicit non-production prefix.")
+    volume = modal.Volume.from_name(f"{args.resource_prefix}-assets", create_if_missing=False)
     remote_root = f"pose_templates/versions/{package.version}"
     with volume.batch_upload(force=True) as batch:
         for file in package.files:

@@ -1,5 +1,6 @@
 param(
-    [switch]$EnableGpuTest
+    [ValidateSet("fail-closed", "master-only", "poses-only")]
+    [string]$Mode = "fail-closed"
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,13 +13,24 @@ $env:GRU_MASCOT_RESOURCE_PREFIX = "gru-mascot-v2-staging"
 $env:GRU_FIREBASE_SECRET_ENVIRONMENT = $stagingEnvironment
 $env:GRU_FIREBASE_SECRET_NAME = "gru-mascot-v2-staging-firebase-admin"
 $env:GRU_PULEIRO_BFF_SECRET_NAME = "gru-mascot-v2-staging-puleiro-bff"
-$generationEnabled = if ($EnableGpuTest) { "true" } else { "false" }
-$env:GPU_GENERATION_ENABLED = $generationEnabled
 $env:REGISTRATION_ENABLED = "true"
-$env:MASTER_GENERATION_ENABLED = $generationEnabled
-# A Master-only smoke must never make pose generation callable. Poses need a
-# separate explicit rollout after their own pre-flight and authorization.
-$env:POSE_GENERATION_ENABLED = "false"
+switch ($Mode) {
+    "fail-closed" {
+        $env:GPU_GENERATION_ENABLED = "false"
+        $env:MASTER_GENERATION_ENABLED = "false"
+        $env:POSE_GENERATION_ENABLED = "false"
+    }
+    "master-only" {
+        $env:GPU_GENERATION_ENABLED = "true"
+        $env:MASTER_GENERATION_ENABLED = "true"
+        $env:POSE_GENERATION_ENABLED = "false"
+    }
+    "poses-only" {
+        $env:GPU_GENERATION_ENABLED = "true"
+        $env:MASTER_GENERATION_ENABLED = "false"
+        $env:POSE_GENERATION_ENABLED = "true"
+    }
+}
 $env:PULEIRO_BFF_JWT_ISSUER = "puleiro-bff"
 $env:PULEIRO_BFF_JWT_AUDIENCE = "gru-modal"
 $env:PULEIRO_BFF_JWT_MAX_TTL_SECONDS = "120"

@@ -8,7 +8,7 @@ from typing import Mapping
 
 MASTER_PROMPT_VERSION = "master-v4-confirmed-category"
 POSE_PROMPT_VERSION = "pose-v5-confirmed-identity"
-POSE_TEMPLATE_VERSION = "poses-v4-three-selected"
+POSE_TEMPLATE_VERSION = "web-poses-v1"
 
 MASTER_PROMPT = (
     "Create one full-body 2D editorial cartoon mascot from the confirmed primary subject. "
@@ -133,35 +133,27 @@ def build_pose_prompt(identity: Mapping[str, object], role: str, option: PoseOpt
     return (
         f"{POSE_PROMPT} The confirmed subject is {label} ({category_detail}). "
         f"Runtime role: {role}. Requested pose: {option.instruction}. "
-        "Use only the approved Master as visual identity reference."
+        "Use only the approved Master for identity and style; it is the first supplied image. "
+        "The second supplied image is an official pose-reference template: use it only for movement, gesture and framing. "
+        "Never copy a person, clothing, face, colors or background from the pose-reference template."
     )
 
 
 @dataclass(frozen=True)
-class PoseTemplate:
-    pose_id: str
-    name: str
-    difficulty: str
-    asset_key: str
+class PoseReference:
+    """A catalog-owned movement reference; it never becomes a generated asset."""
+
+    option_id: str
+    role: str
+    label: str
+    instruction: str
 
 
-POSES = (
-    PoseTemplate("pose_01", "idle_standing", "simple", "poses/v1/pose_01.png"),
-    PoseTemplate("pose_02", "sitting", "simple", "poses/v1/pose_02.png"),
-    PoseTemplate("pose_03", "listening_forward", "intermediate", "poses/v1/pose_03.png"),
-    PoseTemplate("pose_04", "thinking", "intermediate", "poses/v1/pose_04.png"),
-    PoseTemplate("pose_05", "looking_up", "hard", "poses/v1/pose_05.png"),
-    PoseTemplate("pose_06", "celebrating", "hard", "poses/v1/pose_06.png"),
-    PoseTemplate("pose_07", "curious", "intermediate", "poses/v1/pose_07.png"),
-    PoseTemplate("pose_08", "alert", "simple", "poses/v1/pose_08.png"),
-    PoseTemplate("pose_09", "sleeping", "intermediate", "poses/v1/pose_09.png"),
-    PoseTemplate("pose_10", "wave", "hard", "poses/v1/pose_10.png"),
+POSE_REFERENCES = tuple(
+    PoseReference(option.option_id, option.role, option.label, option.instruction)
+    for option in POSE_OPTIONS
 )
 
 
-def consistency_templates() -> tuple[PoseTemplate, PoseTemplate, PoseTemplate]:
-    return POSES[0], POSES[2], POSES[4]
-
-
-def mvp_templates() -> tuple[PoseTemplate, ...]:
-    return POSES[:6]
+def pose_reference(option_id: str) -> PoseReference:
+    return next(reference for reference in POSE_REFERENCES if reference.option_id == option_id)
