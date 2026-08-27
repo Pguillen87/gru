@@ -365,7 +365,10 @@ def _master_references(job: JobRecord) -> list[dict[str, object]]:
             qc_by_master = json.loads(qc_path.read_text(encoding="utf-8")).get("masters", {})
         except (OSError, ValueError, TypeError):
             qc_by_master = {}
-    for index in range(1, 5):
+    # The public contract is exactly the three deterministic Master seeds.
+    # Keep this derived list coupled to MASTER_SEEDS so an old fourth asset can
+    # never leak into the Web or Android contracts.
+    for index in range(1, len(MASTER_SEEDS) + 1):
         master_id = f"master_{index}"
         path = _asset_path(job.job_id, "masters", f"{master_id}.png")
         if path.is_file():
@@ -1718,9 +1721,17 @@ def api():
         context: tuple[BffIdentity, str, str] = Depends(bff_operation_context),
     ):
         identity, _, _ = context
+        started_at = time.monotonic()
         try:
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
+            structured_event(
+                "configuration_update_started",
+                environment=ENVIRONMENT.value,
+                puleiroTraceId=_trace_id_for_record(job),
+                attemptId=identity.attempt_id,
+                jobId=job_id,
+            )
             choices = validate_pose_choices(request.pose_choices) if request.pose_choices is not None else None
             updated = job_control.remote(
                 JobOperation.UPDATE_CONFIGURATION.value,
@@ -1732,9 +1743,32 @@ def api():
             )
             _raise_guard_error(updated)
             current = _deserialize(dict(updated["job"]))
-            _refresh_result_assets(current)
-            return public_job(current, _master_references(current), _pose_references(current))
+            # The approved Master assets are immutable while the user edits
+            # configuration. Reloading the shared Volume here made every name
+            # or pose edit wait for storage synchronization. A cold API
+            # container already mounts the latest committed Volume state; the
+            # asset-serving endpoints retain their explicit reload safeguard.
+            response = public_job(current, _master_references(current), _pose_references(current))
+            structured_event(
+                "configuration_update_completed",
+                environment=ENVIRONMENT.value,
+                result="updated",
+                durationMs=_elapsed_ms(started_at),
+                puleiroTraceId=_trace_id_for_record(current),
+                attemptId=identity.attempt_id,
+                jobId=job_id,
+            )
+            return response
         except (DomainError, ValueError) as error:
+            structured_event(
+                "configuration_update_failed",
+                environment=ENVIRONMENT.value,
+                result="failed",
+                durationMs=_elapsed_ms(started_at),
+                attemptId=identity.attempt_id,
+                jobId=job_id,
+                safeErrorCode=getattr(error, "code", "INVALID_REQUEST"),
+            )
             raise _api_error(error) from error
 
     @service.get("/v2/mascot/jobs/{job_id}/masters/{master_id}")
@@ -1986,7 +2020,7 @@ def api():
     @service.get("/v1/mascot/jobs/{job_id}/masters/{master_id}")
     async def download_master(job_id: str, master_id: str, user_id: str = Depends(secure_user)):
         from fastapi.responses import FileResponse
-        if master_id not in {"master_1", "master_2", "master_3", "master_4"}:
+        if master_id not in {f"master_{index}" for index in range(1, len(MASTER_SEEDS) + 1)}:
             raise _api_error(JobNotFound("Master was not found."))
         job = _get_job(job_id)
         _ensure_owner(job, user_id)

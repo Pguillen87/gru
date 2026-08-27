@@ -34,6 +34,17 @@ def test_master_outputs_ready_requires_every_nonempty_file(tmp_path, monkeypatch
     assert not app._master_outputs_ready(job)
 
 
+def test_public_master_references_are_limited_to_the_three_seed_contract(tmp_path, monkeypatch):
+    monkeypatch.setattr(app, "ASSET_ROOT", str(tmp_path))
+    job = _job(JobState.AWAITING_MASTER_APPROVAL)
+    target = tmp_path / "masters" / job.job_id
+    target.mkdir(parents=True)
+    for index in range(1, 5):
+        (target / f"master_{index}.png").write_bytes(b"png")
+
+    assert [item["id"] for item in app._master_references(job)] == ["master_1", "master_2", "master_3"]
+
+
 def test_reconciliation_waits_before_checking_worker_result():
     assert not app._should_reconcile_master(_job(age_seconds=14))
     assert app._should_reconcile_master(_job(age_seconds=16))
