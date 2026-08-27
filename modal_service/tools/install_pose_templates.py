@@ -24,11 +24,22 @@ def main() -> None:
         default=os.getenv("GRU_MASCOT_RESOURCE_PREFIX", "gru-mascot"),
         help="Modal resource prefix. The staging deploy uses gru-mascot-v2-staging.",
     )
+    parser.add_argument(
+        "--environment",
+        default=os.getenv("GRU_MASCOT_MODAL_ENVIRONMENT", ""),
+        help="Required Modal environment name. It must be explicit to avoid the CLI default environment.",
+    )
     args = parser.parse_args()
     package = validate_template_package(args.package)
     if args.resource_prefix == "gru-mascot":
         raise SystemExit("Refusing the production resource prefix. Pass an explicit non-production prefix.")
-    volume = modal.Volume.from_name(f"{args.resource_prefix}-assets", create_if_missing=False)
+    if not args.environment or args.environment == "main":
+        raise SystemExit("Refusing an implicit or production Modal environment.")
+    volume = modal.Volume.from_name(
+        f"{args.resource_prefix}-assets",
+        environment_name=args.environment,
+        create_if_missing=False,
+    )
     remote_root = f"pose_templates/versions/{package.version}"
     with volume.batch_upload(force=True) as batch:
         for file in package.files:

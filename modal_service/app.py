@@ -319,6 +319,14 @@ def _active_pose_template_version() -> str | None:
         return None
 
 
+def _reload_template_assets() -> None:
+    """Make an administrator-installed package visible to the long-lived API."""
+    try:
+        assets.reload()
+    except Exception as error:  # A health probe must remain non-sensitive and fail closed.
+        logging.info("pose_template_volume_reload_failed type=%s", type(error).__name__)
+
+
 def _promote_private_directory(staging: Path, target: Path) -> None:
     """Replace a result set without exposing a partially written directory."""
     backup = target.with_name(f".{target.name}.previous")
@@ -1563,6 +1571,7 @@ def api():
 
     @service.get("/health")
     async def health() -> dict[str, object]:
+        _reload_template_assets()
         return {
             "service": APP_NAME,
             "environment": ENVIRONMENT.value,
@@ -1580,6 +1589,7 @@ def api():
     @service.get("/v2/mascot/capabilities")
     async def capabilities_v2(identity: BffIdentity = Depends(verified_bff_identity)) -> dict[str, object]:
         del identity
+        _reload_template_assets()
         templates_ready = _templates_installed()
         pose_reasons: list[str] = []
         if not POSE_GENERATION_ENABLED:
@@ -1887,6 +1897,7 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
+            _reload_template_assets()
             if not POSE_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
                 raise GuardRejected("POSE_GENERATION_DISABLED", "Pose generation is disabled.")
             if not _templates_installed():

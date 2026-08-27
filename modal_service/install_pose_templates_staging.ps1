@@ -5,7 +5,9 @@ $env:PYTHONUTF8 = "1"
 # the staging Volume only; the installer rejects the production prefix.
 $env:GRU_MASCOT_ENV = "staging"
 $env:GRU_MASCOT_RESOURCE_PREFIX = "gru-mascot-v2-staging"
+$env:GRU_MASCOT_MODAL_ENVIRONMENT = "gru-mascot-v2-staging"
 
-python -m modal_service.tools.install_pose_templates `
+py -3.12 -m modal_service.tools.install_pose_templates `
   modal_service/pose_templates/web-poses-v1 `
-  --resource-prefix "gru-mascot-v2-staging"
+  --resource-prefix "gru-mascot-v2-staging" `
+  --environment "gru-mascot-v2-staging"

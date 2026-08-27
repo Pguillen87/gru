@@ -44,4 +44,5 @@ def test_template_installer_is_explicitly_staging_scoped_and_refuses_production_
     staging = Path("modal_service/install_pose_templates_staging.ps1").read_text(encoding="utf-8")
 
     assert 'args.resource_prefix == "gru-mascot"' in installer
+    assert 'args.environment == "main"' in installer
     assert '"gru-mascot-v2-staging"' in staging
