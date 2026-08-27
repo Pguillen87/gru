@@ -1572,6 +1572,7 @@ def api():
     @service.get("/health")
     async def health() -> dict[str, object]:
         _reload_template_assets()
+        templates_ready = _templates_installed()
         return {
             "service": APP_NAME,
             "environment": ENVIRONMENT.value,
@@ -1579,8 +1580,10 @@ def api():
             "registration_enabled": REGISTRATION_ENABLED,
             "master_generation_enabled": MASTER_GENERATION_ENABLED,
             "pose_generation_enabled": POSE_GENERATION_ENABLED,
-            "templates_installed": _templates_installed(),
+            "templates_installed": templates_ready,
             "template_version": _active_pose_template_version(),
+            "pose_preflight_ready": templates_ready,
+            "pose_operational_ready": templates_ready and POSE_GENERATION_ENABLED and GPU_GENERATION_ENABLED,
             "model_configured": True,
             "pose_catalog_size": len(POSE_OPTIONS),
             "pose_catalog_version": POSE_TEMPLATE_VERSION,

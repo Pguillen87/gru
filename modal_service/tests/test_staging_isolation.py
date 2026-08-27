@@ -17,6 +17,8 @@ def test_cost_bearing_staging_flags_still_fail_closed():
     source = Path("modal_service/app.py").read_text(encoding="utf-8")
     assert "MASTER_GENERATION_ENABLED = feature_enabled(os.getenv(\"MASTER_GENERATION_ENABLED\"))" in source
     assert "POSE_GENERATION_ENABLED = feature_enabled(os.getenv(\"POSE_GENERATION_ENABLED\"))" in source
+    assert '"pose_preflight_ready": templates_ready' in source
+    assert '"pose_operational_ready": templates_ready and POSE_GENERATION_ENABLED and GPU_GENERATION_ENABLED' in source
 
 
 def test_staging_deploy_has_explicit_fail_closed_master_and_poses_only_modes():
