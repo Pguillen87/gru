@@ -49,6 +49,12 @@ class DomainError(ValueError):
     """A safe error which may be shown to the integration client."""
 
 
+class PoseAlphaQualityError(DomainError):
+    """A deterministic pose derivative failed its mandatory alpha quality gate."""
+
+    code = "POSE_ALPHA_QC_FAILED"
+
+
 class JobNotFound(DomainError):
     code = "JOB_NOT_FOUND"
 

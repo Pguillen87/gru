@@ -40,7 +40,7 @@ from modal_service.bff_auth import BffAuthenticationRejected, BffIdentity, consu
 from modal_service.config import Environment, feature_enabled, generation_enabled, limits_for
 from modal_service.coordinator import JobCoordinator, JobOperation
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
-from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState
+from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, PoseAlphaQualityError
 from modal_service.inference_observability import InferenceObserver, trace_id_for_job
 from modal_service.model_cache import (
     ModelCacheNotReady,
@@ -594,6 +594,7 @@ def job_control(
     operation_fingerprint: str = "",
     correlation_id: str = "",
     request_id: str = "",
+    error_code: str = "",
 ) -> dict[str, object]:
     try:
         coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
@@ -653,7 +654,7 @@ def job_control(
             assets.reload()
             job, changed = coordinator.commit_pose_outputs(job_id, _verify_pose_outputs)
         elif command is JobOperation.FAIL_POSES:
-            job, changed = coordinator.fail_pose_generation(job_id, "POSE_GENERATION_FAILED")
+            job, changed = coordinator.fail_pose_generation(job_id, error_code or "POSE_GENERATION_FAILED")
         elif command is JobOperation.CANCEL:
             job, changed = coordinator.cancel(job_id, user_id)
         elif command is JobOperation.DELETE:
@@ -1017,18 +1018,22 @@ class QwenMasterWorker:
                 requestId=job.pose_request_id,
                 jobId=job_id,
                 masterId=job.master_id,
-                safeErrorCode="POSE_GENERATION_FAILED",
+                safeErrorCode=getattr(error, "code", "POSE_GENERATION_FAILED"),
             )
             observer.event(
                 "pose_job_failed",
                 {
-                    "error_code": "POSE_GENERATION_FAILED",
+                    "error_code": getattr(error, "code", "POSE_GENERATION_FAILED"),
                     "error_type": type(error).__name__[:96],
                     "total_worker_ms": observer.elapsed_ms(worker_started),
                     "outcome": "failure",
                 },
             )
-            failed = job_control.remote(JobOperation.FAIL_POSES.value, job_id)
+            failed = job_control.remote(
+                JobOperation.FAIL_POSES.value,
+                job_id,
+                error_code=getattr(error, "code", "POSE_GENERATION_FAILED"),
+            )
             _raise_guard_error(failed)
             if bool(failed["changed"]):
                 raise error
@@ -1281,7 +1286,7 @@ def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
         if result.get("status") != "passed":
             shutil.rmtree(staging, ignore_errors=True)
             assets.commit()
-            raise DomainError("Pose alpha quality verification failed.")
+            raise PoseAlphaQualityError("Pose alpha quality verification failed.")
         (staging / filename).write_bytes(content)
         poses.append(
             {

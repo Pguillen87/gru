@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw
 
 from modal_service import app
 from modal_service.catalog import DEFAULT_POSE_CHOICES, POSE_OPTIONS
-from modal_service.domain import DomainError, JobRecord
+from modal_service.domain import DomainError, JobRecord, PoseAlphaQualityError
 
 
 class _Volume:
@@ -80,9 +80,10 @@ def test_pose_qc_failure_keeps_previous_set_and_does_not_promote_a_partial_resul
     outputs = _outputs()
     outputs[next(iter(outputs))] = _unrecoverable_pose()
 
-    with pytest.raises(DomainError, match="alpha quality"):
+    with pytest.raises(PoseAlphaQualityError, match="alpha quality") as error:
         app._persist_pose_outputs(job, outputs)
 
+    assert error.value.code == "POSE_ALPHA_QC_FAILED"
     assert (existing / "preserved.txt").read_text(encoding="utf-8") == "prior set"
     assert not (existing / "pose_01.png").exists()
     assert all((tmp_path / "poses_raw" / job.job_id / f"{option_id}.png").is_file() for option_id in outputs)
