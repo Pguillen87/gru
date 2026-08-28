@@ -80,6 +80,11 @@ LIGHTNING_MODEL_ID = "lightx2v/Qwen-Image-Edit-2511-Lightning"
 LIGHTNING_MODEL_REVISION = "d74eba145674fd7e31b949324e148e21e7118abd"
 LIGHTNING_WEIGHT = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors"
 MASTER_SEEDS = (0, 1, 2)
+# QwenImageEditPlusPipeline ignores negative_prompt unless true_cfg_scale > 1.
+# Keep the value deliberately close to one to activate CFG without making it
+# the dominant source of pose composition; the positive prompt and QC gates
+# remain the primary controls.
+POSE_TRUE_CFG_SCALE = 1.1
 SCHEDULER_CONFIG = {
     "base_image_seq_len": 256,
     "base_shift": 1.0986122886681098,
@@ -1319,7 +1324,7 @@ def _generate_qwen_poses(
                     image=[master, pose_reference],
                     prompt=build_pose_prompt(job.subject_identity, role, option),
                     negative_prompt=build_pose_negative_prompt(job.subject_identity, role),
-                    true_cfg_scale=1.0,
+                    true_cfg_scale=POSE_TRUE_CFG_SCALE,
                     generator=torch.Generator("cuda").manual_seed(option_seeds[option.option_id]),
                     num_inference_steps=4,
                 ).images[0]

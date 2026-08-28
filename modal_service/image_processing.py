@@ -17,6 +17,7 @@ MIN_FOREGROUND_RATIO = 0.005
 ALPHA_COMPONENT_THRESHOLD = 16
 MAX_DISCONNECTED_NOISE_RATIO = 0.0001
 MAX_HALO_RISK_RATIO = 0.02
+MAX_INTERNAL_BACKGROUND_COMPONENT_PIXELS = 12
 POSE_SET_VISUAL_QC_VERSION = "pose-set-visual-v2"
 MAX_POSE_SCALE_DELTA = 0.12
 MAX_POSE_WIDTH_DELTA = 0.12
@@ -38,7 +39,7 @@ def remove_connected_flat_background(content: bytes, threshold: int = 24, *, cro
     else:
         _remove_flat_background_from_seeds(image, threshold)
     _remove_disconnected_alpha_noise(image)
-    _remove_editorial_background_islands(image)
+    _remove_internal_editorial_background(image)
     if crop:
         image = _crop_transparent_margin(image)
     output = BytesIO()
@@ -112,6 +113,7 @@ def _is_editorial_pose_background(pixel: tuple[int, int, int, int]) -> bool:
         and red >= 220
         and green >= 210
         and blue >= 185
+        and green - blue >= 12
         and red - green <= 50
         and green - blue <= 45
     )
@@ -138,32 +140,89 @@ def _remove_disconnected_alpha_noise(image: Image.Image) -> None:
             pixels[x, y] = (0, 0, 0, 0)
 
 
-def _remove_editorial_background_islands(image: Image.Image) -> None:
-    """Remove small detached remnants of the editorial backdrop.
+def _remove_internal_editorial_background(image: Image.Image) -> None:
+    """Remove enclosed editorial backdrop, including gaps inside a silhouette.
 
-    The model occasionally leaves cream floor flecks near shoes.  They are not
-    connected to the subject and are distinct from intentional props such as a
-    table or chair, which use non-editorial colours or join the main component.
+    Border flooding cannot reach the editorial colour between legs or an arm
+    and torso. We remove only non-border-connected components matching the
+    warm editorial palette; a chroma constraint excludes paper and subjects.
     """
-    alpha = image.getchannel("A")
-    pixels = image.load()
-    for size, component in _alpha_components_with_pixels(alpha, image.width, image.height, retain_limit=1024):
-        if size > 1024 or component is None:
-            continue
-        average = tuple(
-            sum(pixels[index % image.width, index // image.width][channel] for index in component) // len(component)
-            for channel in range(3)
-        )
-        if not _is_editorial_background_residue(average):
-            continue
-        for index in component:
-            x, y = index % image.width, index // image.width
-            pixels[x, y] = (0, 0, 0, 0)
+    for start, _, touches_border in _editorial_background_components(image):
+        if not touches_border:
+            _clear_editorial_component(image, start)
 
 
 def _is_editorial_background_residue(pixel: tuple[int, int, int]) -> bool:
     red, green, blue = pixel
-    return red >= 210 and green >= 200 and blue >= 165 and red - green <= 45 and green - blue <= 55
+    return (
+        # Includes the slightly darker floor/tapete residue emitted by the
+        # template, while excluding white paper (low chroma) and skin (high
+        # red-green separation).
+        red >= 180
+        and green >= 150
+        and blue >= 100
+        and red >= green >= blue
+        and 0 <= red - green <= 45
+        and 12 <= green - blue <= 70
+    )
+
+
+def _editorial_background_components(image: Image.Image) -> list[tuple[int, int, bool]]:
+    """Return editorial-colour components as ``(start, size, touches_border)``."""
+    width, height = image.size
+    pixels = image.load()
+    visited = bytearray(width * height)
+    components: list[tuple[int, int, bool]] = []
+    for start in range(width * height):
+        if visited[start]:
+            continue
+        x, y = start % width, start // width
+        red, green, blue, alpha = pixels[x, y]
+        if alpha == 0 or not _is_editorial_background_residue((red, green, blue)):
+            continue
+        visited[start] = 1
+        queue: deque[int] = deque([start])
+        size = 0
+        touches_border = False
+        while queue:
+            index = queue.popleft()
+            current_x, current_y = index % width, index // width
+            size += 1
+            touches_border |= current_x in (0, width - 1) or current_y in (0, height - 1)
+            for next_x, next_y in ((current_x - 1, current_y), (current_x + 1, current_y), (current_x, current_y - 1), (current_x, current_y + 1)):
+                if not (0 <= next_x < width and 0 <= next_y < height):
+                    continue
+                next_index = next_y * width + next_x
+                if visited[next_index]:
+                    continue
+                next_red, next_green, next_blue, next_alpha = pixels[next_x, next_y]
+                if next_alpha == 0 or not _is_editorial_background_residue((next_red, next_green, next_blue)):
+                    continue
+                visited[next_index] = 1
+                queue.append(next_index)
+        components.append((start, size, touches_border))
+    return components
+
+
+def _clear_editorial_component(image: Image.Image, start: int) -> None:
+    """Clear a known editorial component without thresholding subject colours."""
+    width, height = image.size
+    pixels = image.load()
+    queue: deque[int] = deque([start])
+    visited: set[int] = set()
+    while queue:
+        index = queue.popleft()
+        if index in visited:
+            continue
+        visited.add(index)
+        x, y = index % width, index // width
+        red, green, blue, alpha = pixels[x, y]
+        if alpha == 0 or not _is_editorial_background_residue((red, green, blue)):
+            continue
+        pixels[x, y] = (0, 0, 0, 0)
+        for next_x, next_y in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= next_x < width and 0 <= next_y < height:
+                queue.append(next_y * width + next_x)
 
 
 def normalize_pose_presentation(content: bytes) -> bytes:
@@ -368,6 +427,11 @@ def transparent_asset_qc(content: bytes, *, asset_kind: str) -> dict[str, object
     noise_pixels = sum(component for component in components[1:] if component <= 12)
     foreground_ratio = (components[0] if components else 0) / total
     halo_risk_ratio = _halo_risk_ratio(image, alpha)
+    internal_components = [
+        size
+        for _, size, touches_border in _editorial_background_components(image)
+        if not touches_border and size > MAX_INTERNAL_BACKGROUND_COMPONENT_PIXELS
+    ]
     reasons: list[str] = []
     if source_format != "PNG" or source_mode != "RGBA":
         reasons.append("RGBA_PNG_REQUIRED")
@@ -381,6 +445,8 @@ def transparent_asset_qc(content: bytes, *, asset_kind: str) -> dict[str, object
         reasons.append("DISCONNECTED_NOISE")
     if halo_risk_ratio > MAX_HALO_RISK_RATIO:
         reasons.append("HALO_RISK")
+    if internal_components:
+        reasons.append("INTERNAL_BACKGROUND_RESIDUE")
     return {
         "status": "passed" if not reasons else "failed",
         "safe_reasons": reasons,
@@ -398,6 +464,9 @@ def transparent_asset_qc(content: bytes, *, asset_kind: str) -> dict[str, object
         "foreground_ratio": round(foreground_ratio, 6),
         "disconnected_noise_pixels": noise_pixels,
         "halo_risk_ratio": round(halo_risk_ratio, 6),
+        "internal_background_components": len(internal_components),
+        "internal_background_area": sum(internal_components),
+        "largest_internal_background_component": max(internal_components, default=0),
         "width": width,
         "height": height,
     }

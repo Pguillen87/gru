@@ -160,6 +160,67 @@ def test_editorial_pose_background_removal_drops_detached_cream_floor_flecks():
     assert qc["component_count"] == 1
 
 
+def _editorial_pose_with_enclosed_background():
+    image = Image.new("RGBA", (128, 128), (253, 243, 218, 255))
+    drawer = ImageDraw.Draw(image)
+    drawer.rectangle((38, 20, 90, 64), fill=(56, 82, 121, 255))
+    drawer.rectangle((42, 60, 58, 110), fill=(56, 82, 121, 255))
+    drawer.rectangle((70, 60, 86, 110), fill=(56, 82, 121, 255))
+    drawer.rectangle((18, 44, 34, 68), fill=(252, 250, 245, 255))
+    drawer.rectangle((92, 42, 108, 74), fill=(216, 158, 128, 255))
+    drawer.ellipse((30, 108, 100, 120), fill=(218, 198, 161, 255))
+    source = BytesIO()
+    image.save(source, format="PNG")
+    return source.getvalue()
+
+
+def test_editorial_background_inside_legs_and_at_feet_is_removed_but_paper_skin_and_clothing_stay():
+    normalized = remove_connected_flat_background(_editorial_pose_with_enclosed_background(), crop=False)
+    image = Image.open(BytesIO(normalized)).convert("RGBA")
+
+    assert image.getpixel((64, 82))[3] == 0
+    assert image.getpixel((64, 116))[3] == 0
+    assert image.getpixel((26, 56))[:3] == (252, 250, 245)
+    assert image.getpixel((100, 58))[:3] == (216, 158, 128)
+    assert image.getpixel((50, 42))[:3] == (56, 82, 121)
+    assert pose_transparency_qc(normalized)["status"] == "passed"
+
+
+def test_qc_rejects_clean_outer_alpha_when_internal_editorial_background_remains():
+    image = Image.new("RGBA", (96, 96), (0, 0, 0, 0))
+    drawer = ImageDraw.Draw(image)
+    drawer.rectangle((24, 18, 72, 76), fill=(56, 82, 121, 255))
+    drawer.rectangle((43, 42, 53, 67), fill=(253, 243, 218, 255))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    rejected = pose_transparency_qc(source.getvalue())
+    corrected = pose_transparency_qc(remove_connected_flat_background(source.getvalue(), crop=False))
+
+    assert rejected["status"] == "failed"
+    assert "INTERNAL_BACKGROUND_RESIDUE" in rejected["safe_reasons"]
+    assert rejected["internal_background_components"] == 1
+    assert rejected["internal_background_area"] > 12
+    assert rejected["largest_internal_background_component"] > 12
+    assert corrected["status"] == "passed"
+    assert corrected["internal_background_components"] == 0
+
+
+def test_editorial_background_between_arm_and_torso_is_removed():
+    image = Image.new("RGBA", (96, 96), (253, 243, 218, 255))
+    drawer = ImageDraw.Draw(image)
+    drawer.rectangle((30, 20, 66, 74), fill=(56, 82, 121, 255))
+    drawer.rectangle((18, 34, 32, 62), fill=(216, 158, 128, 255))
+    drawer.rectangle((34, 34, 40, 62), fill=(253, 243, 218, 255))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    normalized = Image.open(BytesIO(remove_connected_flat_background(source.getvalue(), crop=False))).convert("RGBA")
+
+    assert normalized.getpixel((36, 48))[3] == 0
+    assert normalized.getpixel((24, 48))[:3] == (216, 158, 128)
+
+
 def test_alpha_qc_rejects_a_solid_master_without_mutating_it():
     image = Image.new("RGBA", (32, 32), (80, 45, 34, 255))
     source = BytesIO()

@@ -10,6 +10,7 @@ from modal_service.catalog import (
     pose_option,
     validate_pose_choices,
 )
+from modal_service.app import POSE_TRUE_CFG_SCALE
 from modal_service.domain import JobRecord
 
 
@@ -48,6 +49,10 @@ def test_transcribing_prompt_requires_a_standing_full_body_with_only_a_small_pro
     assert "small handheld notepad" in prompt
     assert "do not add a desk, chair, table, workstation" in prompt
     assert "seated, sitting, chair, desk, table" in negative
+
+
+def test_pose_negative_prompt_is_backed_by_enabled_true_cfg():
+    assert POSE_TRUE_CFG_SCALE > 1.0
 
 
 def test_normal_and_listening_keep_their_existing_role_scope():
