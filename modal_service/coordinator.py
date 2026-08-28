@@ -150,6 +150,19 @@ class JobCoordinator:
         self.ensure_owner(job, user_id)
         if job.state not in {JobState.REGISTERED, JobState.READY_FOR_GENERATION} or job.generation_reserved:
             return False
+        self._reserve_generation_budget(user_id)
+        job.generation_reserved = True
+        job.transition_to(JobState.VALIDATING_INPUT)
+        self.save(job)
+        return True
+
+    def _reserve_generation_budget(self, user_id: str) -> None:
+        """Reserve one GPU operation before a worker can be queued.
+
+        Master and pose work share the same user and staging budget: either
+        operation consumes a real GPU window and must be blocked before state
+        transition when a cap is exhausted.
+        """
         generation_key = f"user-generations:{self.day_key}:{user_id}"
         next_user_generations = require_job_quota(
             int(self.usage.get(generation_key, 0)), self.limits.generations_per_user_per_day
@@ -166,10 +179,6 @@ class JobCoordinator:
         self.usage[global_key] = next_global
         self.usage[user_key] = next_user
         self.usage[generation_key] = next_user_generations
-        job.generation_reserved = True
-        job.transition_to(JobState.VALIDATING_INPUT)
-        self.save(job)
-        return True
 
     def transition_if_active(
         self,
@@ -306,6 +315,8 @@ class JobCoordinator:
         if not job.master_id:
             raise DomainError("An approved Master is required for pose generation.")
 
+        self._reserve_generation_budget(user_id)
+
         job.pose_choices = selected_poses
         job.pose_operation_id = operation_id
         job.pose_operation_fingerprint = operation_fingerprint
@@ -316,6 +327,7 @@ class JobCoordinator:
         job.start_pose_generation()
         job.pose_operation_created_at = job.updated_at
         job.pose_gpu_call_id = "reserved"
+        job.pose_generation_reserved = True
         self.save(job)
         return job, True, True
 

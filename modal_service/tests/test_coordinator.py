@@ -123,7 +123,7 @@ def test_pose_worker_call_is_reserved_once_and_then_recorded():
 
 
 def test_pose_operation_is_created_once_and_replayed_without_second_worker():
-    service, _ = coordinator()
+    service, usage = coordinator()
     job, _ = service.register("uid-a", "key-x", "original/hash")
     service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
     service.jobs[job.job_id]["master_id"] = "master_1"
@@ -144,6 +144,34 @@ def test_pose_operation_is_created_once_and_replayed_without_second_worker():
     assert not replay_created and not replay_reserved
     assert replay.pose_operation_id == first.pose_operation_id == "op-1"
     assert replay.pose_gpu_call_id == "reserved"
+    assert replay.pose_generation_reserved
+    assert usage["user-generations:2026-08-03:uid-a"] == 1
+    assert usage["global-cost:2026-08-03"] == service.limits.estimated_generation_cost_usd
+
+
+def test_pose_generation_cost_is_checked_before_a_worker_is_reserved():
+    service, usage = coordinator()
+    job, _ = service.register("uid-a", "key-x", "original/hash")
+    job.state = JobState.CONSISTENCY_TEST
+    job.master_id = "master_1"
+    service.save(job)
+    usage["global-cost:2026-08-03"] = service.limits.daily_cost_cap_usd
+
+    with pytest.raises(CostLimitExceeded):
+        service.enqueue_pose_generation(
+            job.job_id,
+            "uid-a",
+            {"normal": "normal_relaxed", "listening": "listening_ready", "transcribing": "transcribing_notes"},
+            "op-1",
+            "fingerprint-1",
+            "trace-1",
+            "request-1",
+        )
+
+    unchanged = service.get(job.job_id)
+    assert unchanged.state is JobState.CONSISTENCY_TEST
+    assert unchanged.pose_operation_id is None
+    assert unchanged.pose_gpu_call_id is None
 
 
 def test_pose_operation_rejects_owner_and_choice_changes_after_reservation():

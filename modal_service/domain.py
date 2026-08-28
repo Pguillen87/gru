@@ -115,6 +115,7 @@ class JobRecord:
     attempts: int = 0
     error_code: str | None = None
     generation_reserved: bool = False
+    pose_generation_reserved: bool = False
     gpu_call_id: str | None = None
     pose_gpu_call_id: str | None = None
     pose_operation_id: str | None = None
