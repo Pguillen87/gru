@@ -26,6 +26,7 @@ def public_job(
     job: JobRecord,
     masters: list[dict[str, object]] | None = None,
     poses: list[dict[str, object]] | None = None,
+    pose_set_qc: dict[str, object] | None = None,
 ) -> dict[str, object]:
     status = PUBLIC_STATUS_BY_STATE[job.state]
     payload: dict[str, object] = {
@@ -47,6 +48,12 @@ def public_job(
         payload["masters"] = masters or []
     if status == "awaiting_set_approval":
         payload["poses"] = poses or []
+        payload["poseSetQc"] = pose_set_qc or {
+            "status": "failed",
+            "code": "VISUAL_POSE_CONSISTENCY_UNAVAILABLE",
+            "version": "pose-set-visual-v1",
+            "safe_reasons": ["POSE_SET_QC_UNAVAILABLE"],
+        }
     if job.master_id:
         payload["approvedMasterId"] = job.master_id
     if job.error_code:

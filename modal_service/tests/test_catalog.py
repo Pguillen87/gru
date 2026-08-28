@@ -34,6 +34,8 @@ def test_pose_prompt_keeps_a_human_human_and_uses_only_the_master():
     assert "subject category" in prompt
     assert "no animal ears" in prompt
     assert "only the approved master" in prompt
+    assert "full body visible from head to both feet" in prompt
+    assert "never make a bust, close-up" in prompt
 
 
 def test_new_jobs_record_the_current_master_prompt_version():

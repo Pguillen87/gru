@@ -17,9 +17,14 @@ MIN_FOREGROUND_RATIO = 0.005
 ALPHA_COMPONENT_THRESHOLD = 16
 MAX_DISCONNECTED_NOISE_RATIO = 0.0001
 MAX_HALO_RISK_RATIO = 0.02
+POSE_SET_VISUAL_QC_VERSION = "pose-set-visual-v1"
+MAX_POSE_SCALE_DELTA = 0.12
+MAX_POSE_CENTER_DELTA = 0.08
+MAX_POSE_FOOT_BASE_DELTA = 0.06
+MIN_POSE_FRAME_MARGIN = 0.02
 
 
-def remove_connected_flat_background(content: bytes, threshold: int = 24) -> bytes:
+def remove_connected_flat_background(content: bytes, threshold: int = 24, *, crop: bool = True) -> bytes:
     """Make a border-connected backdrop transparent without touching the subject."""
     with Image.open(BytesIO(content)) as source:
         image = source.convert("RGBA")
@@ -29,7 +34,8 @@ def remove_connected_flat_background(content: bytes, threshold: int = 24) -> byt
         _remove_flat_background_from_seeds(image, threshold)
     _remove_disconnected_alpha_noise(image)
     _remove_editorial_background_islands(image)
-    image = _crop_transparent_margin(image)
+    if crop:
+        image = _crop_transparent_margin(image)
     output = BytesIO()
     image.save(output, format="PNG", optimize=True)
     return output.getvalue()
@@ -226,6 +232,64 @@ def master_transparency_qc(content: bytes) -> dict[str, object]:
 def pose_transparency_qc(content: bytes) -> dict[str, object]:
     """Validate a derived pose before it is promoted to the private set."""
     return transparent_asset_qc(content, asset_kind="pose")
+
+
+def pose_set_visual_consistency_qc(poses: list[dict[str, object]]) -> dict[str, object]:
+    """Fail closed on deterministic framing drift across the three pose assets.
+
+    This gate deliberately does not try to score artistic quality. It rejects
+    measurable regressions that make one pose look like a different camera:
+    canvas drift, crop risk, scale drift, horizontal displacement and an
+    inconsistent foot baseline. Semantic review remains a separate human gate.
+    """
+    required_roles = {"normal", "listening", "transcribing"}
+    by_role = {str(pose.get("runtimeRole")): pose for pose in poses}
+    reasons: list[str] = []
+    if len(poses) != 3 or set(by_role) != required_roles:
+        reasons.append("POSE_SET_ROLES_INVALID")
+    metrics: list[dict[str, float]] = []
+    dimensions: set[tuple[int, int]] = set()
+    for role in sorted(required_roles):
+        pose = by_role.get(role)
+        qc = pose.get("qc") if isinstance(pose, dict) else None
+        if not isinstance(qc, dict) or qc.get("status") != "passed":
+            reasons.append("POSE_ALPHA_QC_REQUIRED")
+            continue
+        try:
+            width = int(qc["width"])
+            height = int(qc["height"])
+            left, top, right, bottom = (float(value) for value in qc["bounding_box"])
+        except (KeyError, TypeError, ValueError):
+            reasons.append("POSE_FRAME_METADATA_INVALID")
+            continue
+        if width < 1 or height < 1 or right <= left or bottom <= top:
+            reasons.append("POSE_FRAME_METADATA_INVALID")
+            continue
+        dimensions.add((width, height))
+        metrics.append({
+            "height": (bottom - top) / height,
+            "center_x": ((left + right) / 2) / width,
+            "foot_base": bottom / height,
+            "top_margin": top / height,
+            "bottom_margin": (height - bottom) / height,
+        })
+    if len(dimensions) > 1:
+        reasons.append("CANVAS_DIMENSIONS_MISMATCH")
+    if len(metrics) == 3:
+        if any(metric["top_margin"] < MIN_POSE_FRAME_MARGIN or metric["bottom_margin"] < MIN_POSE_FRAME_MARGIN for metric in metrics):
+            reasons.append("FRAME_CROP_RISK")
+        if max(metric["height"] for metric in metrics) - min(metric["height"] for metric in metrics) > MAX_POSE_SCALE_DELTA:
+            reasons.append("SCALE_MISMATCH")
+        if max(metric["center_x"] for metric in metrics) - min(metric["center_x"] for metric in metrics) > MAX_POSE_CENTER_DELTA:
+            reasons.append("CENTER_OFFSET_MISMATCH")
+        if max(metric["foot_base"] for metric in metrics) - min(metric["foot_base"] for metric in metrics) > MAX_POSE_FOOT_BASE_DELTA:
+            reasons.append("FOOT_BASE_MISMATCH")
+    return {
+        "status": "passed" if not reasons else "failed",
+        "code": "VISUAL_POSE_CONSISTENCY_FAILED" if reasons else "VISUAL_POSE_CONSISTENCY_PASSED",
+        "version": POSE_SET_VISUAL_QC_VERSION,
+        "safe_reasons": sorted(set(reasons)),
+    }
 
 
 def transparent_asset_qc(content: bytes, *, asset_kind: str) -> dict[str, object]:

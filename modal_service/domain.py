@@ -55,6 +55,12 @@ class PoseAlphaQualityError(DomainError):
     code = "POSE_ALPHA_QC_FAILED"
 
 
+class PoseVisualConsistencyError(DomainError):
+    """A pose set passed alpha QC but failed deterministic framing consistency."""
+
+    code = "VISUAL_POSE_CONSISTENCY_FAILED"
+
+
 class JobNotFound(DomainError):
     code = "JOB_NOT_FOUND"
 

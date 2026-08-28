@@ -33,12 +33,16 @@ def test_registered_job_is_public_and_never_claims_generation_scheduled():
 
 
 def test_completed_modal_step_is_not_publicly_ready():
+    qc = {"status": "passed", "safe_reasons": [], "sha256": "a" * 64, "width": 1024, "height": 1024, "bounding_box": [80, 80, 944, 944]}
     payload = public_job(
         record(JobState.COMPLETED),
-        poses=[{"id": "pose_01", "role": "normal", "optionId": "normal_attentive", "label": "Pronto", "sha256": "a" * 64}],
+        poses=[{"id": "pose_01", "role": "normal", "optionId": "normal_attentive", "label": "Pronto", "sha256": "a" * 64, "qc": qc}],
+        pose_set_qc={"status": "passed", "code": "VISUAL_POSE_CONSISTENCY_PASSED", "version": "pose-set-visual-v1", "safe_reasons": []},
     )
     assert payload["status"] == "awaiting_set_approval"
     assert payload["poses"][0]["role"] == "normal"
+    assert payload["poses"][0]["qc"] == qc
+    assert payload["poseSetQc"]["status"] == "passed"
 
 
 def test_public_states_needed_for_no_gpu_simulation_are_stable():

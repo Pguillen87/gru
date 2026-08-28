@@ -40,7 +40,7 @@ from modal_service.bff_auth import BffAuthenticationRejected, BffIdentity, consu
 from modal_service.config import Environment, feature_enabled, generation_enabled, limits_for
 from modal_service.coordinator import JobCoordinator, JobOperation
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
-from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, PoseAlphaQualityError
+from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, PoseAlphaQualityError, PoseVisualConsistencyError
 from modal_service.inference_observability import InferenceObserver, trace_id_for_job
 from modal_service.model_cache import (
     ModelCacheNotReady,
@@ -413,12 +413,12 @@ def _master_references(job: JobRecord) -> list[dict[str, object]]:
     return references
 
 
-def _pose_references(job: JobRecord) -> list[dict[str, str]]:
+def _pose_references(job: JobRecord) -> list[dict[str, object]]:
     manifest_path = _asset_path(job.job_id, "poses", "manifest.json")
     if job.state is not JobState.COMPLETED or not manifest_path.is_file():
         return []
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    references: list[dict[str, str]] = []
+    references: list[dict[str, object]] = []
     for item in manifest.get("poses", []):
         references.append(
             {
@@ -427,9 +427,22 @@ def _pose_references(job: JobRecord) -> list[dict[str, str]]:
                 "optionId": str(item["optionId"]),
                 "label": str(item["name"]),
                 "sha256": str(item["sha256"]),
+                "qc": item.get("qc"),
             }
         )
     return references
+
+
+def _pose_set_qc(job: JobRecord, poses: list[dict[str, object]]) -> dict[str, object]:
+    from modal_service.image_processing import pose_set_visual_consistency_qc
+
+    return pose_set_visual_consistency_qc(poses)
+
+
+def _public_job_with_assets(job: JobRecord) -> dict[str, object]:
+    masters = _master_references(job)
+    poses = _pose_references(job)
+    return public_job(job, masters, poses, _pose_set_qc(job, poses))
 
 
 def _deserialize(record: dict[str, object]) -> JobRecord:
@@ -1258,7 +1271,7 @@ def _persist_master_outputs(job: JobRecord, outputs: list[bytes]) -> None:
 
 
 def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
-    from modal_service.image_processing import pose_transparency_qc, remove_connected_flat_background
+    from modal_service.image_processing import pose_set_visual_consistency_qc, pose_transparency_qc, remove_connected_flat_background
 
     expected_options = tuple(pose_option(job.pose_choices[role]) for role in ("normal", "listening", "transcribing"))
     if set(outputs) != {option.option_id for option in expected_options} or job.master_id is None:
@@ -1280,7 +1293,9 @@ def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
         pose_id = f"pose_{index:02d}"
         pose_ids[option.option_id] = pose_id
         filename = f"{pose_id}.png"
-        content = remove_connected_flat_background(outputs[option.option_id])
+        # Pose derivatives retain the generator canvas for the set-level
+        # framing QC. Masters keep the legacy tight-crop presentation path.
+        content = remove_connected_flat_background(outputs[option.option_id], crop=False)
         result = pose_transparency_qc(content)
         qc[pose_id] = result
         if result.get("status") != "passed":
@@ -1299,6 +1314,11 @@ def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
                 "qc": result,
             }
         )
+    pose_set_qc = pose_set_visual_consistency_qc(poses)
+    if pose_set_qc.get("status") != "passed":
+        shutil.rmtree(staging, ignore_errors=True)
+        assets.commit()
+        raise PoseVisualConsistencyError("Pose set visual consistency verification failed.")
     manifest = {
         "poseSetId": job.job_id,
         "masterId": job.master_id,
@@ -1309,9 +1329,10 @@ def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
         "listeningPoseId": pose_ids[job.pose_choices["listening"]],
         "transcribingPoseId": pose_ids[job.pose_choices["transcribing"]],
         "poses": poses,
+        "poseSetQc": pose_set_qc,
     }
     (staging / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-    (staging / "qc.json").write_text(json.dumps({"poses": qc}, ensure_ascii=False), encoding="utf-8")
+    (staging / "qc.json").write_text(json.dumps({"poses": qc, "poseSetQc": pose_set_qc}, ensure_ascii=False), encoding="utf-8")
     _promote_private_directory(staging, target)
     assets.commit()
 
@@ -1344,7 +1365,8 @@ def _verify_pose_outputs(job: JobRecord) -> None:
         raise DomainError("Pose outputs do not match the reserved choices.")
     qc_path = _asset_path(job.job_id, "poses", "qc.json")
     try:
-        qc_payload = json.loads(qc_path.read_text(encoding="utf-8")).get("poses", {})
+        qc_document = json.loads(qc_path.read_text(encoding="utf-8"))
+        qc_payload = qc_document.get("poses", {})
     except (OSError, ValueError, TypeError) as error:
         raise DomainError("Pose alpha quality metadata is unavailable.") from error
     if set(qc_payload) != expected_ids:
@@ -1362,6 +1384,15 @@ def _verify_pose_outputs(job: JobRecord) -> None:
             or qc_payload.get(pose_id) != qc
         ):
             raise DomainError("Pose alpha quality verification failed.")
+    from modal_service.image_processing import pose_set_visual_consistency_qc
+
+    expected_pose_set_qc = pose_set_visual_consistency_qc(poses)
+    if (
+        expected_pose_set_qc.get("status") != "passed"
+        or payload.get("poseSetQc") != expected_pose_set_qc
+        or qc_document.get("poseSetQc") != expected_pose_set_qc
+    ):
+        raise DomainError("Pose visual consistency verification failed.")
 
 
 def _master_outputs_ready(job: JobRecord) -> bool:
@@ -1751,7 +1782,7 @@ def api():
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
             _refresh_result_assets(job)
-            return public_job(job, _master_references(job), _pose_references(job))
+            return _public_job_with_assets(job)
         except KeyError as error:
             raise _api_error(JobNotFound("Job was not found.")) from error
         except DomainError as error:
@@ -1763,7 +1794,7 @@ def api():
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
             _refresh_result_assets(job)
-            return public_job(job, _master_references(job), _pose_references(job))
+            return _public_job_with_assets(job)
         except DomainError as error:
             raise _api_error(error) from error
 
@@ -1868,7 +1899,7 @@ def api():
             # or pose edit wait for storage synchronization. A cold API
             # container already mounts the latest committed Volume state; the
             # asset-serving endpoints retain their explicit reload safeguard.
-            response = public_job(current, _master_references(current), _pose_references(current))
+            response = _public_job_with_assets(current)
             structured_event(
                 "configuration_update_completed",
                 environment=ENVIRONMENT.value,

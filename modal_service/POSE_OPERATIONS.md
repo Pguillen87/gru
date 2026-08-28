@@ -21,6 +21,12 @@ O caminho síncrono não consulta cache e não aguarda GPU, assets ou conclusão
 
 `queued → running → completed` ou `failed`. A validação final exige exatamente três arquivos com checksum, os papéis `normal`, `listening`, `transcribing` e os mesmos option IDs reservados.
 
+## Gate de consistência visual
+
+O alpha/QC de cada PNG é necessário, mas não torna o conjunto utilizável por si só. Antes da promoção, `pose-set-visual-v1` exige canvas idêntico, margens de frame seguras, escala corporal compatível, centralização e linha de pés compatíveis. Falhas como `CANVAS_DIMENSIONS_MISMATCH`, `FRAME_CROP_RISK` ou `SCALE_MISMATCH` preservam os brutos e impedem a promoção e qualquer pacote V1.
+
+Esse gate detecta erros objetivos de enquadramento; a avaliação semântica (por exemplo, se o gesto realmente comunica escuta) continua revisão humana. O próximo smoke usa `pose-v6-full-body-consistent-framing`, que obriga corpo inteiro, cabeça e pés dentro do canvas, câmera/escala constantes e proíbe close, busto, corte e cenário dominante.
+
 ## Observabilidade e privacidade
 
 Eventos e campos são emitidos por `structured_observability.py`, que usa allowlist. Nunca registrar tokens, cookies, UID bruto, bytes, Base64, URLs privadas, filenames originais, prompts ou secrets.

@@ -7,7 +7,7 @@ from typing import Mapping
 
 
 MASTER_PROMPT_VERSION = "master-v4-confirmed-category"
-POSE_PROMPT_VERSION = "pose-v5-confirmed-identity"
+POSE_PROMPT_VERSION = "pose-v6-full-body-consistent-framing"
 POSE_TEMPLATE_VERSION = "web-poses-v1"
 
 MASTER_PROMPT = (
@@ -71,7 +71,10 @@ POSE_PROMPT = (
     "A human must remain fully human with no animal ears, tail, muzzle, paws, fur, horns, or hybrid features. "
     "Treat the master as identity and style evidence only. Do not copy its posture. Apply the requested posture, "
     "gesture, gaze, and expression while keeping every identity detail stable. Single character, clean anatomy, "
-    "one solid warm-ivory editorial background, never a checkerboard or transparency grid, no text, watermark, or extra objects."
+    "full body visible from head to both feet inside one consistent 1024 square canvas, centered at the same camera "
+    "distance and scale as the official template. Keep the feet on a consistent baseline. Never make a bust, close-up, "
+    "cropped limbs, a seated camera angle, a dominant desk, or a new scene. One solid warm-ivory editorial background, "
+    "never a checkerboard or transparency grid, no text, watermark, or extra objects."
 )
 
 
@@ -134,7 +137,7 @@ def build_pose_prompt(identity: Mapping[str, object], role: str, option: PoseOpt
         f"{POSE_PROMPT} The confirmed subject is {label} ({category_detail}). "
         f"Runtime role: {role}. Requested pose: {option.instruction}. "
         "Use only the approved Master for identity and style; it is the first supplied image. "
-        "The second supplied image is an official pose-reference template: use it only for movement, gesture and framing. "
+        "The second supplied image is an official pose-reference template: use it for movement and its full-body framing. "
         "Never copy a person, clothing, face, colors or background from the pose-reference template."
     )
 

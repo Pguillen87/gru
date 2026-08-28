@@ -2,7 +2,32 @@ from io import BytesIO
 
 from PIL import Image, ImageDraw
 
-from modal_service.image_processing import POSE_BACKGROUND, master_transparency_qc, normalize_pose_presentation, pose_transparency_qc, remove_connected_flat_background, transparency_ratio
+from modal_service.image_processing import POSE_BACKGROUND, master_transparency_qc, normalize_pose_presentation, pose_set_visual_consistency_qc, pose_transparency_qc, remove_connected_flat_background, transparency_ratio
+
+
+def _pose(role: str, *, width=1024, height=1024, bbox=(120, 80, 850, 940)):
+    return {"runtimeRole": role, "qc": {"status": "passed", "width": width, "height": height, "bounding_box": list(bbox)}}
+
+
+def test_pose_set_visual_consistency_accepts_a_full_body_set_with_a_shared_frame():
+    result = pose_set_visual_consistency_qc([
+        _pose("normal"),
+        _pose("listening", bbox=(125, 85, 855, 945)),
+        _pose("transcribing", bbox=(115, 82, 845, 942)),
+    ])
+    assert result["status"] == "passed"
+
+
+def test_pose_set_visual_consistency_rejects_camera_and_frame_drift():
+    result = pose_set_visual_consistency_qc([
+        _pose("normal"),
+        _pose("listening", width=640, height=640, bbox=(0, 5, 640, 635)),
+        _pose("transcribing", bbox=(320, 80, 1000, 940)),
+    ])
+    assert result["status"] == "failed"
+    assert "CANVAS_DIMENSIONS_MISMATCH" in result["safe_reasons"]
+    assert "FRAME_CROP_RISK" in result["safe_reasons"]
+    assert "CENTER_OFFSET_MISMATCH" in result["safe_reasons"]
 
 
 def test_flat_border_background_becomes_transparent_without_erasing_subject():
