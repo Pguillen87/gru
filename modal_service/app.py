@@ -284,6 +284,15 @@ def _attempt_key(user_id: str, attempt_id: str) -> str:
     return f"attempt:{user_id}:{attempt_id}"
 
 
+def _pose_smoke_key(source_job_id: str, smoke_key: str) -> str:
+    return f"pose-smoke:{source_job_id}:{smoke_key}"
+
+
+def _pose_smoke_job_id(source_job_id: str, smoke_key: str) -> str:
+    digest = hashlib.sha256(f"{source_job_id}\0{smoke_key}".encode("utf-8")).hexdigest()[:32]
+    return f"job_{digest}"
+
+
 def _asset_path(job_id: str, folder: str, name: str) -> Path:
     return Path(ASSET_ROOT, folder, job_id, name)
 
@@ -296,6 +305,46 @@ def _delete_job_assets(job_id: str) -> int:
             shutil.rmtree(target)
             deleted += 1
     return deleted
+
+
+def _copy_pose_smoke_asset_group(source_job_id: str, target_job_id: str, folder: str, names: tuple[str, ...]) -> None:
+    source = Path(ASSET_ROOT, folder, source_job_id)
+    staging = Path(ASSET_ROOT, "temporary", target_job_id, f"clone-{folder}")
+    target = Path(ASSET_ROOT, folder, target_job_id)
+    if not source.is_dir() or any(not (source / name).is_file() for name in names):
+        raise DomainError("Approved Master artifacts are incomplete.")
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        shutil.copy2(source / name, staging / name)
+    _promote_private_directory(staging, target)
+
+
+def _copy_pose_smoke_master_assets(source_job_id: str, target_job_id: str) -> None:
+    master_names = tuple(f"master_{index}.png" for index in range(1, len(MASTER_SEEDS) + 1))
+    _copy_pose_smoke_asset_group(source_job_id, target_job_id, "original", ("source.bin",))
+    _copy_pose_smoke_asset_group(source_job_id, target_job_id, "masters_raw", master_names)
+    _copy_pose_smoke_asset_group(source_job_id, target_job_id, "masters", master_names + ("qc.json",))
+
+
+def _new_pose_smoke_job(source: JobRecord, target_job_id: str, smoke_key: str) -> JobRecord:
+    return JobRecord(
+        job_id=target_job_id,
+        user_id=source.user_id,
+        idempotency_key=_pose_smoke_key(source.job_id, smoke_key),
+        source_key=source.source_key,
+        attempt_id=f"pose-smoke:{target_job_id}",
+        state=JobState.CONSISTENCY_TEST,
+        master_id=source.master_id,
+        model_version=source.model_version,
+        prompt_version=POSE_PROMPT_VERSION,
+        template_version=POSE_TEMPLATE_VERSION,
+        pose_choices=dict(source.pose_choices),
+        display_name=source.display_name,
+        subject_identity=dict(source.subject_identity),
+        correlation_id=f"pose-smoke-{target_job_id[4:16]}",
+        generation_reserved=source.generation_reserved,
+    )
 
 
 def _templates_installed() -> bool:
@@ -722,6 +771,77 @@ def rebuild_pose_derivatives_from_raw(job_id: str) -> dict[str, object]:
         "changed": bool(committed["changed"]),
         "reprocessed": True,
     }
+
+
+def _valid_pose_smoke_key(value: str) -> bool:
+    return bool(value) and len(value) <= 64 and all(character.isalnum() or character in "_-" for character in value)
+
+
+@app.function(image=api_image, volumes={ASSET_ROOT: assets}, max_containers=1)
+def prepare_pose_smoke_clone(source_job_id: str, smoke_key: str) -> dict[str, object]:
+    """Create one staging-only, idempotent clone without changing the QA job."""
+    if ENVIRONMENT is not Environment.STAGING or GPU_GENERATION_ENABLED or MASTER_GENERATION_ENABLED or POSE_GENERATION_ENABLED:
+        raise DomainError("Pose smoke cloning requires staging fail-closed mode.")
+    if not source_job_id.startswith("job_") or not _valid_pose_smoke_key(smoke_key):
+        raise DomainError("Pose smoke identifiers are invalid.")
+    source = _get_job(source_job_id)
+    assets.reload()
+    _verify_master_outputs(source)
+    if source.state is not JobState.COMPLETED or not source.master_id:
+        raise DomainError("The source job is not an approved completed pose set.")
+    if _pose_set_qc(source, _pose_references(source)).get("status") != "failed":
+        raise DomainError("Pose smoke cloning only accepts a visually rejected set.")
+    key = _pose_smoke_key(source_job_id, smoke_key)
+    existing_id = idempotency.get(key)
+    if existing_id:
+        return {"job": _serialize(_get_job(str(existing_id))), "created": False, "source_job_id": source_job_id}
+    target_job_id = _pose_smoke_job_id(source_job_id, smoke_key)
+    if target_job_id in jobs:
+        raise DomainError("Pose smoke identifier already belongs to another operation.")
+    try:
+        _copy_pose_smoke_master_assets(source_job_id, target_job_id)
+        assets.commit()
+        clone = _new_pose_smoke_job(source, target_job_id, smoke_key)
+        jobs[target_job_id] = asdict(clone) | {"state": clone.state.value}
+        idempotency[key] = target_job_id
+        return {"job": _serialize(clone), "created": True, "source_job_id": source_job_id}
+    except Exception:
+        _delete_job_assets(target_job_id)
+        assets.commit()
+        raise
+
+
+@app.function(image=api_image, volumes={ASSET_ROOT: assets}, max_containers=1)
+def start_pose_smoke(clone_job_id: str, smoke_key: str) -> dict[str, object]:
+    """Start the single explicit staging pose smoke; it never retries or creates Masters."""
+    if ENVIRONMENT is not Environment.STAGING or not GPU_GENERATION_ENABLED or not POSE_GENERATION_ENABLED or MASTER_GENERATION_ENABLED:
+        raise DomainError("Pose smoke requires staging poses-only mode.")
+    if not clone_job_id.startswith("job_") or not _valid_pose_smoke_key(smoke_key):
+        raise DomainError("Pose smoke identifiers are invalid.")
+    job = _get_job(clone_job_id)
+    _verify_master_outputs(job)
+    if job.state is not JobState.CONSISTENCY_TEST or not job.master_id:
+        raise DomainError("Pose smoke job is not ready for exactly one pose operation.")
+    operation_id = f"pose-smoke-{hashlib.sha256(f'{clone_job_id}\0{smoke_key}'.encode()).hexdigest()[:24]}"
+    fingerprint = hashlib.sha256(json.dumps(job.pose_choices, sort_keys=True).encode()).hexdigest()
+    enqueued = job_control.remote(
+        JobOperation.ENQUEUE_POSES.value,
+        clone_job_id,
+        user_id=job.user_id,
+        pose_choices=job.pose_choices,
+        operation_id=operation_id,
+        operation_fingerprint=fingerprint,
+        correlation_id=job.correlation_id or "",
+        request_id=operation_id,
+    )
+    _raise_guard_error(enqueued)
+    current = _deserialize(dict(enqueued["job"]))
+    if not bool(enqueued["reserved"]):
+        return {"job": _serialize(current), "gpu_call_id": current.pose_gpu_call_id, "idempotent_replay": True}
+    call = QwenMasterWorker().generate_poses.spawn(clone_job_id)
+    recorded = job_control.remote(JobOperation.RECORD_POSE_GPU_CALL.value, clone_job_id, call_id=call.object_id)
+    _raise_guard_error(recorded)
+    return {"job": _serialize(_deserialize(dict(recorded["job"]))), "gpu_call_id": call.object_id, "idempotent_replay": False}
 
 
 def _master_schedule_event(
