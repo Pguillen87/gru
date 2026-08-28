@@ -87,3 +87,19 @@ def test_pose_qc_failure_keeps_previous_set_and_does_not_promote_a_partial_resul
     assert not (existing / "pose_01.png").exists()
     assert all((tmp_path / "poses_raw" / job.job_id / f"{option_id}.png").is_file() for option_id in outputs)
     assert volume.commits == 1
+
+
+def test_raw_pose_recovery_requires_exactly_the_three_reserved_outputs(monkeypatch, tmp_path):
+    monkeypatch.setattr(app, "ASSET_ROOT", str(tmp_path))
+    job = _job()
+    raw_root = tmp_path / "poses_raw" / job.job_id
+    raw_root.mkdir(parents=True)
+    for option_id, output in _outputs().items():
+        (raw_root / f"{option_id}.png").write_bytes(output)
+
+    recovered = app._load_raw_pose_outputs(job)
+
+    assert set(recovered) == set(_outputs())
+    (raw_root / "unexpected.png").write_bytes(_generated_pose())
+    with pytest.raises(DomainError, match="exactly the reserved three"):
+        app._load_raw_pose_outputs(job)

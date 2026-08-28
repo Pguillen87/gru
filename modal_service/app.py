@@ -683,6 +683,33 @@ def job_control(
         return {"error_code": getattr(error, "code", "INVALID_REQUEST"), "error_message": str(error)}
 
 
+@app.function(image=api_image, volumes={ASSET_ROOT: assets}, max_containers=1, timeout=120)
+def rebuild_pose_derivatives_from_raw(job_id: str) -> dict[str, object]:
+    """Recover a failed staging QC pass from its preserved raw pose outputs.
+
+    This maintenance path is intentionally staging-only and refuses to run while
+    any generation flag is enabled.  It never invokes a model or accepts a
+    client request: it only derives and atomically promotes the three raw files
+    already retained by a previously authorized worker.
+    """
+    if ENVIRONMENT is not Environment.STAGING:
+        raise DomainError("Raw pose recovery is staging-only.")
+    if GPU_GENERATION_ENABLED or MASTER_GENERATION_ENABLED or POSE_GENERATION_ENABLED:
+        raise DomainError("Raw pose recovery requires generation to be disabled.")
+    job = _get_job(job_id)
+    if job.state not in {JobState.GENERATING_POSES, JobState.COMPLETED}:
+        raise DomainError("Raw pose recovery is only available for a failed or completed pose job.")
+    assets.reload()
+    _persist_pose_outputs(job, _load_raw_pose_outputs(job))
+    committed = job_control.remote(JobOperation.COMMIT_POSES.value, job_id)
+    _raise_guard_error(committed)
+    return {
+        "job": _serialize(_deserialize(dict(committed["job"]))),
+        "changed": bool(committed["changed"]),
+        "reprocessed": True,
+    }
+
+
 def _master_schedule_event(
     event: str,
     job: JobRecord,
@@ -1282,6 +1309,17 @@ def _persist_pose_outputs(job: JobRecord, outputs: dict[str, bytes]) -> None:
     (staging / "qc.json").write_text(json.dumps({"poses": qc}, ensure_ascii=False), encoding="utf-8")
     _promote_private_directory(staging, target)
     assets.commit()
+
+
+def _load_raw_pose_outputs(job: JobRecord) -> dict[str, bytes]:
+    """Load exactly the three reserved private raws; reject partial or extra sets."""
+    expected_options = tuple(pose_option(job.pose_choices[role]) for role in ("normal", "listening", "transcribing"))
+    raw_root = Path(ASSET_ROOT, "poses_raw", job.job_id)
+    expected_ids = {option.option_id for option in expected_options}
+    actual_ids = {path.stem for path in raw_root.glob("*.png")} if raw_root.is_dir() else set()
+    if actual_ids != expected_ids:
+        raise DomainError("Raw pose recovery requires exactly the reserved three outputs.")
+    return {option.option_id: (raw_root / f"{option.option_id}.png").read_bytes() for option in expected_options}
 
 
 def _verify_pose_outputs(job: JobRecord) -> None:

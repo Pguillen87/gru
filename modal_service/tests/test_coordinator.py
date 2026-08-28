@@ -122,6 +122,26 @@ def test_pose_worker_call_is_reserved_once_and_then_recorded():
     assert recorded_changed and recorded.pose_gpu_call_id == "fc-pose"
 
 
+def test_pose_qc_failure_transitions_the_active_job_to_failed_once():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-x", "original/hash")
+    service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
+    service.jobs[job.job_id]["master_id"] = "master_1"
+    service.start_pose_generation(job.job_id, {
+        "normal": "normal_relaxed",
+        "listening": "listening_ready",
+        "transcribing": "transcribing_notes",
+    })
+
+    failed, changed = service.fail_pose_generation(job.job_id, "POSE_ALPHA_QC_FAILED")
+    repeated, repeated_changed = service.fail_pose_generation(job.job_id, "POSE_ALPHA_QC_FAILED")
+
+    assert changed and failed.state is JobState.FAILED
+    assert failed.error_code == "POSE_ALPHA_QC_FAILED"
+    assert failed.pose_operation_status == "failed"
+    assert not repeated_changed and repeated.state is JobState.FAILED
+
+
 def test_pose_operation_is_created_once_and_replayed_without_second_worker():
     service, usage = coordinator()
     job, _ = service.register("uid-a", "key-x", "original/hash")

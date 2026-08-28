@@ -335,12 +335,11 @@ class JobCoordinator:
         job = self.get(job_id)
         if job.state is not JobState.GENERATING_POSES:
             return job, False
-        changed = job.transition(JobState.FAILED)
-        if changed:
-            job.error_code = error_code
-            job.pose_operation_status = "failed"
-            self.save(job)
-        return job, changed
+        job.transition_to(JobState.FAILED)
+        job.error_code = error_code
+        job.pose_operation_status = "failed"
+        self.save(job)
+        return job, True
 
     def commit_pose_outputs(self, job_id: str, persist: Callable[[JobRecord], None]) -> tuple[JobRecord, bool]:
         job = self.get(job_id)

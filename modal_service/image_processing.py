@@ -20,9 +20,23 @@ MAX_HALO_RISK_RATIO = 0.02
 
 
 def remove_connected_flat_background(content: bytes, threshold: int = 24) -> bytes:
-    """Make a flat border-connected background transparent without touching islands."""
+    """Make a border-connected backdrop transparent without touching the subject."""
     with Image.open(BytesIO(content)) as source:
         image = source.convert("RGBA")
+    if _has_editorial_pose_background(image):
+        _remove_border_connected_editorial_background(image)
+    else:
+        _remove_flat_background_from_seeds(image, threshold)
+    _remove_disconnected_alpha_noise(image)
+    _remove_editorial_background_islands(image)
+    image = _crop_transparent_margin(image)
+    output = BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
+def _remove_flat_background_from_seeds(image: Image.Image, threshold: int) -> None:
+    """Retain the legacy flat-colour path for non-editorial Master backdrops."""
     width, height = image.size
     seeds = (
         (0, 0),
@@ -37,10 +51,108 @@ def remove_connected_flat_background(content: bytes, threshold: int = 24) -> byt
     for seed in seeds:
         if image.getpixel(seed)[3] != 0:
             ImageDraw.floodfill(image, seed, (0, 0, 0, 0), thresh=threshold)
-    image = _crop_transparent_margin(image)
-    output = BytesIO()
-    image.save(output, format="PNG", optimize=True)
-    return output.getvalue()
+
+
+def _has_editorial_pose_background(image: Image.Image) -> bool:
+    """Detect the pale editorial backdrop without treating border-touching skin as background."""
+    width, height = image.size
+    border_pixels = [
+        image.getpixel((x, y))
+        for x, y in _border_coordinates(width, height)
+    ]
+    editorial = sum(_is_editorial_pose_background(pixel) for pixel in border_pixels)
+    return editorial / max(1, len(border_pixels)) >= 0.35
+
+
+def _remove_border_connected_editorial_background(image: Image.Image) -> None:
+    """Flood only pale editorial pixels connected to the canvas edge.
+
+    Generated poses can touch an edge with a hand or shirt.  Seeding every edge
+    pixel would erase those details, so only pixels matching the known backdrop
+    palette may enter the flood fill.
+    """
+    width, height = image.size
+    pixels = image.load()
+    visited = bytearray(width * height)
+    queue: deque[int] = deque()
+    for x, y in _border_coordinates(width, height):
+        if _is_editorial_pose_background(pixels[x, y]):
+            queue.append(y * width + x)
+    while queue:
+        index = queue.popleft()
+        if visited[index]:
+            continue
+        visited[index] = 1
+        x, y = index % width, index // width
+        if not _is_editorial_pose_background(pixels[x, y]):
+            continue
+        pixels[x, y] = (0, 0, 0, 0)
+        for next_x, next_y in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= next_x < width and 0 <= next_y < height:
+                next_index = next_y * width + next_x
+                if not visited[next_index]:
+                    queue.append(next_index)
+
+
+def _is_editorial_pose_background(pixel: tuple[int, int, int, int]) -> bool:
+    red, green, blue, alpha = pixel
+    return (
+        alpha > 0
+        and red >= 220
+        and green >= 210
+        and blue >= 185
+        and red - green <= 50
+        and green - blue <= 45
+    )
+
+
+def _border_coordinates(width: int, height: int):
+    for x in range(width):
+        yield x, 0
+        yield x, height - 1
+    for y in range(1, max(1, height - 1)):
+        yield 0, y
+        yield width - 1, y
+
+
+def _remove_disconnected_alpha_noise(image: Image.Image) -> None:
+    """Remove only tiny detached alpha islands; preserve intentional accessories."""
+    alpha = image.getchannel("A")
+    pixels = image.load()
+    for size, component in _alpha_components_with_pixels(alpha, image.width, image.height, retain_limit=12):
+        if size > 12 or component is None:
+            continue
+        for index in component:
+            x, y = index % image.width, index // image.width
+            pixels[x, y] = (0, 0, 0, 0)
+
+
+def _remove_editorial_background_islands(image: Image.Image) -> None:
+    """Remove small detached remnants of the editorial backdrop.
+
+    The model occasionally leaves cream floor flecks near shoes.  They are not
+    connected to the subject and are distinct from intentional props such as a
+    table or chair, which use non-editorial colours or join the main component.
+    """
+    alpha = image.getchannel("A")
+    pixels = image.load()
+    for size, component in _alpha_components_with_pixels(alpha, image.width, image.height, retain_limit=1024):
+        if size > 1024 or component is None:
+            continue
+        average = tuple(
+            sum(pixels[index % image.width, index // image.width][channel] for index in component) // len(component)
+            for channel in range(3)
+        )
+        if not _is_editorial_background_residue(average):
+            continue
+        for index in component:
+            x, y = index % image.width, index // image.width
+            pixels[x, y] = (0, 0, 0, 0)
+
+
+def _is_editorial_background_residue(pixel: tuple[int, int, int]) -> bool:
+    red, green, blue = pixel
+    return red >= 210 and green >= 200 and blue >= 165 and red - green <= 45 and green - blue <= 55
 
 
 def normalize_pose_presentation(content: bytes) -> bytes:
@@ -93,12 +205,10 @@ def _crop_transparent_margin(image: Image.Image) -> Image.Image:
         return image
     left, top, right, bottom = bbox
     padding = max(8, int(max(right - left, bottom - top) * 0.06))
-    return image.crop((
-        max(0, left - padding),
-        max(0, top - padding),
-        min(image.width, right + padding),
-        min(image.height, bottom + padding),
-    ))
+    subject = image.crop((left, top, right, bottom))
+    canvas = Image.new("RGBA", (subject.width + 2 * padding, subject.height + 2 * padding))
+    canvas.alpha_composite(subject, (padding, padding))
+    return canvas
 
 
 def transparency_ratio(content: bytes) -> float:
@@ -177,18 +287,35 @@ def transparent_asset_qc(content: bytes, *, asset_kind: str) -> dict[str, object
 
 
 def _alpha_components(alpha: Image.Image, width: int, height: int) -> list[int]:
+    return sorted((size for size, _ in _alpha_components_with_pixels(alpha, width, height, retain_limit=0)), reverse=True)
+
+
+def _alpha_components_with_pixels(
+    alpha: Image.Image,
+    width: int,
+    height: int,
+    *,
+    retain_limit: int,
+) -> list[tuple[int, list[int] | None]]:
+    """Count all components while retaining pixels only for small candidates."""
     pixels = alpha.load()
     visited = bytearray(width * height)
-    components: list[int] = []
+    components: list[tuple[int, list[int] | None]] = []
     for start in range(width * height):
         if visited[start] or pixels[start % width, start // width] < ALPHA_COMPONENT_THRESHOLD:
             continue
         visited[start] = 1
         queue = deque([start])
-        area = 0
+        component: list[int] | None = [] if retain_limit else None
+        size = 0
         while queue:
             index = queue.popleft()
-            area += 1
+            size += 1
+            if component is not None:
+                if size <= retain_limit:
+                    component.append(index)
+                else:
+                    component = None
             x, y = index % width, index // width
             for next_x, next_y in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
                 if not (0 <= next_x < width and 0 <= next_y < height):
@@ -198,8 +325,8 @@ def _alpha_components(alpha: Image.Image, width: int, height: int) -> list[int]:
                     continue
                 visited[next_index] = 1
                 queue.append(next_index)
-        components.append(area)
-    return sorted(components, reverse=True)
+        components.append((size, component))
+    return components
 
 
 def _halo_risk_ratio(image: Image.Image, alpha: Image.Image) -> float:

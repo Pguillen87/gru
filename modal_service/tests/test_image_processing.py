@@ -26,6 +26,54 @@ def test_flat_border_background_becomes_transparent_without_erasing_subject():
     assert qc["alpha_ratio"] > 0
 
 
+def test_editorial_pose_background_removal_keeps_a_subject_touching_the_canvas_edge():
+    image = Image.new("RGBA", (96, 96), (253, 243, 218, 255))
+    drawer = ImageDraw.Draw(image)
+    drawer.rectangle((0, 32, 40, 88), fill=(56, 82, 121, 255))
+    drawer.ellipse((32, 18, 68, 56), fill=(216, 158, 128, 255))
+    image.putpixel((90, 90), (253, 243, 218, 255))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    normalized = remove_connected_flat_background(source.getvalue())
+    result = Image.open(BytesIO(normalized)).convert("RGBA")
+    qc = pose_transparency_qc(normalized)
+
+    assert result.getpixel((0, 0))[3] == 0
+    assert qc["status"] == "passed"
+    assert qc["border_opaque_ratio"] == 0
+
+
+def test_editorial_pose_background_removal_drops_tiny_disconnected_noise():
+    image = Image.new("RGBA", (96, 96), (253, 243, 218, 255))
+    drawer = ImageDraw.Draw(image)
+    drawer.ellipse((28, 18, 68, 76), fill=(56, 82, 121, 255))
+    image.putpixel((84, 84), (56, 82, 121, 255))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    normalized = remove_connected_flat_background(source.getvalue())
+    qc = pose_transparency_qc(normalized)
+
+    assert qc["status"] == "passed"
+    assert qc["component_count"] == 1
+
+
+def test_editorial_pose_background_removal_drops_detached_cream_floor_flecks():
+    image = Image.new("RGBA", (128, 128), (253, 243, 218, 255))
+    drawer = ImageDraw.Draw(image)
+    drawer.ellipse((40, 20, 88, 108), fill=(56, 82, 121, 255))
+    drawer.ellipse((18, 112, 32, 120), fill=(231, 216, 183, 255))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    normalized = remove_connected_flat_background(source.getvalue())
+    qc = pose_transparency_qc(normalized)
+
+    assert qc["status"] == "passed"
+    assert qc["component_count"] == 1
+
+
 def test_alpha_qc_rejects_a_solid_master_without_mutating_it():
     image = Image.new("RGBA", (32, 32), (80, 45, 34, 255))
     source = BytesIO()
