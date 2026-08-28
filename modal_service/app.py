@@ -31,6 +31,7 @@ from modal_service.catalog import (
     POSE_TEMPLATE_VERSION,
     POSE_OPTIONS,
     build_master_negative_prompt,
+    build_pose_negative_prompt,
     build_master_prompt,
     build_pose_prompt,
     pose_option,
@@ -1317,7 +1318,7 @@ def _generate_qwen_poses(
                 generated = pipeline(
                     image=[master, pose_reference],
                     prompt=build_pose_prompt(job.subject_identity, role, option),
-                    negative_prompt=build_master_negative_prompt(job.subject_identity),
+                    negative_prompt=build_pose_negative_prompt(job.subject_identity, role),
                     true_cfg_scale=1.0,
                     generator=torch.Generator("cuda").manual_seed(option_seeds[option.option_id]),
                     num_inference_steps=4,

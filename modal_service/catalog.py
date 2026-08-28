@@ -7,7 +7,7 @@ from typing import Mapping
 
 
 MASTER_PROMPT_VERSION = "master-v4-confirmed-category"
-POSE_PROMPT_VERSION = "pose-v6-full-body-consistent-framing"
+POSE_PROMPT_VERSION = "pose-v7-standing-transcription-framing"
 POSE_TEMPLATE_VERSION = "web-poses-v1"
 
 MASTER_PROMPT = (
@@ -77,6 +77,23 @@ POSE_PROMPT = (
     "never a checkerboard or transparency grid, no text, watermark, or extra objects."
 )
 
+POSE_NEGATIVE_PROMPT = (
+    "seated, sitting, chair, desk, table, office scene, dominant furniture, close-up, bust, zoomed composition, "
+    "cropped legs, cropped feet, cropped arms, background scenery"
+)
+
+POSE_ROLE_COMPOSITION_CONSTRAINTS = {
+    "transcribing": (
+        "For transcribing, keep the character standing and fully visible from head to both feet at the same camera "
+        "distance as the Master. Show transcription through a small handheld notepad, pencil, compact handheld keyboard, "
+        "or phone-sized device only. Do not add a desk, chair, table, workstation, or any large furniture."
+    ),
+}
+
+POSE_ROLE_NEGATIVE_PROMPTS = {
+    "transcribing": "seated transcription, desk-based typing, table-based writing, chair-based office work",
+}
+
 
 @dataclass(frozen=True)
 class PoseOption:
@@ -126,6 +143,13 @@ def pose_option(option_id: str) -> PoseOption:
     return next(option for option in POSE_OPTIONS if option.option_id == option_id)
 
 
+def build_pose_negative_prompt(identity: Mapping[str, object], role: str) -> str:
+    """Keep pose composition exclusions separate from identity exclusions."""
+    role_negative = POSE_ROLE_NEGATIVE_PROMPTS.get(role, "")
+    parts = (build_master_negative_prompt(identity), POSE_NEGATIVE_PROMPT, role_negative)
+    return ", ".join(part for part in parts if part)
+
+
 def build_pose_prompt(identity: Mapping[str, object], role: str, option: PoseOption) -> str:
     category = str(identity.get("category", "other"))
     label = str(identity.get("label", "confirmed subject"))
@@ -133,13 +157,15 @@ def build_pose_prompt(identity: Mapping[str, object], role: str, option: PoseOpt
     category_detail = f"category {category}"
     if species:
         category_detail += f", species {species}"
-    return (
+    role_constraint = POSE_ROLE_COMPOSITION_CONSTRAINTS.get(role, "")
+    return " ".join(part for part in (
         f"{POSE_PROMPT} The confirmed subject is {label} ({category_detail}). "
         f"Runtime role: {role}. Requested pose: {option.instruction}. "
         "Use only the approved Master for identity and style; it is the first supplied image. "
         "The second supplied image is an official pose-reference template: use it for movement and its full-body framing. "
-        "Never copy a person, clothing, face, colors or background from the pose-reference template."
-    )
+        "Never copy a person, clothing, face, colors or background from the pose-reference template.",
+        role_constraint,
+    ) if part)
 
 
 @dataclass(frozen=True)

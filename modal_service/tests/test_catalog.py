@@ -4,6 +4,7 @@ from modal_service.catalog import (
     MASTER_PROMPT_VERSION,
     POSE_OPTIONS,
     build_master_negative_prompt,
+    build_pose_negative_prompt,
     build_master_prompt,
     build_pose_prompt,
     pose_option,
@@ -36,6 +37,26 @@ def test_pose_prompt_keeps_a_human_human_and_uses_only_the_master():
     assert "only the approved master" in prompt
     assert "full body visible from head to both feet" in prompt
     assert "never make a bust, close-up" in prompt
+
+
+def test_transcribing_prompt_requires_a_standing_full_body_with_only_a_small_prop():
+    identity = {"category": "human", "label": "person", "species": None}
+    prompt = build_pose_prompt(identity, "transcribing", pose_option("transcribing_active")).lower()
+    negative = build_pose_negative_prompt(identity, "transcribing").lower()
+
+    assert "keep the character standing and fully visible from head to both feet" in prompt
+    assert "small handheld notepad" in prompt
+    assert "do not add a desk, chair, table, workstation" in prompt
+    assert "seated, sitting, chair, desk, table" in negative
+
+
+def test_normal_and_listening_keep_their_existing_role_scope():
+    identity = {"category": "human", "label": "person", "species": None}
+    normal = build_pose_prompt(identity, "normal", pose_option("normal_attentive")).lower()
+    listening = build_pose_prompt(identity, "listening", pose_option("listening_focus")).lower()
+
+    assert "small handheld notepad" not in normal
+    assert "small handheld notepad" not in listening
 
 
 def test_new_jobs_record_the_current_master_prompt_version():
