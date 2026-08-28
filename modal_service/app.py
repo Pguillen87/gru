@@ -822,7 +822,8 @@ def start_pose_smoke(clone_job_id: str, smoke_key: str) -> dict[str, object]:
     _verify_master_outputs(job)
     if job.state is not JobState.CONSISTENCY_TEST or not job.master_id:
         raise DomainError("Pose smoke job is not ready for exactly one pose operation.")
-    operation_id = f"pose-smoke-{hashlib.sha256(f'{clone_job_id}\0{smoke_key}'.encode()).hexdigest()[:24]}"
+    operation_seed = f"{clone_job_id}\0{smoke_key}".encode("utf-8")
+    operation_id = f"pose-smoke-{hashlib.sha256(operation_seed).hexdigest()[:24]}"
     fingerprint = hashlib.sha256(json.dumps(job.pose_choices, sort_keys=True).encode()).hexdigest()
     enqueued = job_control.remote(
         JobOperation.ENQUEUE_POSES.value,
