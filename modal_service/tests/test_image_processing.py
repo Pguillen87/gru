@@ -5,8 +5,17 @@ from PIL import Image, ImageDraw
 from modal_service.image_processing import POSE_BACKGROUND, master_transparency_qc, normalize_pose_presentation, pose_set_visual_consistency_qc, pose_transparency_qc, remove_connected_flat_background, transparency_ratio
 
 
-def _pose(role: str, *, width=1024, height=1024, bbox=(120, 80, 850, 940)):
-    return {"runtimeRole": role, "qc": {"status": "passed", "width": width, "height": height, "bounding_box": list(bbox)}}
+def _pose(role: str, *, width=1024, height=1024, bbox=(120, 80, 850, 940), foreground_ratio=0.24):
+    return {
+        "runtimeRole": role,
+        "qc": {
+            "status": "passed",
+            "width": width,
+            "height": height,
+            "bounding_box": list(bbox),
+            "foreground_ratio": foreground_ratio,
+        },
+    }
 
 
 def test_pose_set_visual_consistency_accepts_a_full_body_set_with_a_shared_frame():
@@ -27,7 +36,59 @@ def test_pose_set_visual_consistency_rejects_camera_and_frame_drift():
     assert result["status"] == "failed"
     assert "CANVAS_DIMENSIONS_MISMATCH" in result["safe_reasons"]
     assert "FRAME_CROP_RISK" in result["safe_reasons"]
+    assert "SCALE_MISMATCH" in result["safe_reasons"]
     assert "CENTER_OFFSET_MISMATCH" in result["safe_reasons"]
+
+
+def test_pose_set_visual_consistency_rejects_excessive_width_and_occupied_area():
+    result = pose_set_visual_consistency_qc([
+        _pose("normal"),
+        _pose("listening", bbox=(130, 80, 860, 940)),
+        _pose("transcribing", bbox=(0, 30, 1024, 994)),
+    ])
+
+    assert result["status"] == "failed"
+    assert "SCALE_WIDTH_MISMATCH" in result["safe_reasons"]
+    assert "OCCUPANCY_MISMATCH" in result["safe_reasons"]
+
+
+def test_pose_set_visual_consistency_rejects_a_misaligned_foot_baseline():
+    result = pose_set_visual_consistency_qc([
+        _pose("normal"),
+        _pose("listening", bbox=(125, 85, 855, 945)),
+        _pose("transcribing", bbox=(120, 80, 850, 890)),
+    ])
+
+    assert result["status"] == "failed"
+    assert "FOOT_BASE_MISMATCH" in result["safe_reasons"]
+
+
+def test_pose_set_visual_consistency_rejects_a_dominant_scene_but_allows_a_small_prop():
+    dominant_scene = pose_set_visual_consistency_qc([
+        _pose("normal", bbox=(329, 51, 698, 996), foreground_ratio=0.220186),
+        _pose("listening", bbox=(298, 48, 707, 994), foreground_ratio=0.214193),
+        _pose("transcribing", bbox=(85, 100, 939, 944), foreground_ratio=0.429605),
+    ])
+    small_prop = pose_set_visual_consistency_qc([
+        _pose("normal"),
+        _pose("listening", bbox=(125, 85, 855, 945), foreground_ratio=0.27),
+        _pose("transcribing", bbox=(115, 82, 845, 942), foreground_ratio=0.28),
+    ])
+
+    assert dominant_scene["status"] == "failed"
+    assert "SCENE_DOMINANT" in dominant_scene["safe_reasons"]
+    assert small_prop["status"] == "passed"
+
+
+def test_current_smoke_transcribing_regression_is_rejected_while_normal_and_listening_match():
+    result = pose_set_visual_consistency_qc([
+        _pose("normal", bbox=(329, 51, 698, 996), foreground_ratio=0.220186),
+        _pose("listening", bbox=(298, 48, 707, 994), foreground_ratio=0.214193),
+        _pose("transcribing", bbox=(85, 100, 939, 944), foreground_ratio=0.429605),
+    ])
+
+    assert result["status"] == "failed"
+    assert {"SCALE_WIDTH_MISMATCH", "OCCUPANCY_MISMATCH", "SCENE_DOMINANT"} <= set(result["safe_reasons"])
 
 
 def test_flat_border_background_becomes_transparent_without_erasing_subject():
