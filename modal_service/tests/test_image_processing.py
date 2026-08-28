@@ -5,17 +5,52 @@ from PIL import Image, ImageDraw
 from modal_service.image_processing import POSE_BACKGROUND, master_transparency_qc, normalize_pose_presentation, pose_set_visual_consistency_qc, pose_transparency_qc, remove_connected_flat_background, transparency_ratio
 
 
-def _pose(role: str, *, width=1024, height=1024, bbox=(120, 80, 850, 940), foreground_ratio=0.24):
+def _pose(role: str, *, field="runtimeRole", width=1024, height=1024, bbox=(120, 80, 850, 940), foreground_ratio=0.24, qc=True):
     return {
-        "runtimeRole": role,
-        "qc": {
+        field: role,
+        **({"qc": {
             "status": "passed",
             "width": width,
             "height": height,
             "bounding_box": list(bbox),
             "foreground_ratio": foreground_ratio,
-        },
+        }} if qc else {}),
     }
+
+
+def test_pose_set_visual_consistency_accepts_canonical_role_and_legacy_runtime_role():
+    canonical = pose_set_visual_consistency_qc([
+        _pose("normal", field="role"),
+        _pose("listening", field="role"),
+        _pose("transcribing", field="role"),
+    ])
+    legacy = pose_set_visual_consistency_qc([
+        _pose("normal"), _pose("listening"), _pose("transcribing"),
+    ])
+    assert canonical["status"] == "passed"
+    assert legacy["status"] == "passed"
+
+
+def test_pose_set_roles_and_alpha_reasons_only_report_real_problems():
+    missing_role = pose_set_visual_consistency_qc([
+        _pose("normal", field="role"), _pose("listening", field="role"), {"qc": _pose("transcribing")["qc"]},
+    ])
+    duplicate_role = pose_set_visual_consistency_qc([
+        _pose("normal", field="role"), _pose("normal", field="role"), _pose("transcribing", field="role"),
+    ])
+    invalid_role = pose_set_visual_consistency_qc([
+        _pose("normal", field="role"), _pose("listening", field="role"), _pose("invalid", field="role"),
+    ])
+    missing_qc = pose_set_visual_consistency_qc([
+        _pose("normal", field="role"), _pose("listening", field="role", qc=False), _pose("transcribing", field="role"),
+    ])
+    assert "POSE_SET_ROLES_INVALID" in missing_role["safe_reasons"]
+    assert "POSE_ALPHA_QC_REQUIRED" not in missing_role["safe_reasons"]
+    assert "POSE_ALPHA_QC_REQUIRED" in missing_qc["safe_reasons"]
+    assert "POSE_ALPHA_QC_REQUIRED" not in duplicate_role["safe_reasons"]
+    assert "POSE_ALPHA_QC_REQUIRED" not in invalid_role["safe_reasons"]
+    assert "POSE_SET_ROLES_INVALID" in duplicate_role["safe_reasons"]
+    assert "POSE_SET_ROLES_INVALID" in invalid_role["safe_reasons"]
 
 
 def test_pose_set_visual_consistency_accepts_a_full_body_set_with_a_shared_frame():

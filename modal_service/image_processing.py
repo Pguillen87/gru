@@ -307,7 +307,13 @@ def pose_set_visual_consistency_qc(poses: list[dict[str, object]]) -> dict[str, 
     inconsistent foot baseline. Semantic review remains a separate human gate.
     """
     required_roles = {"normal", "listening", "transcribing"}
-    by_role = {str(pose.get("runtimeRole")): pose for pose in poses}
+    # `role` is the canonical v2 manifest field.  Older worker payloads used
+    # `runtimeRole`; keep that read-only alias so historical manifests remain
+    # measurable without changing their bytes or contract.
+    by_role = {
+        str(pose["role"] if "role" in pose else pose.get("runtimeRole")): pose
+        for pose in poses
+    }
     reasons: list[str] = []
     if len(poses) != 3 or set(by_role) != required_roles:
         reasons.append("POSE_SET_ROLES_INVALID")
@@ -315,6 +321,11 @@ def pose_set_visual_consistency_qc(poses: list[dict[str, object]]) -> dict[str, 
     dimensions: set[tuple[int, int]] = set()
     for role in sorted(required_roles):
         pose = by_role.get(role)
+        # A missing role is a role-contract failure, not evidence that a
+        # present pose skipped alpha QC. Keeping those diagnoses separate
+        # makes replay and operator remediation deterministic.
+        if not isinstance(pose, dict):
+            continue
         qc = pose.get("qc") if isinstance(pose, dict) else None
         if not isinstance(qc, dict) or qc.get("status") != "passed":
             reasons.append("POSE_ALPHA_QC_REQUIRED")
