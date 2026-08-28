@@ -21,6 +21,8 @@ val projectTargetSdk: String by project
 val projectCompileSdk: String by project
 val projectVersionCode: String by project
 val projectVersionName: String by project
+val mascotImportBaseUrl = providers.gradleProperty("MASCOT_IMPORT_BASE_URL").orElse("").get()
+    .replace("\\", "\\\\").replace("\"", "\\\"")
 val projectVersionNameSuffix = projectVersionName.substringAfter("-", "").let { suffix ->
     if (suffix.isNotEmpty()) "-$suffix" else suffix
 }
@@ -51,6 +53,7 @@ configure<ApplicationExtension> {
         versionCode = projectVersionCode.toInt()
         versionName = projectVersionName.substringBefore("-")
         buildConfigField("String", "MASCOT_API_BASE_URL", "\"https://automacao-guillenia--gru-mascot-api.modal.run\"")
+        buildConfigField("String", "MASCOT_IMPORT_BASE_URL", "\"$mascotImportBaseUrl\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
