@@ -13,3 +13,4 @@ def test_production_deploy_script_is_cost_fail_closed_and_resource_scoped():
     assert '$env:GPU_GENERATION_ENABLED = "false"' in source
     assert '$env:MASTER_GENERATION_ENABLED = "false"' in source
     assert '$env:POSE_GENERATION_ENABLED = "false"' in source
+    assert "modal deploy -m modal_service.app" in source
