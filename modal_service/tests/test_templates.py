@@ -8,6 +8,7 @@ from PIL import Image
 from modal_service import app
 from modal_service.catalog import POSE_REFERENCES, POSE_TEMPLATE_VERSION
 from modal_service.templates import TemplatePackageError, validate_active_template_package, validate_template_package
+from modal_service.tools.install_pose_templates import PRODUCTION_RESOURCE_PREFIX, validate_install_target
 
 
 def _write_package(root, *, mutate=None):
@@ -90,3 +91,18 @@ def test_repository_package_matches_the_published_web_catalog_and_records_origin
     assert provenance["repository"] == "Pguillen87/PuleiroGru"
     assert provenance["source_path"] == "public/assets/pose-reference-sheet.webp"
     assert len(package.manifest["poses"]) == 12
+
+
+def test_production_template_install_requires_the_exact_explicit_target():
+    with pytest.raises(SystemExit):
+        validate_install_target(resource_prefix=PRODUCTION_RESOURCE_PREFIX, environment="main", allow_production=False)
+    with pytest.raises(SystemExit):
+        validate_install_target(resource_prefix="gru-mascot-v2-staging", environment="main", allow_production=True)
+
+    validate_install_target(resource_prefix=PRODUCTION_RESOURCE_PREFIX, environment="main", allow_production=True)
+
+
+def test_non_production_template_install_rejects_the_production_override():
+    validate_install_target(resource_prefix="gru-mascot-v2-staging", environment="staging", allow_production=False)
+    with pytest.raises(SystemExit):
+        validate_install_target(resource_prefix="gru-mascot-v2-staging", environment="staging", allow_production=True)

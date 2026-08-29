@@ -15,6 +15,19 @@ import modal
 
 from modal_service.templates import validate_template_package
 
+PRODUCTION_RESOURCE_PREFIX = "gru-mascot-v2-production"
+
+
+def validate_install_target(*, resource_prefix: str, environment: str, allow_production: bool) -> None:
+    if not environment:
+        raise SystemExit("A Modal environment must be explicit.")
+    if environment != "main":
+        if allow_production:
+            raise SystemExit("--allow-production is valid only for the Production target.")
+        return
+    if not allow_production or resource_prefix != PRODUCTION_RESOURCE_PREFIX:
+        raise SystemExit("Production installation requires --allow-production and the exact Production resource prefix.")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -29,12 +42,18 @@ def main() -> None:
         default=os.getenv("GRU_MASCOT_MODAL_ENVIRONMENT", ""),
         help="Required Modal environment name. It must be explicit to avoid the CLI default environment.",
     )
+    parser.add_argument(
+        "--allow-production",
+        action="store_true",
+        help="Allow installation only for gru-mascot-v2-production in the main environment.",
+    )
     args = parser.parse_args()
     package = validate_template_package(args.package)
-    if args.resource_prefix == "gru-mascot":
-        raise SystemExit("Refusing the production resource prefix. Pass an explicit non-production prefix.")
-    if not args.environment or args.environment == "main":
-        raise SystemExit("Refusing an implicit or production Modal environment.")
+    validate_install_target(
+        resource_prefix=args.resource_prefix,
+        environment=args.environment,
+        allow_production=args.allow_production,
+    )
     volume = modal.Volume.from_name(
         f"{args.resource_prefix}-assets",
         environment_name=args.environment,
