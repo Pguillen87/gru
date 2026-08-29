@@ -1,86 +1,108 @@
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 from PIL import Image
 
-from modal_service.templates import TemplatePackageError, validate_template_package
+from modal_service import app
+from modal_service.catalog import POSE_REFERENCES, POSE_TEMPLATE_VERSION
+from modal_service.templates import TemplatePackageError, validate_active_template_package, validate_template_package
+from modal_service.tools.install_pose_templates import PRODUCTION_RESOURCE_PREFIX, validate_install_target
 
 
-def test_complete_template_package_is_validated(tmp_path):
+def _write_package(root, *, mutate=None):
     poses = []
-    for index in range(1, 7):
-        pose_id = f"pose_{index:02d}"
-        folder = tmp_path / pose_id
-        folder.mkdir()
-        reference = folder / "reference.png"
-        Image.new("RGB", (256, 256), (index, 20, 30)).save(reference)
-        poses.append({
-            "pose_id": pose_id,
-            "name": f"pose {index}",
-            "version": "test-v1",
-            "difficulty": "simple" if index == 1 else "intermediate",
-            "reference": f"{pose_id}/reference.png",
-            "instruction": "Preserve identity and apply this posture.",
-            "sha256": hashlib.sha256(reference.read_bytes()).hexdigest(),
-        })
+    for index, reference in enumerate(POSE_REFERENCES):
+        folder = root / reference.option_id
+        folder.mkdir(parents=True)
+        image_path = folder / "reference.png"
+        Image.new("RGB", (256, 256), (20 + index, 40, 60)).save(image_path)
+        poses.append(
+            {
+                "option_id": reference.option_id,
+                "role": reference.role,
+                "label": reference.label,
+                "instruction": reference.instruction,
+                "reference": f"{reference.option_id}/reference.png",
+                "sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
+            }
+        )
     manifest = {
-        "version": "test-v1",
+        "version": POSE_TEMPLATE_VERSION,
+        "catalog_version": POSE_TEMPLATE_VERSION,
+        "asset_provenance": {
+            "source_type": "test",
+            "repository": "Pguillen87/PuleiroGru",
+            "commit": "test",
+            "source_path": "public/assets/pose-reference-sheet.webp",
+            "rights_basis": "test fixture",
+        },
         "poses": poses,
-        "consistency_pose_ids": ["pose_01", "pose_03", "pose_05"],
-        "mvp_pose_ids": [pose["pose_id"] for pose in poses],
     }
-    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    if mutate:
+        mutate(manifest)
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_complete_web_pose_package_is_validated(tmp_path):
+    _write_package(tmp_path)
 
     package = validate_template_package(tmp_path)
 
-    assert package.version == "test-v1"
-    assert len(package.files) == 7
+    assert package.version == POSE_TEMPLATE_VERSION
+    assert len(package.files) == len(POSE_REFERENCES) + 1
+    assert package.reference_for("normal_attentive").is_file()
 
 
-def test_template_package_rejects_path_escape(tmp_path):
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "version": "bad",
-        "poses": [{"pose_id": f"pose_{i:02d}", "reference": "../outside.png"} for i in range(1, 7)],
-        "consistency_pose_ids": ["pose_01", "pose_02", "pose_03"],
-        "mvp_pose_ids": [f"pose_{i:02d}" for i in range(1, 7)],
-    }), encoding="utf-8")
+def test_template_package_rejects_catalog_mismatch(tmp_path):
+    _write_package(tmp_path, mutate=lambda manifest: manifest["poses"].pop())
 
     with pytest.raises(TemplatePackageError):
         validate_template_package(tmp_path)
 
 
-@pytest.mark.parametrize(
-    ("version", "consistency", "mvp"),
-    [
-        ("../escape", ["pose_01", "pose_02", "pose_03"], [f"pose_{i:02d}" for i in range(1, 7)]),
-        ("v1", ["pose_01", "pose_01", "pose_02"], [f"pose_{i:02d}" for i in range(1, 7)]),
-        ("v1", ["pose_01", "pose_02", "pose_03"], ["pose_01"] * 6),
-    ],
-)
-def test_template_package_rejects_unsafe_version_or_duplicate_sets(tmp_path, version, consistency, mvp):
-    poses = []
-    for index in range(1, 7):
-        pose_id = f"pose_{index:02d}"
-        folder = tmp_path / pose_id
-        folder.mkdir()
-        reference = folder / "reference.png"
-        Image.new("RGB", (32, 32), (index, 20, 30)).save(reference)
-        poses.append({
-            "pose_id": pose_id,
-            "name": f"pose {index}",
-            "version": "v1",
-            "difficulty": "simple",
-            "reference": f"{pose_id}/reference.png",
-            "instruction": "Preserve identity.",
-            "sha256": hashlib.sha256(reference.read_bytes()).hexdigest(),
-        })
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "version": version,
-        "poses": poses,
-        "consistency_pose_ids": consistency,
-        "mvp_pose_ids": mvp,
-    }), encoding="utf-8")
+def test_template_package_rejects_incompatible_pose_metadata(tmp_path):
+    _write_package(tmp_path, mutate=lambda manifest: manifest["poses"][0].__setitem__("role", "listening"))
 
     with pytest.raises(TemplatePackageError):
         validate_template_package(tmp_path)
+
+
+def test_active_pointer_requires_a_valid_package(monkeypatch, tmp_path):
+    package_root = tmp_path / "pose_templates" / "versions" / POSE_TEMPLATE_VERSION
+    _write_package(package_root)
+    active = tmp_path / "pose_templates" / "active.json"
+    active.parent.mkdir(parents=True, exist_ok=True)
+    active.write_text(json.dumps({"version": POSE_TEMPLATE_VERSION}), encoding="utf-8")
+
+    assert validate_active_template_package(tmp_path).version == POSE_TEMPLATE_VERSION
+    monkeypatch.setattr(app, "ASSET_ROOT", str(tmp_path))
+    assert app._templates_installed() is True
+    assert app._active_pose_template_version() == POSE_TEMPLATE_VERSION
+
+
+def test_repository_package_matches_the_published_web_catalog_and_records_origin():
+    package = validate_template_package(
+        Path(__file__).parents[1] / "pose_templates" / POSE_TEMPLATE_VERSION
+    )
+
+    provenance = package.manifest["asset_provenance"]
+    assert provenance["repository"] == "Pguillen87/PuleiroGru"
+    assert provenance["source_path"] == "public/assets/pose-reference-sheet.webp"
+    assert len(package.manifest["poses"]) == 12
+
+
+def test_production_template_install_requires_the_exact_explicit_target():
+    with pytest.raises(SystemExit):
+        validate_install_target(resource_prefix=PRODUCTION_RESOURCE_PREFIX, environment="main", allow_production=False)
+    with pytest.raises(SystemExit):
+        validate_install_target(resource_prefix="gru-mascot-v2-staging", environment="main", allow_production=True)
+
+    validate_install_target(resource_prefix=PRODUCTION_RESOURCE_PREFIX, environment="main", allow_production=True)
+
+
+def test_non_production_template_install_rejects_the_production_override():
+    validate_install_target(resource_prefix="gru-mascot-v2-staging", environment="staging", allow_production=False)
+    with pytest.raises(SystemExit):
+        validate_install_target(resource_prefix="gru-mascot-v2-staging", environment="staging", allow_production=True)
