@@ -22,7 +22,7 @@ def main() -> None:
     parser.add_argument(
         "--resource-prefix",
         default=os.getenv("GRU_MASCOT_RESOURCE_PREFIX", "gru-mascot"),
-        help="Modal resource prefix. The staging deploy uses gru-mascot-v2-staging.",
+        help="Modal resource prefix for the explicitly selected environment.",
     )
     parser.add_argument(
         "--environment",
