@@ -423,6 +423,8 @@ class JobCoordinator:
             return job, False
         if job.workflow_mode != WorkflowMode.ASYNC_INCUBATOR_V1.value:
             raise DomainError("Incubation failure is not available for this workflow.")
+        if job.state is JobState.AWAITING_MASTER_APPROVAL and error_code == "MASTER_AUTO_RANKING_FAILED":
+            job.master_selection = {**(job.master_selection or {}), "decision": "RANKING_FAILED", "decisionReason": "RANKING_UNAVAILABLE"}
         job.error_code = error_code
         job.transition_to(JobState.FAILED)
         self.save(job)

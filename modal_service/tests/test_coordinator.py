@@ -313,6 +313,15 @@ def test_ambiguous_incubator_requires_owner_selection_and_replays_idempotently()
     assert selected.master_selection["selectionSource"] == "human"
 
 
+def test_ranking_failure_is_persisted_without_selecting_a_master():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "rank-fail", "original/hash", registration_only=True, attempt_id="attempt-rank-fail", workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value)
+    service.jobs[job.job_id]["state"] = JobState.AWAITING_MASTER_APPROVAL.value
+    failed, _ = service.fail_incubation(job.job_id, "MASTER_AUTO_RANKING_FAILED")
+    assert failed.master_id is None
+    assert failed.master_selection["decision"] == "RANKING_FAILED"
+
+
 def test_pose_qc_failure_transitions_the_active_job_to_failed_once():
     service, _ = coordinator()
     job, _ = service.register("uid-a", "key-x", "original/hash")
