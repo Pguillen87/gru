@@ -107,6 +107,12 @@ def _manifest_from_json(payload: dict[str, Any]) -> EncoderManifest:
         raise VisualEncoderUnavailable("VISUAL_ENCODER_MANIFEST_INVALID")
     if artifact.get("package") != ARTIFACT_PACKAGE_NAME or tuple(contract.get("categoryOrder", ())) != CATEGORY_ORDER:
         raise VisualEncoderUnavailable("VISUAL_ENCODER_MANIFEST_INVALID")
+    if artifact.get("encoderVersion") != ENCODER_VERSION:
+        raise VisualEncoderUnavailable("VISUAL_ENCODER_MANIFEST_INVALID")
+    if policy.get("subjectHintPolicyVersion") != SUBJECT_HINT_POLICY_VERSION:
+        raise VisualEncoderUnavailable("VISUAL_ENCODER_MANIFEST_INVALID")
+    if policy.get("masterRankerVersion") != MASTER_RANKER_VERSION:
+        raise VisualEncoderUnavailable("VISUAL_ENCODER_MANIFEST_INVALID")
     if upstream.get("modelId") != UPSTREAM_MODEL_ID or upstream.get("revision") != UPSTREAM_REVISION:
         raise VisualEncoderUnavailable("VISUAL_ENCODER_MANIFEST_INVALID")
     if upstream.get("weightsSha256") != UPSTREAM_WEIGHTS_SHA256:

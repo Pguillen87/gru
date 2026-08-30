@@ -13,7 +13,10 @@ from PIL import Image
 
 from modal_service.incubator import (
     ARTIFACT_PACKAGE_NAME,
+    ENCODER_VERSION,
+    MASTER_RANKER_VERSION,
     SiglipOnnxVisualEncoder,
+    SUBJECT_HINT_POLICY_VERSION,
     UPSTREAM_WEIGHTS_SHA256,
     VisualEncoderUnavailable,
     prompt_contract_sha256,
@@ -31,7 +34,7 @@ def sha256(path: Path) -> str:
 def manifest(package: Path) -> dict[str, object]:
     return {
         "schemaVersion": 1,
-        "artifact": {"package": ARTIFACT_PACKAGE_NAME, "encoderVersion": ARTIFACT_PACKAGE_NAME},
+        "artifact": {"package": ARTIFACT_PACKAGE_NAME, "encoderVersion": ENCODER_VERSION},
         "upstream": {"modelId": "google/siglip-base-patch16-224", "revision": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed", "weightsSha256": UPSTREAM_WEIGHTS_SHA256},
         "runtime": {"onnxruntimeVersion": "1.20.1", "providers": ["CPUExecutionProvider"]},
         "contract": {"inputShape": [1, 3, 224, 224], "embeddingDimension": 768, "categoryOrder": ["human", "animal", "object", "other"]},
@@ -41,7 +44,7 @@ def manifest(package: Path) -> dict[str, object]:
             "logitScale": 1.0, "logitBias": 0.0, "prompts": PROMPTS, "promptCategoryIndices": CATEGORIES,
             "promptsSha256": prompt_contract_sha256(PROMPTS, CATEGORIES), "promptAggregation": "mean_logit_per_category_then_softmax",
         },
-        "policy": {"subjectHintPolicyVersion": "subject-hint-policy-v2", "masterRankerVersion": "master-ranker-v2", "thresholds": {"highConfidence": 0.78, "margin": 0.18}},
+        "policy": {"subjectHintPolicyVersion": SUBJECT_HINT_POLICY_VERSION, "masterRankerVersion": MASTER_RANKER_VERSION, "thresholds": {"highConfidence": 0.78, "margin": 0.18}},
         "files": {"vision_encoder.onnx": sha256(package / "vision_encoder.onnx"), "text_prototypes.npz": sha256(package / "text_prototypes.npz")},
     }
 
@@ -60,10 +63,13 @@ class _Node:
         self.name, self.shape = name, shape
 
 
-def install_fake_runtime(monkeypatch, *, providers=("CPUExecutionProvider",), output_shape=(1, 768), version="1.20.1") -> None:
+def install_fake_runtime(monkeypatch, *, providers=("CPUExecutionProvider",), output_shape=(1, 768), version="1.20.1") -> dict[str, int]:
+    calls = {"sessions": 0}
+
     class Session:
         def __init__(self, path: str, providers: list[str]) -> None:
             del path, providers
+            calls["sessions"] += 1
 
         def get_providers(self):
             return list(globals_providers)
@@ -80,6 +86,7 @@ def install_fake_runtime(monkeypatch, *, providers=("CPUExecutionProvider",), ou
 
     globals_providers = providers
     monkeypatch.setitem(sys.modules, "onnxruntime", types.SimpleNamespace(__version__=version, InferenceSession=Session))
+    return calls
 
 
 def sample_image() -> bytes:
@@ -145,6 +152,30 @@ def test_siglip_onnx_rejects_a_manifest_with_an_unapproved_upstream_weight(tmp_p
     (package / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(VisualEncoderUnavailable, match="MANIFEST_INVALID"):
         SiglipOnnxVisualEncoder(package)
+
+
+@pytest.mark.parametrize(
+    ("section", "field"),
+    [
+        ("artifact", "encoderVersion"),
+        ("policy", "subjectHintPolicyVersion"),
+        ("policy", "masterRankerVersion"),
+    ],
+)
+def test_siglip_onnx_rejects_unsupported_manifest_versions_before_creating_a_session(
+    tmp_path, monkeypatch, section, field
+):
+    package = create_package(tmp_path)
+    calls = install_fake_runtime(monkeypatch)
+    payload = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+    payload[section][field] = "unsupported-version"
+    (package / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(VisualEncoderUnavailable, match="MANIFEST_INVALID"):
+        SiglipOnnxVisualEncoder(package)
+
+    assert calls["sessions"] == 0
+
 
 def test_siglip_onnx_rejects_unexpected_provider_or_output_shape(tmp_path, monkeypatch):
     package = create_package(tmp_path)
