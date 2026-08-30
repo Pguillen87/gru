@@ -28,3 +28,7 @@ def test_generation_reservation_enforces_user_and_global_caps():
         generation_reservation(0.9, 0.0, 0.2, 1.0, 0.4)
     with pytest.raises(CostLimitExceeded):
         generation_reservation(0.0, 0.3, 0.2, 1.0, 0.4)
+
+
+def test_currency_reservation_allows_an_exact_decimal_cap():
+    assert can_reserve(0.4, 0.2, 0.6)

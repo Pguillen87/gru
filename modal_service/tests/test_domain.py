@@ -41,3 +41,14 @@ def test_cancel_is_idempotent():
     job = JobRecord("job", "user", "key", "source", state=JobState.READY_FOR_GENERATION)
     assert job.cancel()
     assert not job.cancel()
+
+
+def test_approved_master_can_generate_and_complete_selected_poses():
+    job = JobRecord("job", "user", "key", "source", state=JobState.AWAITING_MASTER_APPROVAL)
+
+    job.approve_master("master_1")
+    assert job.start_pose_generation()
+    assert job.state is JobState.GENERATING_POSES
+    assert job.complete_pose_generation("job")
+    assert job.state is JobState.COMPLETED
+    assert job.pose_set_id == "job"

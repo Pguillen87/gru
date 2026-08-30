@@ -7,8 +7,11 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Mapping
 
+from modal_service.catalog import DEFAULT_POSE_CHOICES, MASTER_PROMPT_VERSION, POSE_TEMPLATE_VERSION
+
 
 class JobState(StrEnum):
+    REGISTERED = "REGISTERED"
     QUEUED = "QUEUED"
     VALIDATING_INPUT = "VALIDATING_INPUT"
     READY_FOR_GENERATION = "READY_FOR_GENERATION"
@@ -26,6 +29,7 @@ class JobState(StrEnum):
 TERMINAL_STATES = frozenset({JobState.COMPLETED, JobState.FAILED, JobState.CANCELED})
 
 ALLOWED_TRANSITIONS: Mapping[JobState, frozenset[JobState]] = {
+    JobState.REGISTERED: frozenset({JobState.VALIDATING_INPUT, JobState.CANCELED}),
     JobState.QUEUED: frozenset({JobState.VALIDATING_INPUT, JobState.CANCELED}),
     JobState.VALIDATING_INPUT: frozenset({JobState.READY_FOR_GENERATION, JobState.GENERATING_MASTER, JobState.FAILED, JobState.CANCELED}),
     JobState.READY_FOR_GENERATION: frozenset({JobState.VALIDATING_INPUT, JobState.CANCELED}),
@@ -43,6 +47,18 @@ ALLOWED_TRANSITIONS: Mapping[JobState, frozenset[JobState]] = {
 
 class DomainError(ValueError):
     """A safe error which may be shown to the integration client."""
+
+
+class PoseAlphaQualityError(DomainError):
+    """A deterministic pose derivative failed its mandatory alpha quality gate."""
+
+    code = "POSE_ALPHA_QC_FAILED"
+
+
+class PoseVisualConsistencyError(DomainError):
+    """A pose set passed alpha QC but failed deterministic framing consistency."""
+
+    code = "VISUAL_POSE_CONSISTENCY_FAILED"
 
 
 class JobNotFound(DomainError):
@@ -90,18 +106,35 @@ class JobRecord:
     user_id: str
     idempotency_key: str
     source_key: str
+    attempt_id: str | None = None
     state: JobState = JobState.QUEUED
     master_id: str | None = None
     pose_set_id: str | None = None
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
     model_version: str = "qwen-image-edit-2511"
-    prompt_version: str = "master-v2"
-    template_version: str = "poses-v1"
+    prompt_version: str = MASTER_PROMPT_VERSION
+    template_version: str = POSE_TEMPLATE_VERSION
+    pose_choices: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_POSE_CHOICES))
+    display_name: str = "Mascote GRU"
+    configuration_revision: int = 0
+    subject_identity: dict[str, object] = field(default_factory=lambda: {
+        "category": "other",
+        "label": "confirmed subject",
+        "species": None,
+    })
+    correlation_id: str | None = None
     attempts: int = 0
     error_code: str | None = None
     generation_reserved: bool = False
+    pose_generation_reserved: bool = False
     gpu_call_id: str | None = None
+    pose_gpu_call_id: str | None = None
+    pose_operation_id: str | None = None
+    pose_operation_fingerprint: str | None = None
+    pose_operation_status: str | None = None
+    pose_operation_created_at: str | None = None
+    pose_request_id: str | None = None
 
     def transition_to(self, target: JobState) -> None:
         require_transition(self.state, target)
@@ -117,6 +150,24 @@ class JobRecord:
             raise DomainError("Master approval is not available for this job.")
         self.master_id = master_id
         self.transition_to(JobState.CONSISTENCY_TEST)
+        return True
+
+    def start_pose_generation(self) -> bool:
+        if self.state is JobState.GENERATING_POSES:
+            return False
+        if self.state is not JobState.CONSISTENCY_TEST:
+            raise DomainError("Pose generation is not available for this job.")
+        self.transition_to(JobState.READY_FOR_POSES)
+        self.transition_to(JobState.GENERATING_POSES)
+        return True
+
+    def complete_pose_generation(self, pose_set_id: str) -> bool:
+        if self.state is JobState.COMPLETED:
+            return False
+        if self.state is not JobState.GENERATING_POSES:
+            raise DomainError("Pose generation is not active for this job.")
+        self.pose_set_id = pose_set_id
+        self.transition_to(JobState.COMPLETED)
         return True
 
     def cancel(self) -> bool:

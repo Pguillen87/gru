@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 
 class CostLimitExceeded(ValueError):
     code = "COST_LIMIT_REACHED"
@@ -12,7 +14,11 @@ class RateLimitExceeded(ValueError):
 
 
 def can_reserve(current_usd: float, requested_usd: float, cap_usd: float) -> bool:
-    return current_usd + requested_usd <= cap_usd
+    """Compare currency without binary floating-point rounding surprises."""
+    current = Decimal(str(current_usd))
+    requested = Decimal(str(requested_usd))
+    cap = Decimal(str(cap_usd))
+    return current + requested <= cap
 
 
 def require_reservation(current_usd: float, requested_usd: float, cap_usd: float) -> float:
