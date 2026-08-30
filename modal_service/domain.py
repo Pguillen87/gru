@@ -39,7 +39,7 @@ ALLOWED_TRANSITIONS: Mapping[JobState, frozenset[JobState]] = {
     JobState.VALIDATING_INPUT: frozenset({JobState.READY_FOR_GENERATION, JobState.GENERATING_MASTER, JobState.FAILED, JobState.CANCELED}),
     JobState.READY_FOR_GENERATION: frozenset({JobState.VALIDATING_INPUT, JobState.CANCELED}),
     JobState.GENERATING_MASTER: frozenset({JobState.AWAITING_MASTER_APPROVAL, JobState.FAILED, JobState.CANCELED}),
-    JobState.AWAITING_MASTER_APPROVAL: frozenset({JobState.CONSISTENCY_TEST, JobState.CANCELED}),
+    JobState.AWAITING_MASTER_APPROVAL: frozenset({JobState.CONSISTENCY_TEST, JobState.FAILED, JobState.CANCELED}),
     JobState.CONSISTENCY_TEST: frozenset({JobState.READY_FOR_POSES, JobState.CONSISTENCY_FAILED, JobState.FAILED, JobState.CANCELED}),
     JobState.CONSISTENCY_FAILED: frozenset({JobState.GENERATING_MASTER, JobState.CANCELED}),
     JobState.READY_FOR_POSES: frozenset({JobState.GENERATING_POSES, JobState.CANCELED}),
