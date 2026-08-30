@@ -12,4 +12,5 @@ $env:REGISTRATION_ENABLED = "true"
 $env:MASTER_GENERATION_ENABLED = "false"
 $env:POSE_GENERATION_ENABLED = "false"
 
-modal deploy .\modal_service\app.py
+# Deploy the package module so the runtime receives modal_service.* imports.
+modal deploy -m modal_service.app
