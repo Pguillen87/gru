@@ -22,6 +22,11 @@ from modal_service.domain import JobRecord, JobState, WorkflowMode
 ENCODER_VERSION = "siglip-base-p16-224-zeroshot-v1"
 SUBJECT_HINT_POLICY_VERSION = "subject-hint-policy-v2"
 MASTER_RANKER_VERSION = "master-ranker-v2"
+MASTER_RANKER_POLICY_VERSION = "master-ranker-policy-v1"
+# Provisional and deliberately conservative: until the real QA sample grows,
+# uncertainty always prefers an owner decision over a paid pose operation.
+AUTO_SELECT_MIN_TOP1_SCORE = 0.82
+AUTO_SELECT_MIN_MARGIN = 0.04
 ARTIFACT_PACKAGE_NAME = "siglip-base-p16-224-zeroshot-v1"
 ARTIFACT_SCHEMA_VERSION = 1
 UPSTREAM_MODEL_ID = "google/siglip-base-patch16-224"
@@ -386,6 +391,27 @@ def rank_masters(source: bytes, candidates: dict[str, bytes], qc_by_master: dict
     }
 
 
+def master_selection_policy(selection: dict[str, object]) -> dict[str, object]:
+    """Classify a completed ranking without persisting embeddings or images."""
+    scores = [item for item in selection.get("scores", []) if isinstance(item, dict)]
+    ranked = sorted(scores, key=lambda item: (-float(item.get("total", 0.0)), str(item.get("masterId", ""))))
+    if len(ranked) != 3 or not selection.get("selectedMasterId"):
+        raise ValueError("Master ranking policy requires exactly three scored candidates.")
+    top1, top2 = float(ranked[0]["total"]), float(ranked[1]["total"])
+    margin = round(top1 - top2, 6)
+    decision = "AUTO_SELECTED" if top1 >= AUTO_SELECT_MIN_TOP1_SCORE and margin >= AUTO_SELECT_MIN_MARGIN else "NEEDS_HUMAN_SELECTION"
+    return {
+        **selection,
+        "selectionSource": "auto" if decision == "AUTO_SELECTED" else None,
+        "decision": decision,
+        "decisionReason": "CONFIDENT_RANKING" if decision == "AUTO_SELECTED" else "RANKING_AMBIGUOUS",
+        "masterRankerPolicyVersion": MASTER_RANKER_POLICY_VERSION,
+        "top1Score": round(top1, 6),
+        "top2Score": round(top2, 6),
+        "margin": margin,
+    }
+
+
 def shadow_ranking_observation(selection: dict[str, object]) -> dict[str, object]:
     """Return aggregate, non-image observations; never an embedding."""
     scores = selection.get("scores")
@@ -405,6 +431,8 @@ def product_state(job: JobRecord) -> str:
         return "FAILED"
     if job.generation_ready_at or job.state is JobState.COMPLETED:
         return "READY_TO_HATCH"
+    if job.state is JobState.AWAITING_MASTER_APPROVAL and (job.master_selection or {}).get("decision") == "NEEDS_HUMAN_SELECTION":
+        return "NEEDS_HUMAN_MASTER_SELECTION"
     if job.state in {JobState.REGISTERED, JobState.QUEUED, JobState.VALIDATING_INPUT, JobState.READY_FOR_GENERATION}:
         return "PREPARING"
     return "INCUBATING"

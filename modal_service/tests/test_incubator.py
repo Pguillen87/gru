@@ -7,6 +7,7 @@ from modal_service.incubator import (
     NeutralVisualEncoder,
     VisualEncoderUnavailable,
     load_pinned_visual_encoder,
+    master_selection_policy,
     pinned_encoder_status,
     product_state,
     rank_masters,
@@ -94,6 +95,31 @@ def test_master_ranking_fails_when_every_candidate_fails_hard_qc():
             "human",
             FakeEncoder(),
         )
+
+
+def test_confident_master_ranking_policy_can_auto_select():
+    decision = master_selection_policy({
+        "selectedMasterId": "master_1", "encoderVersion": "fake-v1", "masterRankerVersion": "master-ranker-v2",
+        "scores": [{"masterId": "master_1", "total": 0.91}, {"masterId": "master_2", "total": 0.82}, {"masterId": "master_3", "total": 0.70}],
+    })
+    assert decision["decision"] == "AUTO_SELECTED"
+    assert decision["selectionSource"] == "auto"
+    assert decision["masterRankerPolicyVersion"] == "master-ranker-policy-v1"
+
+
+def test_ambiguous_master_ranking_policy_requires_human_selection():
+    decision = master_selection_policy({
+        "selectedMasterId": "master_2", "encoderVersion": "fake-v1", "masterRankerVersion": "master-ranker-v2",
+        "scores": [{"masterId": "master_1", "total": 0.75}, {"masterId": "master_2", "total": 0.777476}, {"masterId": "master_3", "total": 0.769791}],
+    })
+    assert decision["decision"] == "NEEDS_HUMAN_SELECTION"
+    assert decision["margin"] == 0.007685
+
+
+def test_ambiguous_incubation_is_a_recoverable_product_state():
+    job = JobRecord("job", "owner", "key", "source", state=JobState.AWAITING_MASTER_APPROVAL, workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
+                    master_selection={"decision": "NEEDS_HUMAN_SELECTION"})
+    assert product_state(job) == "NEEDS_HUMAN_MASTER_SELECTION"
 
 
 def test_shadow_ranking_observation_excludes_embeddings_and_is_not_a_selection_state():
