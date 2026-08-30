@@ -1,0 +1,9 @@
+# Controlled offline export and parity environment. Never installed by Modal runtime.
+numpy==2.1.3
+onnx==1.17.0
+onnxruntime==1.20.1
+pillow==11.1.0
+safetensors==0.5.3
+tokenizers==0.21.4
+torch==2.6.0
+transformers==4.48.3

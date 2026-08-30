@@ -211,6 +211,33 @@ def test_async_incubation_replay_and_lease_are_serialized():
     assert release_changed and released.lease_owner is None
 
 
+def test_shadow_ranking_persists_versions_without_selecting_a_master_or_pose_operation():
+    service, _ = coordinator()
+    job, _ = service.register(
+        "uid-a", "incubator-shadow", "original/hash", registration_only=True,
+        workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
+        subject_hint={"version": "subject-hint-policy-v2", "suggestedCategory": "uncertain"},
+    )
+    service.jobs[job.job_id]["state"] = JobState.AWAITING_MASTER_APPROVAL.value
+    observation = {
+        "encoderVersion": "siglip-base-p16-224-zeroshot-v1",
+        "masterRankerVersion": "master-ranker-v2",
+        "candidateCount": 3,
+        "winner": "master_2",
+        "highestScore": 0.91,
+    }
+    recorded, changed = service.record_shadow_ranking(job.job_id, observation)
+    replay, replay_changed = service.record_shadow_ranking(job.job_id, observation)
+
+    assert changed and not replay_changed
+    assert recorded.master_id is None and recorded.master_selection is None
+    assert recorded.pose_gpu_call_id is None and recorded.pose_operation_id is None
+    assert recorded.encoder_version == observation["encoderVersion"]
+    assert recorded.master_ranker_version == observation["masterRankerVersion"]
+    assert recorded.subject_hint_policy_version == "subject-hint-policy-v2"
+    assert replay.shadow_ranking_observation == observation
+
+
 def test_async_incubation_heartbeat_requires_the_current_lease_owner():
     service, _ = coordinator()
     job, _ = service.register(

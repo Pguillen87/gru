@@ -43,12 +43,13 @@ from modal_service.coordinator import JobCoordinator, JobOperation
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
 from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, PoseAlphaQualityError, PoseVisualConsistencyError, WorkflowMode
 from modal_service.incubator import (
-    PillowFeatureEncoder,
+    NeutralVisualEncoder,
     VisualEncoderUnavailable,
     is_async_incubation,
     load_pinned_visual_encoder,
     pinned_encoder_status,
     rank_masters,
+    shadow_ranking_observation,
     subject_hint,
 )
 from modal_service.inference_observability import InferenceObserver, trace_id_for_job
@@ -82,6 +83,7 @@ REGISTRATION_ENABLED = feature_enabled(os.getenv("REGISTRATION_ENABLED"), defaul
 MASTER_GENERATION_ENABLED = feature_enabled(os.getenv("MASTER_GENERATION_ENABLED"))
 POSE_GENERATION_ENABLED = feature_enabled(os.getenv("POSE_GENERATION_ENABLED"))
 INCUBATOR_FLOW_ENABLED = feature_enabled(os.getenv("INCUBATOR_FLOW_ENABLED"))
+INCUBATOR_AUTO_RANKING_ENABLED = feature_enabled(os.getenv("INCUBATOR_AUTO_RANKING_ENABLED"))
 CURRENT_REQUEST_ID: ContextVar[str] = ContextVar("modal_request_id", default="")
 MASTER_GPU = "H100"
 QWEN_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
@@ -268,8 +270,8 @@ api_image = (
             "MASTER_GENERATION_ENABLED": "true" if MASTER_GENERATION_ENABLED else "false",
             "POSE_GENERATION_ENABLED": "true" if POSE_GENERATION_ENABLED else "false",
             "INCUBATOR_FLOW_ENABLED": "true" if INCUBATOR_FLOW_ENABLED else "false",
-            "INCUBATOR_VISUAL_ENCODER_PATH": os.getenv("INCUBATOR_VISUAL_ENCODER_PATH", ""),
-            "INCUBATOR_VISUAL_ENCODER_SHA256": os.getenv("INCUBATOR_VISUAL_ENCODER_SHA256", ""),
+            "INCUBATOR_AUTO_RANKING_ENABLED": "true" if INCUBATOR_AUTO_RANKING_ENABLED else "false",
+            "INCUBATOR_VISUAL_ENCODER_DIR": os.getenv("INCUBATOR_VISUAL_ENCODER_DIR", ""),
             "PULEIRO_BFF_JWT_ISSUER": os.getenv("PULEIRO_BFF_JWT_ISSUER", "puleiro-bff"),
             "PULEIRO_BFF_JWT_AUDIENCE": os.getenv("PULEIRO_BFF_JWT_AUDIENCE", "gru-modal"),
             "PULEIRO_BFF_JWT_MAX_TTL_SECONDS": os.getenv("PULEIRO_BFF_JWT_MAX_TTL_SECONDS", "120"),
@@ -285,8 +287,8 @@ api_image = (
     )
 )
 incubator_image = api_image.pip_install(
-    "torch>=2.6,<3",
-    "torchvision>=0.21,<1",
+    "numpy==2.1.3",
+    "onnxruntime==1.20.1",
 )
 gpu_image = api_image.pip_install(
     "torch>=2.6,<3",
@@ -655,6 +657,7 @@ def job_control(
     request_id: str = "",
     error_code: str = "",
     master_selection: dict[str, object] | None = None,
+    shadow_ranking: dict[str, object] | None = None,
     lease_owner: str = "",
     lease_ttl_seconds: int = 90,
 ) -> dict[str, object]:
@@ -694,6 +697,8 @@ def job_control(
             job, changed = coordinator.approve_master(job_id, user_id, master_id, POSE_PROMPT_VERSION)
         elif command is JobOperation.AUTO_SELECT_MASTER:
             job, changed = coordinator.auto_select_master(job_id, master_selection or {}, POSE_PROMPT_VERSION)
+        elif command is JobOperation.RECORD_SHADOW_RANKING:
+            job, changed = coordinator.record_shadow_ranking(job_id, shadow_ranking or {})
         elif command is JobOperation.UPDATE_CONFIGURATION:
             job, changed = coordinator.update_configuration(
                 job_id,
@@ -900,6 +905,15 @@ def advance_async_incubation(job_id: str) -> dict[str, object]:
                     load_pinned_visual_encoder(),
                 )
             except (OSError, ValueError, VisualEncoderUnavailable):
+                if not INCUBATOR_AUTO_RANKING_ENABLED:
+                    structured_event(
+                        "incubator_shadow_ranking_unavailable",
+                        environment=ENVIRONMENT.value,
+                        result="deferred",
+                        jobId=job_id,
+                        safeErrorCode="MASTER_SHADOW_RANKING_UNAVAILABLE",
+                    )
+                    return {"job": _serialize(job), "changed": False, "deferred": True, "shadow": True}
                 failed = job_control.remote(
                     JobOperation.FAIL_INCUBATION.value,
                     job_id,
@@ -907,6 +921,22 @@ def advance_async_incubation(job_id: str) -> dict[str, object]:
                 )
                 _raise_guard_error(failed)
                 return dict(failed)
+            if not INCUBATOR_AUTO_RANKING_ENABLED:
+                observation = shadow_ranking_observation(selection)
+                observed = job_control.remote(
+                    JobOperation.RECORD_SHADOW_RANKING.value,
+                    job_id,
+                    shadow_ranking=observation,
+                )
+                _raise_guard_error(observed)
+                structured_event(
+                    "incubator_master_ranked_shadow",
+                    environment=ENVIRONMENT.value,
+                    result="observed",
+                    jobId=job_id,
+                    **observation,
+                )
+                return {"job": dict(observed["job"]), "changed": False, "deferred": True, "shadow": True}
             selected = job_control.remote(
                 JobOperation.AUTO_SELECT_MASTER.value,
                 job_id,
@@ -1001,15 +1031,42 @@ def reconcile_async_incubations() -> dict[str, int]:
 def inspect_subject_hint_cpu(content: bytes, selected_category: str) -> dict[str, object]:
     """Best-effort CPU-only category warning; explicit user choice still wins."""
     try:
-        scores = load_pinned_visual_encoder().category_scores(content)
+        scores = load_pinned_visual_encoder().classify(content)
     except VisualEncoderUnavailable:
-        scores = PillowFeatureEncoder().category_scores(content)
+        scores = NeutralVisualEncoder().classify(content)
     return subject_hint(selected_category, scores)
 
 
 @app.function(image=incubator_image, volumes={MODEL_ROOT: models}, max_containers=1)
 def visual_encoder_status() -> dict[str, object]:
     return pinned_encoder_status()
+
+
+@app.function(image=incubator_image, volumes={MODEL_ROOT: models}, max_containers=1, timeout=120)
+def benchmark_visual_encoder_cpu(content: bytes, iterations: int = 20) -> dict[str, object]:
+    """Controlled CPU benchmark; it returns no image, embedding, or prompt data."""
+    if not 1 <= iterations <= 100:
+        raise ValueError("iterations must be between 1 and 100")
+    import resource
+
+    started = time.perf_counter()
+    encoder = load_pinned_visual_encoder()
+    load_ms = round((time.perf_counter() - started) * 1000, 2)
+    samples: list[float] = []
+    for _ in range(iterations):
+        call_started = time.perf_counter()
+        encoder.classify(content)
+        samples.append((time.perf_counter() - call_started) * 1000)
+    ordered = sorted(samples)
+    percentile = lambda fraction: ordered[max(0, min(len(ordered) - 1, round((len(ordered) - 1) * fraction)))]
+    return {
+        "encoder": encoder.provenance(),
+        "loadMs": load_ms,
+        "iterations": iterations,
+        "p50Ms": round(percentile(0.50), 2),
+        "p95Ms": round(percentile(0.95), 2),
+        "rssKiB": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
+    }
 
 
 @app.function(image=api_image, volumes={MODEL_ROOT: models}, max_containers=1)
@@ -1935,12 +1992,14 @@ def api():
                 for role in ("normal", "listening", "transcribing")
             },
             "incubator": {
-                "ready": INCUBATOR_FLOW_ENABLED and bool(encoder["ready"]) and not master_reasons and not pose_reasons,
+                "ready": INCUBATOR_FLOW_ENABLED and INCUBATOR_AUTO_RANKING_ENABLED and bool(encoder["ready"]) and not master_reasons and not pose_reasons,
                 "enabled": INCUBATOR_FLOW_ENABLED,
+                "autoRankingEnabled": INCUBATOR_AUTO_RANKING_ENABLED,
+                "shadowMode": INCUBATOR_FLOW_ENABLED and not INCUBATOR_AUTO_RANKING_ENABLED,
                 "encoder": encoder,
                 "workflowVersion": WorkflowMode.ASYNC_INCUBATOR_V1.value,
-                "rankerVersion": "master-ranker-v1",
-                "subjectHintVersion": "subject-hint-v1",
+                "rankerVersion": encoder["masterRankerVersion"],
+                "subjectHintVersion": encoder["subjectHintPolicyVersion"],
             },
         }
 
