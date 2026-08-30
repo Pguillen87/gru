@@ -117,7 +117,7 @@ def test_pose_endpoint_enqueues_once_without_waiting_for_gpu_or_cache():
     assert "ENQUEUE_POSES" in route
     assert "model_cache_status.remote" not in route
     assert ".generate_poses.remote(" not in route
-    assert route.count(".generate_poses.spawn(") == 1
+    assert route.count("_spawn_pose_worker(") == 1
     assert 'status_code=202' in source
 
 
@@ -129,6 +129,29 @@ def test_master_scheduler_emits_safe_step_events_without_logging_sensitive_value
     assert '"MASTER_AUTHORIZATION_UNAVAILABLE"' in source
     assert '"master_worker_enqueue_failed"' in source
     assert '"MASTER_WORKER_ENQUEUE_FAILED"' in source
+
+
+def test_every_gpu_spawn_uses_the_shared_fail_closed_boundary():
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+    master_boundary = source.split("def _spawn_master_worker", 1)[1].split("def _spawn_pose_worker", 1)[0]
+    pose_boundary = source.split("def _spawn_pose_worker", 1)[1].split("def _schedule_master", 1)[0]
+
+    assert source.count(".spawn(") == 2
+    assert "_require_master_generation_enabled()" in master_boundary
+    assert ".generate.spawn(" in master_boundary
+    assert "_require_pose_generation_enabled()" in pose_boundary
+    assert ".generate_poses.spawn(" in pose_boundary
+
+
+def test_incubator_reconciler_defers_disabled_generation_without_reserving_gpu():
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+    advance = source.split("def advance_async_incubation", 1)[1].split("def reconcile_async_incubations", 1)[0]
+    reconciler = source.split("def reconcile_async_incubations", 1)[1].split("def inspect_subject_hint_cpu", 1)[0]
+
+    assert advance.index("if not _pose_generation_enabled()") < advance.index("JobOperation.ENQUEUE_POSES")
+    assert "JobState.AWAITING_MASTER_APPROVAL, JobState.CONSISTENCY_TEST" in reconciler
+    assert "and _pose_generation_enabled()" in reconciler
+    assert reconciler.index("_master_generation_enabled()") < reconciler.index("_schedule_master")
 
 
 def test_pose_reservation_is_serialized_and_worker_does_not_restart_transition():

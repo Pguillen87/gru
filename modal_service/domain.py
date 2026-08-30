@@ -26,6 +26,11 @@ class JobState(StrEnum):
     CANCELED = "CANCELED"
 
 
+class WorkflowMode(StrEnum):
+    LEGACY_MANUAL = "legacy_manual"
+    ASYNC_INCUBATOR_V1 = "async_incubator_v1"
+
+
 TERMINAL_STATES = frozenset({JobState.COMPLETED, JobState.FAILED, JobState.CANCELED})
 
 ALLOWED_TRANSITIONS: Mapping[JobState, frozenset[JobState]] = {
@@ -135,6 +140,14 @@ class JobRecord:
     pose_operation_status: str | None = None
     pose_operation_created_at: str | None = None
     pose_request_id: str | None = None
+    workflow_mode: str = WorkflowMode.LEGACY_MANUAL.value
+    subject_hint: dict[str, object] | None = None
+    master_selection: dict[str, object] | None = None
+    generation_ready_at: str | None = None
+    lease_owner: str | None = None
+    lease_expires_at: str | None = None
+    heartbeat_at: str | None = None
+    workflow_revision: int = 0
 
     def transition_to(self, target: JobState) -> None:
         require_transition(self.state, target)

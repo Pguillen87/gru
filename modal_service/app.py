@@ -41,7 +41,16 @@ from modal_service.bff_auth import BffAuthenticationRejected, BffIdentity, consu
 from modal_service.config import Environment, feature_enabled, generation_enabled, limits_for
 from modal_service.coordinator import JobCoordinator, JobOperation
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
-from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, PoseAlphaQualityError, PoseVisualConsistencyError
+from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, PoseAlphaQualityError, PoseVisualConsistencyError, WorkflowMode
+from modal_service.incubator import (
+    PillowFeatureEncoder,
+    VisualEncoderUnavailable,
+    is_async_incubation,
+    load_pinned_visual_encoder,
+    pinned_encoder_status,
+    rank_masters,
+    subject_hint,
+)
 from modal_service.inference_observability import InferenceObserver, trace_id_for_job
 from modal_service.model_cache import (
     ModelCacheNotReady,
@@ -72,6 +81,7 @@ GPU_GENERATION_ENABLED = generation_enabled(ENVIRONMENT, os.getenv("GPU_GENERATI
 REGISTRATION_ENABLED = feature_enabled(os.getenv("REGISTRATION_ENABLED"), default=True)
 MASTER_GENERATION_ENABLED = feature_enabled(os.getenv("MASTER_GENERATION_ENABLED"))
 POSE_GENERATION_ENABLED = feature_enabled(os.getenv("POSE_GENERATION_ENABLED"))
+INCUBATOR_FLOW_ENABLED = feature_enabled(os.getenv("INCUBATOR_FLOW_ENABLED"))
 CURRENT_REQUEST_ID: ContextVar[str] = ContextVar("modal_request_id", default="")
 MASTER_GPU = "H100"
 QWEN_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
@@ -164,6 +174,25 @@ class MascotConfigurationV2Request(BaseModel):
     configuration_revision: int = Field(ge=0)
 
 
+class SubjectHintV2Request(BaseModel):
+    image_base64: str = Field(min_length=1, max_length=14_000_000)
+    content_type: str | None = None
+    selected_category: Literal["human", "animal", "object", "other"]
+
+
+class SubjectHintPayload(BaseModel):
+    version: str
+    suggestedCategory: Literal["human", "animal", "uncertain"]
+    confidenceBand: Literal["low", "medium", "high"]
+    requiresConfirmation: bool
+    overrideConfirmed: bool = False
+
+
+class CreateIncubationV2Request(CreateJobV2Request):
+    pose_choices: dict[str, str]
+    subject_hint: SubjectHintPayload | None = None
+
+
 def _normalized_subject_identity(request: SubjectIdentityRequest) -> dict[str, object]:
     if not request.confirmed:
         raise DomainError("The subject identity must be confirmed before generation.")
@@ -238,6 +267,9 @@ api_image = (
             "REGISTRATION_ENABLED": "true" if REGISTRATION_ENABLED else "false",
             "MASTER_GENERATION_ENABLED": "true" if MASTER_GENERATION_ENABLED else "false",
             "POSE_GENERATION_ENABLED": "true" if POSE_GENERATION_ENABLED else "false",
+            "INCUBATOR_FLOW_ENABLED": "true" if INCUBATOR_FLOW_ENABLED else "false",
+            "INCUBATOR_VISUAL_ENCODER_PATH": os.getenv("INCUBATOR_VISUAL_ENCODER_PATH", ""),
+            "INCUBATOR_VISUAL_ENCODER_SHA256": os.getenv("INCUBATOR_VISUAL_ENCODER_SHA256", ""),
             "PULEIRO_BFF_JWT_ISSUER": os.getenv("PULEIRO_BFF_JWT_ISSUER", "puleiro-bff"),
             "PULEIRO_BFF_JWT_AUDIENCE": os.getenv("PULEIRO_BFF_JWT_AUDIENCE", "gru-modal"),
             "PULEIRO_BFF_JWT_MAX_TTL_SECONDS": os.getenv("PULEIRO_BFF_JWT_MAX_TTL_SECONDS", "120"),
@@ -251,6 +283,10 @@ api_image = (
         "firebase-admin>=6.6,<7",
         "PyJWT>=2.10,<3",
     )
+)
+incubator_image = api_image.pip_install(
+    "torch>=2.6,<3",
+    "torchvision>=0.21,<1",
 )
 gpu_image = api_image.pip_install(
     "torch>=2.6,<3",
@@ -535,6 +571,8 @@ def register_job(
     registration_only: bool = False,
     attempt_id: str | None = None,
     correlation_id: str | None = None,
+    workflow_mode: str = WorkflowMode.LEGACY_MANUAL.value,
+    subject_hint_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     try:
         coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
@@ -547,6 +585,8 @@ def register_job(
             registration_only=registration_only,
             attempt_id=attempt_id,
             correlation_id=correlation_id,
+            workflow_mode=workflow_mode,
+            subject_hint=subject_hint_payload,
         )
         if attempt_id:
             coordinator.idempotency[_attempt_key(user_id, attempt_id)] = job.job_id
@@ -614,6 +654,9 @@ def job_control(
     correlation_id: str = "",
     request_id: str = "",
     error_code: str = "",
+    master_selection: dict[str, object] | None = None,
+    lease_owner: str = "",
+    lease_ttl_seconds: int = 90,
 ) -> dict[str, object]:
     try:
         coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
@@ -649,6 +692,8 @@ def job_control(
             job, changed = coordinator.record_pose_gpu_call(job_id, call_id)
         elif command is JobOperation.APPROVE_MASTER:
             job, changed = coordinator.approve_master(job_id, user_id, master_id, POSE_PROMPT_VERSION)
+        elif command is JobOperation.AUTO_SELECT_MASTER:
+            job, changed = coordinator.auto_select_master(job_id, master_selection or {}, POSE_PROMPT_VERSION)
         elif command is JobOperation.UPDATE_CONFIGURATION:
             job, changed = coordinator.update_configuration(
                 job_id,
@@ -674,6 +719,14 @@ def job_control(
             job, changed = coordinator.commit_pose_outputs(job_id, _verify_pose_outputs)
         elif command is JobOperation.FAIL_POSES:
             job, changed = coordinator.fail_pose_generation(job_id, error_code or "POSE_GENERATION_FAILED")
+        elif command is JobOperation.FAIL_INCUBATION:
+            job, changed = coordinator.fail_incubation(job_id, error_code or "INCUBATION_FAILED")
+        elif command is JobOperation.CLAIM_INCUBATION_LEASE:
+            job, changed = coordinator.claim_incubation_lease(job_id, lease_owner, lease_ttl_seconds)
+        elif command is JobOperation.HEARTBEAT_INCUBATION:
+            job, changed = coordinator.heartbeat_incubation(job_id, lease_owner, lease_ttl_seconds)
+        elif command is JobOperation.RELEASE_INCUBATION_LEASE:
+            job, changed = coordinator.release_incubation_lease(job_id, lease_owner)
         elif command is JobOperation.CANCEL:
             job, changed = coordinator.cancel(job_id, user_id)
         elif command is JobOperation.DELETE:
@@ -736,11 +789,43 @@ def _master_remote_step(job: JobRecord, event: str, unavailable_code: str, opera
         raise GuardRejected(unavailable_code, "The master generation service is temporarily unavailable.") from None
 
 
+def _master_generation_enabled() -> bool:
+    return GPU_GENERATION_ENABLED and MASTER_GENERATION_ENABLED
+
+
+def _pose_generation_enabled() -> bool:
+    return GPU_GENERATION_ENABLED and POSE_GENERATION_ENABLED
+
+
+def _require_master_generation_enabled() -> None:
+    if not _master_generation_enabled():
+        raise GuardRejected("GENERATION_DISABLED", "Master generation is disabled.")
+
+
+def _require_pose_generation_enabled() -> None:
+    if not _pose_generation_enabled():
+        raise GuardRejected("POSE_GENERATION_DISABLED", "Pose generation is disabled.")
+
+
+def _spawn_master_worker(job_id: str):
+    """Single fail-closed boundary for every Master GPU invocation."""
+    _require_master_generation_enabled()
+    return QwenMasterWorker().generate.spawn(job_id)
+
+
+def _spawn_pose_worker(job_id: str):
+    """Single fail-closed boundary for every pose GPU invocation."""
+    _require_pose_generation_enabled()
+    return QwenMasterWorker().generate_poses.spawn(job_id)
+
+
 def _schedule_master(job: JobRecord, user_id: str) -> dict[str, object]:
     started_at = time.monotonic()
     _master_schedule_event("master_schedule_received", job)
-    if GPU_GENERATION_ENABLED:
-        _master_remote_step(job, "master_cache_checked", "MASTER_CACHE_UNAVAILABLE", model_cache_status.remote)
+    # This scheduler is shared by legacy routes and the async reconciler.
+    # Reject before any cost reservation, keeping an incubator recoverable.
+    _require_master_generation_enabled()
+    _master_remote_step(job, "master_cache_checked", "MASTER_CACHE_UNAVAILABLE", model_cache_status.remote)
     authorization = _master_remote_step(
         job,
         "master_authorization_checked",
@@ -756,7 +841,7 @@ def _schedule_master(job: JobRecord, user_id: str) -> dict[str, object]:
         {"cache_revision": MODEL_CACHE_SPEC.cache_revision, "gpu_type": MASTER_GPU},
     )
     try:
-        function_call = QwenMasterWorker().generate.spawn(job.job_id)
+        function_call = _spawn_master_worker(job.job_id)
     except Exception:
         _master_schedule_event("master_worker_enqueue_failed", job, result="failure", safe_error_code="MASTER_WORKER_ENQUEUE_FAILED")
         raise GuardRejected("MASTER_WORKER_ENQUEUE_FAILED", "The master worker could not be queued.") from None
@@ -768,6 +853,163 @@ def _schedule_master(job: JobRecord, user_id: str) -> dict[str, object]:
     )
     _master_schedule_event("master_worker_spawned", job, result="spawned", duration_ms=_elapsed_ms(started_at))
     return dict(recorded["job"])
+
+
+@app.function(image=incubator_image, volumes={ASSET_ROOT: assets, MODEL_ROOT: models}, max_containers=1)
+@modal.concurrent(max_inputs=1)
+def advance_async_incubation(job_id: str) -> dict[str, object]:
+    """Advance persisted Master outputs to the single pose operation.
+
+    The operation is CPU-only until the existing pose worker is spawned. A
+    reserved pose call is never retried here: an uncertain/lost spawn remains
+    visible and requires explicit owner action.
+    """
+    lease_owner = f"incubator-{secrets.token_hex(12)}"
+    claimed = job_control.remote(
+        JobOperation.CLAIM_INCUBATION_LEASE.value,
+        job_id,
+        lease_owner=lease_owner,
+    )
+    _raise_guard_error(claimed)
+    if not bool(claimed["changed"]):
+        return dict(claimed)
+    try:
+        job = _deserialize(dict(claimed["job"]))
+        if not is_async_incubation(job):
+            return {"job": _serialize(job), "changed": False}
+        if job.state in {JobState.GENERATING_POSES, JobState.COMPLETED}:
+            return {"job": _serialize(job), "changed": False}
+        if job.state not in {JobState.AWAITING_MASTER_APPROVAL, JobState.CONSISTENCY_TEST}:
+            raise DomainError("Async incubation cannot advance from the current state.")
+        selected_job = job
+        if job.state is JobState.AWAITING_MASTER_APPROVAL:
+            assets.reload()
+            references = _master_references(job)
+            qc_by_master = {str(item["id"]): dict(item.get("qc") or {}) for item in references}
+            candidates = {
+                str(item["id"]): _asset_path(job_id, "masters", f"{item['id']}.png").read_bytes()
+                for item in references
+            }
+            source = _asset_path(job_id, "original", "source.bin").read_bytes()
+            try:
+                selection = rank_masters(
+                    source,
+                    candidates,
+                    qc_by_master,
+                    str(job.subject_identity.get("category", "other")),
+                    load_pinned_visual_encoder(),
+                )
+            except (OSError, ValueError, VisualEncoderUnavailable):
+                failed = job_control.remote(
+                    JobOperation.FAIL_INCUBATION.value,
+                    job_id,
+                    error_code="MASTER_AUTO_RANKING_FAILED",
+                )
+                _raise_guard_error(failed)
+                return dict(failed)
+            selected = job_control.remote(
+                JobOperation.AUTO_SELECT_MASTER.value,
+                job_id,
+                master_selection=selection,
+            )
+            _raise_guard_error(selected)
+            selected_job = _deserialize(dict(selected["job"]))
+        elif not job.master_selection:
+            raise DomainError("Async incubation selection is incomplete.")
+        # A deployment may leave a completed Master awaiting the separately
+        # controlled pose capability. Keep it recoverable; the reconciler will
+        # resume from this idempotent selection once the flags are enabled.
+        if not _pose_generation_enabled():
+            return {"job": _serialize(selected_job), "changed": False, "deferred": True}
+        operation_id = f"incubator_pose_{hashlib.sha256(job_id.encode()).hexdigest()[:24]}"
+        fingerprint = hashlib.sha256(
+            json.dumps({"jobId": job_id, "poseChoices": selected_job.pose_choices}, sort_keys=True).encode()
+        ).hexdigest()
+        enqueued = job_control.remote(
+            JobOperation.ENQUEUE_POSES.value,
+            job_id,
+            user_id=job.user_id,
+            pose_choices=selected_job.pose_choices,
+            operation_id=operation_id,
+            operation_fingerprint=fingerprint,
+            correlation_id=job.correlation_id or "",
+            request_id="async-incubator",
+        )
+        _raise_guard_error(enqueued)
+        if not bool(enqueued["reserved"]):
+            return dict(enqueued)
+        pose_call = _spawn_pose_worker(job_id)
+        recorded = job_control.remote(
+            JobOperation.RECORD_POSE_GPU_CALL.value,
+            job_id,
+            call_id=pose_call.object_id,
+        )
+        _raise_guard_error(recorded)
+        return dict(recorded)
+    finally:
+        released = job_control.remote(
+            JobOperation.RELEASE_INCUBATION_LEASE.value,
+            job_id,
+            lease_owner=lease_owner,
+        )
+        _raise_guard_error(released)
+
+
+@app.function(
+    image=incubator_image,
+    schedule=modal.Period(minutes=1),
+    volumes={ASSET_ROOT: assets},
+    max_containers=1,
+)
+def reconcile_async_incubations() -> dict[str, int]:
+    """Recover CPU-only transition gaps without repeating a GPU inference."""
+    counters = {"examined": 0, "advanced": 0, "failed": 0}
+    for job_id, record in jobs.items():
+        try:
+            job = _deserialize(dict(record))
+            if not is_async_incubation(job) or job.state in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELED}:
+                continue
+            counters["examined"] += 1
+            if job.state in {JobState.REGISTERED, JobState.READY_FOR_GENERATION}:
+                # A disabled flag defers this CPU reconciler path without
+                # changing the job or reserving another GPU operation.
+                if _master_generation_enabled():
+                    scheduled = _schedule_master(job, job.user_id)
+                    job = _deserialize(dict(scheduled))
+                    counters["advanced"] += 1
+            if job.state is JobState.GENERATING_MASTER:
+                reconciled = job_control.remote(JobOperation.RECONCILE_MASTER.value, str(job_id))
+                _raise_guard_error(reconciled)
+                job = _deserialize(dict(reconciled["job"]))
+            if job.state in {JobState.AWAITING_MASTER_APPROVAL, JobState.CONSISTENCY_TEST} and _pose_generation_enabled():
+                advanced = advance_async_incubation.remote(str(job_id))
+                _raise_guard_error(advanced)
+                counters["advanced"] += int(bool(advanced.get("changed") or advanced.get("reserved")))
+        except Exception as error:
+            counters["failed"] += 1
+            structured_event(
+                "incubation_reconcile_failed",
+                environment=ENVIRONMENT.value,
+                result="failed",
+                jobId=str(job_id),
+                safeErrorCode=getattr(error, "code", "INCUBATION_RECONCILE_FAILED"),
+            )
+    return counters
+
+
+@app.function(image=incubator_image, volumes={MODEL_ROOT: models}, max_containers=1)
+def inspect_subject_hint_cpu(content: bytes, selected_category: str) -> dict[str, object]:
+    """Best-effort CPU-only category warning; explicit user choice still wins."""
+    try:
+        scores = load_pinned_visual_encoder().category_scores(content)
+    except VisualEncoderUnavailable:
+        scores = PillowFeatureEncoder().category_scores(content)
+    return subject_hint(selected_category, scores)
+
+
+@app.function(image=incubator_image, volumes={MODEL_ROOT: models}, max_containers=1)
+def visual_encoder_status() -> dict[str, object]:
+    return pinned_encoder_status()
 
 
 @app.function(image=api_image, volumes={MODEL_ROOT: models}, max_containers=1)
@@ -874,7 +1116,7 @@ class QwenMasterWorker:
         )
         if next_job > 1:
             observer.event("container_reused", {"container_reused": True, "jobs_in_container": next_job})
-        if not GPU_GENERATION_ENABLED:
+        if not _master_generation_enabled():
             observer.event("job_failed", {"error_code": "GENERATION_DISABLED", "outcome": "blocked"})
             return
         started = job_control.remote(JobOperation.START_MASTER.value, job_id)
@@ -888,6 +1130,17 @@ class QwenMasterWorker:
             _persist_master_outputs(job, outputs)
             committed = job_control.remote(JobOperation.COMMIT_MASTER.value, job_id)
             _raise_guard_error(committed)
+            committed_job = _deserialize(dict(committed["job"]))
+            if is_async_incubation(committed_job):
+                try:
+                    advance_async_incubation.remote(job_id)
+                except Exception:
+                    failed = job_control.remote(
+                        JobOperation.FAIL_INCUBATION.value,
+                        job_id,
+                        error_code="INCUBATION_ADVANCE_FAILED",
+                    )
+                    _raise_guard_error(failed)
             observer.event(
                 "job_completed",
                 {
@@ -931,7 +1184,7 @@ class QwenMasterWorker:
             jobId=job_id,
             masterId=job.master_id,
         )
-        if not GPU_GENERATION_ENABLED or not POSE_GENERATION_ENABLED:
+        if not _pose_generation_enabled():
             observer.event("pose_job_failed", {"error_code": "GENERATION_DISABLED", "outcome": "blocked"})
             structured_event(
                 "pose_worker_failed",
@@ -1645,6 +1898,7 @@ def api():
     @service.get("/v2/mascot/capabilities")
     async def capabilities_v2(identity: BffIdentity = Depends(verified_bff_identity)) -> dict[str, object]:
         del identity
+        encoder = visual_encoder_status.remote()
         _reload_template_assets()
         templates_ready = _templates_installed()
         pose_reasons: list[str] = []
@@ -1679,6 +1933,14 @@ def api():
             "poseCatalog": {
                 role: [option.option_id for option in POSE_OPTIONS if option.role == role]
                 for role in ("normal", "listening", "transcribing")
+            },
+            "incubator": {
+                "ready": INCUBATOR_FLOW_ENABLED and bool(encoder["ready"]) and not master_reasons and not pose_reasons,
+                "enabled": INCUBATOR_FLOW_ENABLED,
+                "encoder": encoder,
+                "workflowVersion": WorkflowMode.ASYNC_INCUBATOR_V1.value,
+                "rankerVersion": "master-ranker-v1",
+                "subjectHintVersion": "subject-hint-v1",
             },
         }
 
@@ -1772,9 +2034,70 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
+            if is_async_incubation(job) and job.state is JobState.AWAITING_MASTER_APPROVAL and not job.master_selection:
+                advanced = advance_async_incubation.remote(job_id)
+                _raise_guard_error(advanced)
+                job = _deserialize(dict(advanced["job"]))
             _refresh_result_assets(job)
             return _public_job_with_assets(job)
         except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.post("/v2/mascot/subject-hint")
+    async def inspect_subject_hint_v2(
+        request: SubjectHintV2Request,
+        identity: BffIdentity = Depends(verified_bff_identity),
+    ):
+        del identity
+        try:
+            content = _decode_image(request.image_base64)
+            validate_image(content, request.content_type)
+            return inspect_subject_hint_cpu.remote(content, request.selected_category)
+        except (ImageValidationError, DomainError) as error:
+            raise _api_error(error) from error
+
+    @service.post("/v2/mascot/incubations", status_code=202)
+    async def create_incubation_v2(
+        request: CreateIncubationV2Request,
+        context: tuple[BffIdentity, str, str] = Depends(bff_operation_context),
+        x_correlation_id: str | None = Header(default=None),
+    ):
+        identity, key, _ = context
+        if not INCUBATOR_FLOW_ENABLED:
+            raise _api_error(GuardRejected("INCUBATOR_DISABLED", "Async incubation is disabled."))
+        if request.attempt_id != identity.attempt_id:
+            raise _api_error(JobNotFound("Job was not found."))
+        try:
+            selected_poses = validate_pose_choices(request.pose_choices)
+            normalized_hint = request.subject_hint.model_dump() if request.subject_hint else None
+            if normalized_hint and normalized_hint["requiresConfirmation"] and not normalized_hint["overrideConfirmed"]:
+                raise GuardRejected("SUBJECT_MISMATCH_CONFIRMATION_REQUIRED", "Subject mismatch confirmation is required.")
+            subject_identity = _normalized_subject_identity(request.subject_identity)
+            content = _decode_image(request.image_base64)
+            validate_image(content, request.content_type)
+            digest = hashlib.sha256(content).hexdigest()
+            registration = register_job.remote(
+                identity.user_id,
+                key,
+                f"original/{digest}",
+                pose_choices=selected_poses,
+                subject_identity=subject_identity,
+                registration_only=True,
+                attempt_id=request.attempt_id,
+                correlation_id=_safe_correlation_id(x_correlation_id),
+                workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
+                subject_hint_payload=normalized_hint,
+            )
+            _raise_guard_error(registration)
+            job = _deserialize(dict(registration["job"]))
+            destination = _asset_path(job.job_id, "original", "source.bin")
+            if not destination.is_file() or hashlib.sha256(destination.read_bytes()).hexdigest() != digest:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
+                assets.commit()
+            scheduled = _schedule_master(job, identity.user_id)
+            return public_job(_deserialize(scheduled)) | {"idempotentReplay": not bool(registration["created"])}
+        except (ImageValidationError, DomainError, CostLimitExceeded, RateLimitExceeded, ValueError) as error:
             raise _api_error(error) from error
 
     @service.delete("/v2/mascot/jobs/{job_id}")
@@ -1814,8 +2137,7 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
-            if not MASTER_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
-                raise GuardRejected("GENERATION_DISABLED", "Master generation is disabled.")
+            _require_master_generation_enabled()
             return public_job(_deserialize(_schedule_master(job, identity.user_id)))
         except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
             raise _api_error(error) from error
@@ -1954,8 +2276,7 @@ def api():
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
             _reload_template_assets()
-            if not POSE_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
-                raise GuardRejected("POSE_GENERATION_DISABLED", "Pose generation is disabled.")
+            _require_pose_generation_enabled()
             if not _templates_installed():
                 raise GuardRejected("POSE_TEMPLATES_UNAVAILABLE", "Pose templates are not installed.")
             if request.catalog_version is not None and request.catalog_version != WEB_POSE_CATALOG_VERSION:
@@ -2003,6 +2324,7 @@ def api():
                 masterId=job.master_id,
             )
             if reserved:
+                _require_pose_generation_enabled()
                 structured_event(
                     "pose_queue_reserved",
                     environment=ENVIRONMENT.value,
@@ -2016,7 +2338,7 @@ def api():
                 )
                 observer = InferenceObserver(_trace_id_for_record(job))
                 observer.event("pose_job_queued", {"outputs": 3, "gpu_type": MASTER_GPU})
-                pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
+                pose_call = _spawn_pose_worker(job_id)
                 recorded = job_control.remote(
                     JobOperation.RECORD_POSE_GPU_CALL.value,
                     job_id,
@@ -2077,8 +2399,7 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, context[0])
-            if not GPU_GENERATION_ENABLED:
-                raise GuardRejected("GENERATION_DISABLED", "GPU generation is disabled.")
+            _require_master_generation_enabled()
             operation_key = _operation_key(context[0], f"generate-master:{job_id}")
             if operation_key in idempotency:
                 return _serialize(_get_job(job_id))

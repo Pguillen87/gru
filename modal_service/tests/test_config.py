@@ -1,8 +1,15 @@
+import pytest
+
+import modal_service.app as mascot_app
 from modal_service.config import Environment, generation_enabled, limits_for
+from modal_service.domain import JobRecord, JobState, WorkflowMode
 from modal_service.app import (
+    GuardRejected,
     MASTER_SEEDS,
     PERSISTENT_WORKER_MAX_CONTAINERS,
     WORKER_SCALEDOWN_SECONDS,
+    _spawn_master_worker,
+    _spawn_pose_worker,
     inference_config_hash,
 )
 
@@ -32,3 +39,131 @@ def test_persistent_worker_preserves_approved_generation_identity():
     assert PERSISTENT_WORKER_MAX_CONTAINERS == 1
     assert WORKER_SCALEDOWN_SECONDS == 45
     assert inference_config_hash() == "f686a19c27ae3a2c"
+
+
+class _FakeSpawn:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def spawn(self, job_id: str) -> object:
+        del job_id
+        self.calls += 1
+        return object()
+
+
+class _FakeWorker:
+    def __init__(self, master: _FakeSpawn, poses: _FakeSpawn) -> None:
+        self.generate = master
+        self.generate_poses = poses
+
+
+@pytest.mark.parametrize(
+    ("gpu_enabled", "master_enabled", "expected_spawns"),
+    [(False, True, 0), (True, False, 0), (True, True, 1)],
+)
+def test_master_spawn_boundary_requires_both_generation_flags(
+    monkeypatch, gpu_enabled: bool, master_enabled: bool, expected_spawns: int
+):
+    master, poses = _FakeSpawn(), _FakeSpawn()
+    monkeypatch.setattr(mascot_app, "GPU_GENERATION_ENABLED", gpu_enabled)
+    monkeypatch.setattr(mascot_app, "MASTER_GENERATION_ENABLED", master_enabled)
+    monkeypatch.setattr(mascot_app, "QwenMasterWorker", lambda: _FakeWorker(master, poses))
+
+    if expected_spawns:
+        _spawn_master_worker("job-incubator")
+    else:
+        with pytest.raises(GuardRejected, match="Master generation is disabled"):
+            _spawn_master_worker("job-incubator")
+
+    assert master.calls == expected_spawns
+    assert poses.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("gpu_enabled", "pose_enabled", "expected_spawns"),
+    [(False, True, 0), (True, False, 0), (True, True, 1)],
+)
+def test_pose_spawn_boundary_requires_both_generation_flags(
+    monkeypatch, gpu_enabled: bool, pose_enabled: bool, expected_spawns: int
+):
+    master, poses = _FakeSpawn(), _FakeSpawn()
+    monkeypatch.setattr(mascot_app, "GPU_GENERATION_ENABLED", gpu_enabled)
+    monkeypatch.setattr(mascot_app, "POSE_GENERATION_ENABLED", pose_enabled)
+    monkeypatch.setattr(mascot_app, "QwenMasterWorker", lambda: _FakeWorker(master, poses))
+
+    if expected_spawns:
+        _spawn_pose_worker("job-incubator")
+    else:
+        with pytest.raises(GuardRejected, match="Pose generation is disabled"):
+            _spawn_pose_worker("job-incubator")
+
+    assert poses.calls == expected_spawns
+    assert master.calls == 0
+
+
+def test_reconciler_defers_disabled_incubator_gpu_and_resumes_once(monkeypatch):
+    job = JobRecord(
+        "job-incubator",
+        "owner",
+        "key",
+        "original/source",
+        workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
+        state=JobState.AWAITING_MASTER_APPROVAL,
+    )
+    records = {job.job_id: mascot_app._serialize(job)}
+    calls = 0
+
+    class _DeferredAdvance:
+        def remote(self, job_id: str) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            records[job_id]["state"] = JobState.GENERATING_POSES.value
+            return {"changed": True, "reserved": True}
+
+    monkeypatch.setattr(mascot_app, "jobs", records)
+    monkeypatch.setattr(mascot_app, "advance_async_incubation", _DeferredAdvance())
+    monkeypatch.setattr(mascot_app, "GPU_GENERATION_ENABLED", False)
+    monkeypatch.setattr(mascot_app, "POSE_GENERATION_ENABLED", True)
+
+    mascot_app.reconcile_async_incubations.local()
+    mascot_app.reconcile_async_incubations.local()
+    assert calls == 0
+
+    monkeypatch.setattr(mascot_app, "GPU_GENERATION_ENABLED", True)
+    mascot_app.reconcile_async_incubations.local()
+    mascot_app.reconcile_async_incubations.local()
+    assert calls == 1
+
+
+def test_reconciler_defers_disabled_master_without_reservation(monkeypatch):
+    job = JobRecord(
+        "job-incubator-master",
+        "owner",
+        "key",
+        "original/source",
+        workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
+        state=JobState.REGISTERED,
+    )
+    records = {job.job_id: mascot_app._serialize(job)}
+    calls = 0
+
+    def schedule_once(current: JobRecord, user_id: str) -> dict[str, object]:
+        nonlocal calls
+        assert current.job_id == job.job_id and user_id == "owner"
+        calls += 1
+        records[job.job_id]["state"] = JobState.GENERATING_MASTER.value
+        return records[job.job_id]
+
+    monkeypatch.setattr(mascot_app, "jobs", records)
+    monkeypatch.setattr(mascot_app, "_schedule_master", schedule_once)
+    monkeypatch.setattr(mascot_app, "GPU_GENERATION_ENABLED", False)
+    monkeypatch.setattr(mascot_app, "MASTER_GENERATION_ENABLED", True)
+
+    mascot_app.reconcile_async_incubations.local()
+    mascot_app.reconcile_async_incubations.local()
+    assert calls == 0
+
+    monkeypatch.setattr(mascot_app, "GPU_GENERATION_ENABLED", True)
+    mascot_app.reconcile_async_incubations.local()
+    mascot_app.reconcile_async_incubations.local()
+    assert calls == 1
