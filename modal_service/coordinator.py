@@ -33,6 +33,7 @@ class JobOperation(StrEnum):
     CANCEL = "CANCEL"
     DELETE = "DELETE"
     AUTO_SELECT_MASTER = "AUTO_SELECT_MASTER"
+    RECORD_SHADOW_RANKING = "RECORD_SHADOW_RANKING"
     FAIL_INCUBATION = "FAIL_INCUBATION"
     CLAIM_INCUBATION_LEASE = "CLAIM_INCUBATION_LEASE"
     HEARTBEAT_INCUBATION = "HEARTBEAT_INCUBATION"
@@ -146,6 +147,7 @@ class JobCoordinator:
             correlation_id=correlation_id,
             workflow_mode=workflow_mode,
             subject_hint=subject_hint,
+            subject_hint_policy_version=str(subject_hint.get("version")) if subject_hint else None,
         )
         if registration_only:
             job.state = JobState.REGISTERED
@@ -275,9 +277,25 @@ class JobCoordinator:
             return job, False
         changed = job.approve_master(selected)
         job.master_selection = selection
+        job.encoder_version = str(selection.get("encoderVersion") or "") or None
+        job.master_ranker_version = str(selection.get("masterRankerVersion") or "") or None
         job.prompt_version = prompt_version
         self.save(job)
         return job, changed
+
+    def record_shadow_ranking(self, job_id: str, observation: dict[str, object]) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state is not JobState.AWAITING_MASTER_APPROVAL or job.master_selection:
+            raise DomainError("Shadow ranking is not available for this job.")
+        if job.shadow_ranking_observation:
+            if job.shadow_ranking_observation != observation:
+                raise DomainError("A different shadow ranking is already recorded.")
+            return job, False
+        job.shadow_ranking_observation = observation
+        job.encoder_version = str(observation.get("encoderVersion") or "") or None
+        job.master_ranker_version = str(observation.get("masterRankerVersion") or "") or None
+        self.save(job)
+        return job, True
 
     def update_configuration(
         self,

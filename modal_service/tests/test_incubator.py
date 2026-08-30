@@ -4,11 +4,13 @@ import pytest
 
 from modal_service.domain import JobRecord, JobState, WorkflowMode
 from modal_service.incubator import (
+    NeutralVisualEncoder,
     VisualEncoderUnavailable,
     load_pinned_visual_encoder,
     pinned_encoder_status,
     product_state,
     rank_masters,
+    shadow_ranking_observation,
     subject_hint,
 )
 
@@ -24,9 +26,12 @@ class FakeEncoder:
             b"three": (0.70, 0.30),
         }[image]
 
-    def category_scores(self, image: bytes) -> dict[str, float]:
+    def classify(self, image: bytes) -> dict[str, float]:
         del image
         return {"human": 0.92, "animal": 0.04, "object": 0.02, "other": 0.02}
+
+    def provenance(self) -> dict[str, str]:
+        return {"encoderVersion": self.version}
 
 
 def passed_qc() -> dict[str, object]:
@@ -36,7 +41,7 @@ def passed_qc() -> dict[str, object]:
 def test_subject_hint_warns_only_for_a_high_confidence_mismatch():
     hint = subject_hint("human", {"human": 0.04, "animal": 0.93})
     assert hint == {
-        "version": "subject-hint-v1",
+        "version": "subject-hint-policy-v2",
         "suggestedCategory": "animal",
         "confidenceBand": "high",
         "requiresConfirmation": True,
@@ -50,9 +55,14 @@ def test_subject_hint_is_non_blocking_when_scores_are_uncertain():
     assert hint["requiresConfirmation"] is False
 
 
+def test_unavailable_subject_hint_preserves_the_explicit_human_choice():
+    hint = subject_hint("animal", NeutralVisualEncoder().classify(b"not-used"))
+    assert hint["suggestedCategory"] == "uncertain"
+    assert hint["requiresConfirmation"] is False
+
+
 def test_pinned_encoder_fails_closed_when_no_verified_artifact_is_configured(monkeypatch):
-    monkeypatch.delenv("INCUBATOR_VISUAL_ENCODER_PATH", raising=False)
-    monkeypatch.delenv("INCUBATOR_VISUAL_ENCODER_SHA256", raising=False)
+    monkeypatch.delenv("INCUBATOR_VISUAL_ENCODER_DIR", raising=False)
     with pytest.raises(VisualEncoderUnavailable, match="NOT_CONFIGURED"):
         load_pinned_visual_encoder()
     assert pinned_encoder_status()["ready"] is False
@@ -68,6 +78,8 @@ def test_master_ranking_requires_three_candidates_and_is_deterministic():
     )
     assert selection["selectedMasterId"] == "master_1"
     assert [item["masterId"] for item in selection["scores"]] == ["master_1", "master_2", "master_3"]
+    assert selection["encoderVersion"] == "fake-v1"
+    assert selection["masterRankerVersion"] == "master-ranker-v2"
 
     with pytest.raises(ValueError, match="exactly three"):
         rank_masters(b"source", {"master_1": b"one"}, {"master_1": passed_qc()}, "human", FakeEncoder())
@@ -82,6 +94,21 @@ def test_master_ranking_fails_when_every_candidate_fails_hard_qc():
             "human",
             FakeEncoder(),
         )
+
+
+def test_shadow_ranking_observation_excludes_embeddings_and_is_not_a_selection_state():
+    selection = rank_masters(
+        b"source",
+        {"master_1": b"one", "master_2": b"two", "master_3": b"three"},
+        {master_id: passed_qc() for master_id in ("master_1", "master_2", "master_3")},
+        "human",
+        FakeEncoder(),
+    )
+    observation = shadow_ranking_observation(selection)
+    assert observation["winner"] == "master_1"
+    assert observation["candidateCount"] == 3
+    assert "embedding" not in repr(observation).lower()
+    assert set(observation) == {"encoderVersion", "masterRankerVersion", "candidateCount", "winner", "highestScore"}
 
 
 def test_product_state_is_derived_instead_of_persisted_separately():

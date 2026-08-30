@@ -142,6 +142,10 @@ class JobRecord:
     pose_request_id: str | None = None
     workflow_mode: str = WorkflowMode.LEGACY_MANUAL.value
     subject_hint: dict[str, object] | None = None
+    encoder_version: str | None = None
+    subject_hint_policy_version: str | None = None
+    master_ranker_version: str | None = None
+    shadow_ranking_observation: dict[str, object] | None = None
     master_selection: dict[str, object] | None = None
     generation_ready_at: str | None = None
     lease_owner: str | None = None

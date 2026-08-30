@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import modal_service.app as mascot_app
@@ -23,6 +25,19 @@ def test_generation_requires_explicit_true_override():
     assert not generation_enabled(Environment.DEVELOPMENT)
     assert not generation_enabled(Environment.DEVELOPMENT, "false")
     assert generation_enabled(Environment.DEVELOPMENT, "true")
+
+
+def test_auto_ranking_is_fail_closed_and_shadow_mode_cannot_select_or_start_poses():
+    assert mascot_app.INCUBATOR_AUTO_RANKING_ENABLED is False
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+    advance = source.split("def advance_async_incubation", 1)[1].split("def reconcile_async_incubations", 1)[0]
+    shadow_gate = advance.index("if not INCUBATOR_AUTO_RANKING_ENABLED:")
+    selection = advance.index("JobOperation.AUTO_SELECT_MASTER")
+    pose_reservation = advance.index("JobOperation.ENQUEUE_POSES")
+    assert shadow_gate < selection < pose_reservation
+    shadow_block = advance[shadow_gate:selection]
+    assert "incubator_master_ranked_shadow" in shadow_block
+    assert '"deferred": True' in shadow_block
 
 
 def test_development_guard_is_single_container_with_workspace_credit_ceiling():
