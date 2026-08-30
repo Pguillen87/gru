@@ -789,11 +789,43 @@ def _master_remote_step(job: JobRecord, event: str, unavailable_code: str, opera
         raise GuardRejected(unavailable_code, "The master generation service is temporarily unavailable.") from None
 
 
+def _master_generation_enabled() -> bool:
+    return GPU_GENERATION_ENABLED and MASTER_GENERATION_ENABLED
+
+
+def _pose_generation_enabled() -> bool:
+    return GPU_GENERATION_ENABLED and POSE_GENERATION_ENABLED
+
+
+def _require_master_generation_enabled() -> None:
+    if not _master_generation_enabled():
+        raise GuardRejected("GENERATION_DISABLED", "Master generation is disabled.")
+
+
+def _require_pose_generation_enabled() -> None:
+    if not _pose_generation_enabled():
+        raise GuardRejected("POSE_GENERATION_DISABLED", "Pose generation is disabled.")
+
+
+def _spawn_master_worker(job_id: str):
+    """Single fail-closed boundary for every Master GPU invocation."""
+    _require_master_generation_enabled()
+    return QwenMasterWorker().generate.spawn(job_id)
+
+
+def _spawn_pose_worker(job_id: str):
+    """Single fail-closed boundary for every pose GPU invocation."""
+    _require_pose_generation_enabled()
+    return QwenMasterWorker().generate_poses.spawn(job_id)
+
+
 def _schedule_master(job: JobRecord, user_id: str) -> dict[str, object]:
     started_at = time.monotonic()
     _master_schedule_event("master_schedule_received", job)
-    if GPU_GENERATION_ENABLED:
-        _master_remote_step(job, "master_cache_checked", "MASTER_CACHE_UNAVAILABLE", model_cache_status.remote)
+    # This scheduler is shared by legacy routes and the async reconciler.
+    # Reject before any cost reservation, keeping an incubator recoverable.
+    _require_master_generation_enabled()
+    _master_remote_step(job, "master_cache_checked", "MASTER_CACHE_UNAVAILABLE", model_cache_status.remote)
     authorization = _master_remote_step(
         job,
         "master_authorization_checked",
@@ -809,7 +841,7 @@ def _schedule_master(job: JobRecord, user_id: str) -> dict[str, object]:
         {"cache_revision": MODEL_CACHE_SPEC.cache_revision, "gpu_type": MASTER_GPU},
     )
     try:
-        function_call = QwenMasterWorker().generate.spawn(job.job_id)
+        function_call = _spawn_master_worker(job.job_id)
     except Exception:
         _master_schedule_event("master_worker_enqueue_failed", job, result="failure", safe_error_code="MASTER_WORKER_ENQUEUE_FAILED")
         raise GuardRejected("MASTER_WORKER_ENQUEUE_FAILED", "The master worker could not be queued.") from None
@@ -847,39 +879,48 @@ def advance_async_incubation(job_id: str) -> dict[str, object]:
             return {"job": _serialize(job), "changed": False}
         if job.state in {JobState.GENERATING_POSES, JobState.COMPLETED}:
             return {"job": _serialize(job), "changed": False}
-        if job.state is not JobState.AWAITING_MASTER_APPROVAL:
+        if job.state not in {JobState.AWAITING_MASTER_APPROVAL, JobState.CONSISTENCY_TEST}:
             raise DomainError("Async incubation cannot advance from the current state.")
-        assets.reload()
-        references = _master_references(job)
-        qc_by_master = {str(item["id"]): dict(item.get("qc") or {}) for item in references}
-        candidates = {
-            str(item["id"]): _asset_path(job_id, "masters", f"{item['id']}.png").read_bytes()
-            for item in references
-        }
-        source = _asset_path(job_id, "original", "source.bin").read_bytes()
-        try:
-            selection = rank_masters(
-                source,
-                candidates,
-                qc_by_master,
-                str(job.subject_identity.get("category", "other")),
-                load_pinned_visual_encoder(),
-            )
-        except (OSError, ValueError, VisualEncoderUnavailable):
-            failed = job_control.remote(
-                JobOperation.FAIL_INCUBATION.value,
+        selected_job = job
+        if job.state is JobState.AWAITING_MASTER_APPROVAL:
+            assets.reload()
+            references = _master_references(job)
+            qc_by_master = {str(item["id"]): dict(item.get("qc") or {}) for item in references}
+            candidates = {
+                str(item["id"]): _asset_path(job_id, "masters", f"{item['id']}.png").read_bytes()
+                for item in references
+            }
+            source = _asset_path(job_id, "original", "source.bin").read_bytes()
+            try:
+                selection = rank_masters(
+                    source,
+                    candidates,
+                    qc_by_master,
+                    str(job.subject_identity.get("category", "other")),
+                    load_pinned_visual_encoder(),
+                )
+            except (OSError, ValueError, VisualEncoderUnavailable):
+                failed = job_control.remote(
+                    JobOperation.FAIL_INCUBATION.value,
+                    job_id,
+                    error_code="MASTER_AUTO_RANKING_FAILED",
+                )
+                _raise_guard_error(failed)
+                return dict(failed)
+            selected = job_control.remote(
+                JobOperation.AUTO_SELECT_MASTER.value,
                 job_id,
-                error_code="MASTER_AUTO_RANKING_FAILED",
+                master_selection=selection,
             )
-            _raise_guard_error(failed)
-            return dict(failed)
-        selected = job_control.remote(
-            JobOperation.AUTO_SELECT_MASTER.value,
-            job_id,
-            master_selection=selection,
-        )
-        _raise_guard_error(selected)
-        selected_job = _deserialize(dict(selected["job"]))
+            _raise_guard_error(selected)
+            selected_job = _deserialize(dict(selected["job"]))
+        elif not job.master_selection:
+            raise DomainError("Async incubation selection is incomplete.")
+        # A deployment may leave a completed Master awaiting the separately
+        # controlled pose capability. Keep it recoverable; the reconciler will
+        # resume from this idempotent selection once the flags are enabled.
+        if not _pose_generation_enabled():
+            return {"job": _serialize(selected_job), "changed": False, "deferred": True}
         operation_id = f"incubator_pose_{hashlib.sha256(job_id.encode()).hexdigest()[:24]}"
         fingerprint = hashlib.sha256(
             json.dumps({"jobId": job_id, "poseChoices": selected_job.pose_choices}, sort_keys=True).encode()
@@ -897,7 +938,7 @@ def advance_async_incubation(job_id: str) -> dict[str, object]:
         _raise_guard_error(enqueued)
         if not bool(enqueued["reserved"]):
             return dict(enqueued)
-        pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
+        pose_call = _spawn_pose_worker(job_id)
         recorded = job_control.remote(
             JobOperation.RECORD_POSE_GPU_CALL.value,
             job_id,
@@ -929,11 +970,18 @@ def reconcile_async_incubations() -> dict[str, int]:
             if not is_async_incubation(job) or job.state in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELED}:
                 continue
             counters["examined"] += 1
+            if job.state in {JobState.REGISTERED, JobState.READY_FOR_GENERATION}:
+                # A disabled flag defers this CPU reconciler path without
+                # changing the job or reserving another GPU operation.
+                if _master_generation_enabled():
+                    scheduled = _schedule_master(job, job.user_id)
+                    job = _deserialize(dict(scheduled))
+                    counters["advanced"] += 1
             if job.state is JobState.GENERATING_MASTER:
                 reconciled = job_control.remote(JobOperation.RECONCILE_MASTER.value, str(job_id))
                 _raise_guard_error(reconciled)
                 job = _deserialize(dict(reconciled["job"]))
-            if job.state is JobState.AWAITING_MASTER_APPROVAL:
+            if job.state in {JobState.AWAITING_MASTER_APPROVAL, JobState.CONSISTENCY_TEST} and _pose_generation_enabled():
                 advanced = advance_async_incubation.remote(str(job_id))
                 _raise_guard_error(advanced)
                 counters["advanced"] += int(bool(advanced.get("changed") or advanced.get("reserved")))
@@ -1068,7 +1116,7 @@ class QwenMasterWorker:
         )
         if next_job > 1:
             observer.event("container_reused", {"container_reused": True, "jobs_in_container": next_job})
-        if not GPU_GENERATION_ENABLED:
+        if not _master_generation_enabled():
             observer.event("job_failed", {"error_code": "GENERATION_DISABLED", "outcome": "blocked"})
             return
         started = job_control.remote(JobOperation.START_MASTER.value, job_id)
@@ -1136,7 +1184,7 @@ class QwenMasterWorker:
             jobId=job_id,
             masterId=job.master_id,
         )
-        if not GPU_GENERATION_ENABLED or not POSE_GENERATION_ENABLED:
+        if not _pose_generation_enabled():
             observer.event("pose_job_failed", {"error_code": "GENERATION_DISABLED", "outcome": "blocked"})
             structured_event(
                 "pose_worker_failed",
@@ -2089,8 +2137,7 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
-            if not MASTER_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
-                raise GuardRejected("GENERATION_DISABLED", "Master generation is disabled.")
+            _require_master_generation_enabled()
             return public_job(_deserialize(_schedule_master(job, identity.user_id)))
         except (DomainError, CostLimitExceeded, RateLimitExceeded) as error:
             raise _api_error(error) from error
@@ -2229,8 +2276,7 @@ def api():
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
             _reload_template_assets()
-            if not POSE_GENERATION_ENABLED or not GPU_GENERATION_ENABLED:
-                raise GuardRejected("POSE_GENERATION_DISABLED", "Pose generation is disabled.")
+            _require_pose_generation_enabled()
             if not _templates_installed():
                 raise GuardRejected("POSE_TEMPLATES_UNAVAILABLE", "Pose templates are not installed.")
             if request.catalog_version is not None and request.catalog_version != WEB_POSE_CATALOG_VERSION:
@@ -2278,6 +2324,7 @@ def api():
                 masterId=job.master_id,
             )
             if reserved:
+                _require_pose_generation_enabled()
                 structured_event(
                     "pose_queue_reserved",
                     environment=ENVIRONMENT.value,
@@ -2291,7 +2338,7 @@ def api():
                 )
                 observer = InferenceObserver(_trace_id_for_record(job))
                 observer.event("pose_job_queued", {"outputs": 3, "gpu_type": MASTER_GPU})
-                pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
+                pose_call = _spawn_pose_worker(job_id)
                 recorded = job_control.remote(
                     JobOperation.RECORD_POSE_GPU_CALL.value,
                     job_id,
@@ -2352,8 +2399,7 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, context[0])
-            if not GPU_GENERATION_ENABLED:
-                raise GuardRejected("GENERATION_DISABLED", "GPU generation is disabled.")
+            _require_master_generation_enabled()
             operation_key = _operation_key(context[0], f"generate-master:{job_id}")
             if operation_key in idempotency:
                 return _serialize(_get_job(job_id))
