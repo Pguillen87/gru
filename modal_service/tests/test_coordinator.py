@@ -1,5 +1,6 @@
 import pytest
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 from modal_service.config import Environment, limits_for
 from modal_service.coordinator import JobCoordinator
@@ -208,6 +209,46 @@ def test_async_incubation_replay_and_lease_are_serialized():
 
     released, release_changed = service.release_incubation_lease(first.job_id, "worker-a")
     assert release_changed and released.lease_owner is None
+
+
+def test_async_incubation_heartbeat_requires_the_current_lease_owner():
+    service, _ = coordinator()
+    job, _ = service.register(
+        "uid-a",
+        "incubator-heartbeat",
+        "original/hash",
+        registration_only=True,
+        attempt_id="attempt-incubator",
+        workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
+    )
+    service.jobs[job.job_id]["state"] = JobState.AWAITING_MASTER_APPROVAL.value
+    service.claim_incubation_lease(job.job_id, "worker-a", 60)
+
+    rejected, rejected_changed = service.heartbeat_incubation(job.job_id, "worker-b", 60)
+    renewed, renewed_changed = service.heartbeat_incubation(job.job_id, "worker-a", 60)
+
+    assert not rejected_changed and rejected.lease_owner == "worker-a"
+    assert renewed_changed and renewed.lease_owner == "worker-a"
+    assert renewed.heartbeat_at and renewed.lease_expires_at
+
+
+def test_async_incubation_restart_recovers_only_an_expired_lease():
+    service, _ = coordinator()
+    job, _ = service.register(
+        "uid-a",
+        "incubator-restart",
+        "original/hash",
+        registration_only=True,
+        attempt_id="attempt-incubator",
+        workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
+    )
+    service.jobs[job.job_id]["state"] = JobState.AWAITING_MASTER_APPROVAL.value
+    service.claim_incubation_lease(job.job_id, "worker-before-restart", 60)
+    service.jobs[job.job_id]["lease_expires_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+
+    recovered, changed = service.claim_incubation_lease(job.job_id, "worker-after-restart", 60)
+
+    assert changed and recovered.lease_owner == "worker-after-restart"
 
 
 def test_async_master_selection_and_generation_ready_are_idempotent():
