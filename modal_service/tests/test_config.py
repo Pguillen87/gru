@@ -9,6 +9,7 @@ from modal_service.app import (
 
 def test_generation_is_disabled_by_default_in_every_environment():
     assert all(not limits_for(environment).generation_enabled for environment in Environment)
+    assert not hasattr(limits_for(Environment.PRODUCTION), "max_retries_per_pose")
 
 
 def test_generation_requires_explicit_true_override():

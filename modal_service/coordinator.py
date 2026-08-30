@@ -214,7 +214,7 @@ class JobCoordinator:
 
     def record_gpu_call(self, job_id: str, call_id: str) -> tuple[JobRecord, bool]:
         job = self.get(job_id)
-        if job.state in TERMINAL_STATES:
+        if job.state in TERMINAL_STATES or job.gpu_call_id is not None:
             return job, False
         job.gpu_call_id = call_id
         self.save(job)
@@ -230,7 +230,7 @@ class JobCoordinator:
 
     def record_pose_gpu_call(self, job_id: str, call_id: str) -> tuple[JobRecord, bool]:
         job = self.get(job_id)
-        if job.state is not JobState.GENERATING_POSES or job.pose_gpu_call_id == call_id:
+        if job.state is not JobState.GENERATING_POSES or job.pose_gpu_call_id != "reserved":
             return job, False
         job.pose_gpu_call_id = call_id
         job.pose_operation_status = "running"

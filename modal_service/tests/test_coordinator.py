@@ -122,6 +122,70 @@ def test_pose_worker_call_is_reserved_once_and_then_recorded():
     assert recorded_changed and recorded.pose_gpu_call_id == "fc-pose"
 
 
+def test_timeout_after_pose_call_id_is_reserved_never_reserves_a_second_gpu_call():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-timeout", "original/hash")
+    service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
+    service.jobs[job.job_id]["master_id"] = "master_1"
+    choices = {"normal": "normal_relaxed", "listening": "listening_ready", "transcribing": "transcribing_notes"}
+    first, created, reserved = service.enqueue_pose_generation(job.job_id, "uid-a", choices, "op-timeout", "fp-timeout", "trace", "request")
+    recorded, recorded_changed = service.record_pose_gpu_call(job.job_id, "fc-timeout")
+    failed, failed_changed = service.fail_pose_generation(job.job_id, "POSE_WORKER_TIMEOUT")
+    replay, replay_created, replay_reserved = service.enqueue_pose_generation(job.job_id, "uid-a", choices, "op-replay", "fp-timeout", "trace", "request-replay")
+
+    assert created and reserved and recorded_changed and failed_changed
+    assert first.pose_gpu_call_id == "reserved"
+    assert recorded.pose_gpu_call_id == "fc-timeout"
+    assert failed.state is JobState.FAILED
+    assert not replay_created and not replay_reserved
+    assert replay.pose_gpu_call_id == "fc-timeout"
+
+
+def test_worker_crash_after_pose_gpu_start_never_enqueues_a_replacement():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-crash", "original/hash")
+    service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
+    service.jobs[job.job_id]["master_id"] = "master_1"
+    choices = {"normal": "normal_relaxed", "listening": "listening_ready", "transcribing": "transcribing_notes"}
+    service.enqueue_pose_generation(job.job_id, "uid-a", choices, "op-crash", "fp-crash", "trace", "request")
+    service.record_pose_gpu_call(job.job_id, "fc-crash")
+    service.fail_pose_generation(job.job_id, "POSE_WORKER_CRASHED")
+    replay, created, reserved = service.enqueue_pose_generation(job.job_id, "uid-a", choices, "op-replay", "fp-crash", "trace", "request-replay")
+
+    assert replay.state is JobState.FAILED
+    assert replay.pose_gpu_call_id == "fc-crash"
+    assert not created and not reserved
+
+
+def test_existing_pose_gpu_call_id_cannot_be_replaced():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-call-id", "original/hash")
+    service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
+    service.jobs[job.job_id]["master_id"] = "master_1"
+    choices = {"normal": "normal_relaxed", "listening": "listening_ready", "transcribing": "transcribing_notes"}
+    service.enqueue_pose_generation(job.job_id, "uid-a", choices, "op-call-id", "fp-call-id", "trace", "request")
+    first, first_changed = service.record_pose_gpu_call(job.job_id, "fc-first")
+    second, second_changed = service.record_pose_gpu_call(job.job_id, "fc-second")
+
+    assert first_changed and first.pose_gpu_call_id == "fc-first"
+    assert not second_changed and second.pose_gpu_call_id == "fc-first"
+
+
+def test_ambiguous_pose_response_without_outputs_never_restarts_gpu():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "key-ambiguous", "original/hash")
+    service.jobs[job.job_id]["state"] = JobState.CONSISTENCY_TEST.value
+    service.jobs[job.job_id]["master_id"] = "master_1"
+    choices = {"normal": "normal_relaxed", "listening": "listening_ready", "transcribing": "transcribing_notes"}
+    service.enqueue_pose_generation(job.job_id, "uid-a", choices, "op-ambiguous", "fp-ambiguous", "trace", "request")
+    service.fail_pose_generation(job.job_id, "POSE_RESPONSE_AMBIGUOUS")
+    replay, created, reserved = service.enqueue_pose_generation(job.job_id, "uid-a", choices, "op-replay", "fp-ambiguous", "trace", "request-replay")
+
+    assert replay.state is JobState.FAILED
+    assert replay.pose_gpu_call_id == "reserved"
+    assert not created and not reserved
+
+
 def test_pose_qc_failure_transitions_the_active_job_to_failed_once():
     service, _ = coordinator()
     job, _ = service.register("uid-a", "key-x", "original/hash")

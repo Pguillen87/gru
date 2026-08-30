@@ -15,7 +15,6 @@ class Environment(StrEnum):
 @dataclass(frozen=True)
 class RuntimeLimits:
     max_containers: int
-    max_retries_per_pose: int
     mvp_pose_count: int
     daily_cost_cap_usd: float
     estimated_generation_cost_usd: float
@@ -28,9 +27,9 @@ class RuntimeLimits:
 
 
 LIMITS = {
-    Environment.DEVELOPMENT: RuntimeLimits(1, 1, 6, 30.00, 1.00, 900, 100, 30, 100, 30.00, False),
-    Environment.STAGING: RuntimeLimits(1, 1, 6, 10.0, 0.20, 600, 10, 3, 50, 0.60, False),
-    Environment.PRODUCTION: RuntimeLimits(2, 2, 6, 100.0, 0.20, 600, 20, 5, 1_000, 1.00, False),
+    Environment.DEVELOPMENT: RuntimeLimits(1, 6, 30.00, 1.00, 900, 100, 30, 100, 30.00, False),
+    Environment.STAGING: RuntimeLimits(1, 6, 10.0, 0.20, 600, 10, 3, 50, 0.60, False),
+    Environment.PRODUCTION: RuntimeLimits(2, 6, 100.0, 0.20, 600, 20, 5, 1_000, 1.00, False),
 }
 
 

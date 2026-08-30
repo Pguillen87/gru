@@ -74,6 +74,20 @@ def test_v1_routes_remain_in_the_api_factory():
     assert '@service.get("/v1/mascot/jobs/{job_id}/result"' in source
 
 
+def test_legacy_pose_routes_are_fail_closed_and_cannot_spawn_gpu():
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+    approval = source.split('@service.post("/v1/mascot/jobs/{job_id}/approve-master", status_code=202)', 1)[1].split(
+        '@service.post("/v1/mascot/jobs/{job_id}/cancel")', 1
+    )[0]
+    generation = source.split('@service.post("/v1/mascot/jobs/{job_id}/generate-poses", status_code=202)', 1)[1].split(
+        '@service.post("/v1/mascot/jobs/{job_id}/retry-pose", status_code=202)', 1
+    )[0]
+
+    assert ".generate_poses.spawn(" not in approval
+    assert ".generate_poses.spawn(" not in generation
+    assert "_template_assets_required" in generation
+
+
 def test_v2_master_download_is_owner_scoped():
     source = Path("modal_service/app.py").read_text(encoding="utf-8")
     route = source.split('@service.get("/v2/mascot/jobs/{job_id}/masters/{master_id}")', 1)[1]

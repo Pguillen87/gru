@@ -2108,15 +2108,6 @@ def api():
             )
             _raise_guard_error(approval)
             approved_job = _deserialize(dict(approval["job"]))
-            if bool(approval["changed"]):
-                pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
-                recorded = job_control.remote(
-                    JobOperation.RECORD_GPU_CALL.value,
-                    job_id,
-                    call_id=pose_call.object_id,
-                )
-                _raise_guard_error(recorded)
-                idempotency[_operation_key(context[0], f"generate-poses:{job_id}")] = job_id
             idempotency[operation_key] = job.job_id
             return _serialize(approved_job)
         except DomainError as error:
@@ -2193,25 +2184,7 @@ def api():
 
     @service.post("/v1/mascot/jobs/{job_id}/generate-poses", status_code=202)
     async def generate_poses(job_id: str, context: tuple[str, str] = Depends(cost_context)):
-        try:
-            job = _get_job(job_id)
-            _ensure_owner(job, context[0])
-            if job.state in {JobState.GENERATING_POSES, JobState.COMPLETED}:
-                return _serialize(job)
-            if job.state is not JobState.CONSISTENCY_TEST:
-                raise DomainError("Pose generation is not available for this job.")
-            if not GPU_GENERATION_ENABLED:
-                raise GuardRejected("GENERATION_DISABLED", "GPU generation is disabled.")
-            operation_key = _operation_key(context[0], f"generate-poses:{job_id}")
-            if operation_key in idempotency:
-                return _serialize(_get_job(job_id))
-            pose_call = QwenMasterWorker().generate_poses.spawn(job_id)
-            recorded = job_control.remote(JobOperation.RECORD_GPU_CALL.value, job_id, call_id=pose_call.object_id)
-            _raise_guard_error(recorded)
-            idempotency[operation_key] = job.job_id
-            return _serialize(job)
-        except DomainError as error:
-            raise _api_error(error) from error
+        return _template_assets_required(job_id, context[0])
 
     @service.post("/v1/mascot/jobs/{job_id}/retry-pose", status_code=202)
     async def retry_pose(
