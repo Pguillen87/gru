@@ -4,7 +4,7 @@ from dataclasses import replace
 from modal_service.config import Environment, limits_for
 from modal_service.coordinator import JobCoordinator
 from modal_service.costs import CostLimitExceeded, RateLimitExceeded
-from modal_service.domain import DomainError, JobNotFound, JobState
+from modal_service.domain import DomainError, JobNotFound, JobState, WorkflowMode
 
 
 def coordinator(*, limits=None):
@@ -184,6 +184,53 @@ def test_ambiguous_pose_response_without_outputs_never_restarts_gpu():
     assert replay.state is JobState.FAILED
     assert replay.pose_gpu_call_id == "reserved"
     assert not created and not reserved
+
+
+def test_async_incubation_replay_and_lease_are_serialized():
+    service, usage = coordinator()
+    args = {
+        "registration_only": True,
+        "attempt_id": "attempt-incubator",
+        "workflow_mode": WorkflowMode.ASYNC_INCUBATOR_V1.value,
+        "subject_hint": {"version": "subject-hint-v1", "suggestedCategory": "animal"},
+    }
+    first, created = service.register("uid-a", "incubator-key", "original/hash", **args)
+    replay, replay_created = service.register("uid-a", "incubator-key", "original/hash", **args)
+
+    assert created and not replay_created and first.job_id == replay.job_id
+    assert usage["user-jobs:2026-08-03:uid-a"] == 1
+
+    service.jobs[first.job_id]["state"] = JobState.AWAITING_MASTER_APPROVAL.value
+    claimed, changed = service.claim_incubation_lease(first.job_id, "worker-a", 60)
+    concurrent, concurrent_changed = service.claim_incubation_lease(first.job_id, "worker-b", 60)
+    assert changed and claimed.lease_owner == "worker-a"
+    assert not concurrent_changed and concurrent.lease_owner == "worker-a"
+
+    released, release_changed = service.release_incubation_lease(first.job_id, "worker-a")
+    assert release_changed and released.lease_owner is None
+
+
+def test_async_master_selection_and_generation_ready_are_idempotent():
+    service, _ = coordinator()
+    job, _ = service.register(
+        "uid-a",
+        "incubator-key",
+        "original/hash",
+        registration_only=True,
+        attempt_id="attempt-incubator",
+        workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
+    )
+    service.jobs[job.job_id]["state"] = JobState.AWAITING_MASTER_APPROVAL.value
+    selection = {"rankerVersion": "master-ranker-v1", "selectedMasterId": "master_1", "scores": []}
+    selected, changed = service.auto_select_master(job.job_id, selection, "pose-prompt")
+    replay, replay_changed = service.auto_select_master(job.job_id, selection, "pose-prompt")
+    assert changed and not replay_changed and selected.master_id == replay.master_id == "master_1"
+
+    service.start_pose_generation(job.job_id, selected.pose_choices)
+    completed, committed = service.commit_pose_outputs(job.job_id, lambda _: None)
+    repeated, repeated_commit = service.commit_pose_outputs(job.job_id, lambda _: None)
+    assert committed and not repeated_commit
+    assert completed.generation_ready_at and repeated.generation_ready_at == completed.generation_ready_at
 
 
 def test_pose_qc_failure_transitions_the_active_job_to_failed_once():

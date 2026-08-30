@@ -6,11 +6,12 @@ import hashlib
 from collections.abc import MutableMapping
 from collections.abc import Callable
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from modal_service.config import RuntimeLimits
 from modal_service.costs import generation_reservation, require_job_quota
-from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, TERMINAL_STATES, utc_now
+from modal_service.domain import DomainError, JobNotFound, JobRecord, JobState, TERMINAL_STATES, WorkflowMode, utc_now
 from modal_service.catalog import DEFAULT_POSE_CHOICES, validate_pose_choices
 
 
@@ -31,6 +32,11 @@ class JobOperation(StrEnum):
     ENQUEUE_POSES = "ENQUEUE_POSES"
     CANCEL = "CANCEL"
     DELETE = "DELETE"
+    AUTO_SELECT_MASTER = "AUTO_SELECT_MASTER"
+    FAIL_INCUBATION = "FAIL_INCUBATION"
+    CLAIM_INCUBATION_LEASE = "CLAIM_INCUBATION_LEASE"
+    HEARTBEAT_INCUBATION = "HEARTBEAT_INCUBATION"
+    RELEASE_INCUBATION_LEASE = "RELEASE_INCUBATION_LEASE"
 
 
 def deterministic_job_id(user_id: str, idempotency_key: str) -> str:
@@ -79,6 +85,8 @@ class JobCoordinator:
         registration_only: bool = False,
         attempt_id: str | None = None,
         correlation_id: str | None = None,
+        workflow_mode: str = WorkflowMode.LEGACY_MANUAL.value,
+        subject_hint: dict[str, object] | None = None,
     ) -> tuple[JobRecord, bool]:
         selected_poses = validate_pose_choices(pose_choices or dict(DEFAULT_POSE_CHOICES))
         confirmed_identity = subject_identity or {
@@ -98,6 +106,8 @@ class JobCoordinator:
                 raise DomainError("Idempotency key was already used with a different subject identity.")
             if existing.attempt_id != attempt_id:
                 raise DomainError("Idempotency key was already used with a different attempt.")
+            if existing.workflow_mode != workflow_mode:
+                raise DomainError("Idempotency key was already used with a different workflow mode.")
             return existing, False
 
         job_id = deterministic_job_id(user_id, key)
@@ -111,6 +121,8 @@ class JobCoordinator:
                 raise DomainError("Idempotency key was already used with a different subject identity.")
             if existing.attempt_id != attempt_id:
                 raise DomainError("Idempotency key was already used with a different attempt.")
+            if existing.workflow_mode != workflow_mode:
+                raise DomainError("Idempotency key was already used with a different workflow mode.")
             self.idempotency[request_key] = existing.job_id
             return existing, False
         except JobNotFound:
@@ -132,6 +144,8 @@ class JobCoordinator:
             subject_identity=confirmed_identity,
             attempt_id=attempt_id,
             correlation_id=correlation_id,
+            workflow_mode=workflow_mode,
+            subject_hint=subject_hint,
         )
         if registration_only:
             job.state = JobState.REGISTERED
@@ -248,6 +262,23 @@ class JobCoordinator:
             self.save(job)
         return job, changed
 
+    def auto_select_master(self, job_id: str, selection: dict[str, object], prompt_version: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.workflow_mode != WorkflowMode.ASYNC_INCUBATOR_V1.value:
+            raise DomainError("Automatic Master selection is not available for this workflow.")
+        selected = str(selection.get("selectedMasterId", ""))
+        if not selected:
+            raise DomainError("Automatic Master selection is incomplete.")
+        if job.master_selection:
+            if job.master_selection != selection or job.master_id != selected:
+                raise DomainError("A different Master selection is already recorded.")
+            return job, False
+        changed = job.approve_master(selected)
+        job.master_selection = selection
+        job.prompt_version = prompt_version
+        self.save(job)
+        return job, changed
+
     def update_configuration(
         self,
         job_id: str,
@@ -341,6 +372,52 @@ class JobCoordinator:
         self.save(job)
         return job, True
 
+    def fail_incubation(self, job_id: str, error_code: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.state in TERMINAL_STATES:
+            return job, False
+        if job.workflow_mode != WorkflowMode.ASYNC_INCUBATOR_V1.value:
+            raise DomainError("Incubation failure is not available for this workflow.")
+        job.error_code = error_code
+        job.transition_to(JobState.FAILED)
+        self.save(job)
+        return job, True
+
+    def claim_incubation_lease(self, job_id: str, owner: str, ttl_seconds: int = 90) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.workflow_mode != WorkflowMode.ASYNC_INCUBATOR_V1.value or job.state in TERMINAL_STATES:
+            return job, False
+        now = datetime.now(UTC)
+        expires_at = datetime.fromisoformat(job.lease_expires_at) if job.lease_expires_at else None
+        if job.lease_owner and job.lease_owner != owner and expires_at and expires_at > now:
+            return job, False
+        job.lease_owner = owner
+        job.lease_expires_at = (now + timedelta(seconds=max(15, min(ttl_seconds, 300)))).isoformat()
+        job.heartbeat_at = now.isoformat()
+        job.workflow_revision += 1
+        self.save(job)
+        return job, True
+
+    def heartbeat_incubation(self, job_id: str, owner: str, ttl_seconds: int = 90) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.lease_owner != owner or job.state in TERMINAL_STATES:
+            return job, False
+        now = datetime.now(UTC)
+        job.heartbeat_at = now.isoformat()
+        job.lease_expires_at = (now + timedelta(seconds=max(15, min(ttl_seconds, 300)))).isoformat()
+        self.save(job)
+        return job, True
+
+    def release_incubation_lease(self, job_id: str, owner: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        if job.lease_owner != owner:
+            return job, False
+        job.lease_owner = None
+        job.lease_expires_at = None
+        job.heartbeat_at = utc_now()
+        self.save(job)
+        return job, True
+
     def commit_pose_outputs(self, job_id: str, persist: Callable[[JobRecord], None]) -> tuple[JobRecord, bool]:
         job = self.get(job_id)
         if job.state in TERMINAL_STATES or job.state is not JobState.GENERATING_POSES:
@@ -348,6 +425,8 @@ class JobCoordinator:
         persist(job)
         changed = job.complete_pose_generation(job.job_id)
         job.pose_operation_status = "completed"
+        if job.workflow_mode == WorkflowMode.ASYNC_INCUBATOR_V1.value:
+            job.generation_ready_at = utc_now()
         self.save(job)
         return job, changed
 

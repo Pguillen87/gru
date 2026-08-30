@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from modal_service.domain import JobRecord, JobState
+from modal_service.incubator import product_state
 
 
 PUBLIC_STATUS_BY_STATE = {
@@ -43,6 +44,8 @@ def public_job(
             "poseChoices": job.pose_choices,
             "configurationRevision": job.configuration_revision,
         },
+        "workflowMode": job.workflow_mode,
+        "productState": product_state(job),
     }
     if status == "awaiting_master_approval":
         payload["masters"] = masters or []
@@ -60,4 +63,10 @@ def public_job(
         payload["error"] = {"code": job.error_code}
     if job.pose_operation_id:
         payload["operationId"] = job.pose_operation_id
+    if job.subject_hint:
+        payload["subjectHint"] = job.subject_hint
+    if job.master_selection:
+        payload["masterSelection"] = job.master_selection
+    if job.generation_ready_at:
+        payload["generationReadyAt"] = job.generation_ready_at
     return payload
