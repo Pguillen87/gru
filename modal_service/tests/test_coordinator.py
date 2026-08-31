@@ -289,7 +289,7 @@ def test_async_master_selection_and_generation_ready_are_idempotent():
         workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
     )
     service.jobs[job.job_id]["state"] = JobState.AWAITING_MASTER_APPROVAL.value
-    selection = {"rankerVersion": "master-ranker-v1", "selectedMasterId": "master_1", "scores": []}
+    selection = {"rankerVersion": "master-ranker-v1", "selectedMasterId": "master_1", "scores": [], "decision": "AUTO_SELECTED", "selectionSource": "auto"}
     selected, changed = service.auto_select_master(job.job_id, selection, "pose-prompt")
     replay, replay_changed = service.auto_select_master(job.job_id, selection, "pose-prompt")
     assert changed and not replay_changed and selected.master_id == replay.master_id == "master_1"
@@ -299,6 +299,27 @@ def test_async_master_selection_and_generation_ready_are_idempotent():
     repeated, repeated_commit = service.commit_pose_outputs(job.job_id, lambda _: None)
     assert committed and not repeated_commit
     assert completed.generation_ready_at and repeated.generation_ready_at == completed.generation_ready_at
+
+
+def test_ambiguous_incubator_requires_owner_selection_and_replays_idempotently():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "ambiguous-key", "original/hash", registration_only=True, attempt_id="attempt-ambiguous", workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value)
+    service.jobs[job.job_id]["state"] = JobState.AWAITING_MASTER_APPROVAL.value
+    service.record_shadow_ranking(job.job_id, {"decision": "NEEDS_HUMAN_SELECTION", "selectedMasterId": "master_2", "scores": []})
+    selected, changed = service.select_incubator_master(job.job_id, "uid-a", "master_3", "pose-prompt")
+    replay, replay_changed = service.select_incubator_master(job.job_id, "uid-a", "master_3", "pose-prompt")
+    assert changed and not replay_changed
+    assert selected.master_id == replay.master_id == "master_3"
+    assert selected.master_selection["selectionSource"] == "human"
+
+
+def test_ranking_failure_is_persisted_without_selecting_a_master():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "rank-fail", "original/hash", registration_only=True, attempt_id="attempt-rank-fail", workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value)
+    service.jobs[job.job_id]["state"] = JobState.AWAITING_MASTER_APPROVAL.value
+    failed, _ = service.fail_incubation(job.job_id, "MASTER_AUTO_RANKING_FAILED")
+    assert failed.master_id is None
+    assert failed.master_selection["decision"] == "RANKING_FAILED"
 
 
 def test_pose_qc_failure_transitions_the_active_job_to_failed_once():

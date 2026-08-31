@@ -22,6 +22,11 @@ from modal_service.domain import JobRecord, JobState, WorkflowMode
 ENCODER_VERSION = "siglip-base-p16-224-zeroshot-v1"
 SUBJECT_HINT_POLICY_VERSION = "subject-hint-policy-v2"
 MASTER_RANKER_VERSION = "master-ranker-v2"
+MASTER_RANKER_POLICY_VERSION = "master-ranker-policy-v1"
+# Provisional and deliberately conservative: until the real QA sample grows,
+# uncertainty always prefers an owner decision over a paid pose operation.
+AUTO_SELECT_MIN_TOP1_SCORE = 0.82
+AUTO_SELECT_MIN_MARGIN = 0.04
 ARTIFACT_PACKAGE_NAME = "siglip-base-p16-224-zeroshot-v1"
 ARTIFACT_SCHEMA_VERSION = 1
 UPSTREAM_MODEL_ID = "google/siglip-base-patch16-224"
@@ -329,7 +334,8 @@ class RankedMaster:
 
     @property
     def total(self) -> float:
-        return round(self.identity * 0.50 + self.category * 0.30 + self.composition * 0.20, 6)
+        weighted = round(self.identity * 0.50 + self.category * 0.30 + self.composition * 0.20, 6)
+        return max(0.0, min(1.0, weighted))
 
 
 def cosine_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> float:
@@ -375,14 +381,56 @@ def rank_masters(source: bytes, candidates: dict[str, bytes], qc_by_master: dict
         composition = max(0.0, min(1.0, 1.0 - border_ratio - max(0.0, alpha_ratio - 0.78) - max(0, components - 4) * 0.04))
         ranked.append(RankedMaster(master_id, cosine_similarity(source_features, encoder.encode(image)), max(0.0, min(1.0, category)), composition))
     eligible = [item for item in ranked if item.identity >= 0.55 and item.category >= 0.50 and item.composition >= 0.55]
-    if not eligible:
-        raise ValueError("No Master candidate passed automatic ranking gates.")
-    winner = sorted(eligible, key=lambda item: (-item.total, item.master_id))[0]
+    ordered = sorted(eligible, key=lambda item: (-item.total, item.master_id))
+    winner = ordered[0] if ordered else None
     return {
         "encoderVersion": encoder.version,
         "masterRankerVersion": MASTER_RANKER_VERSION,
-        "selectedMasterId": winner.master_id,
-        "scores": [{"masterId": item.master_id, "identity": round(item.identity, 6), "category": round(item.category, 6), "composition": round(item.composition, 6), "total": item.total} for item in sorted(ranked, key=lambda item: item.master_id)],
+        "selectedMasterId": winner.master_id if winner else None,
+        "scores": [{"masterId": item.master_id, "identity": round(item.identity, 6), "category": round(item.category, 6), "composition": round(item.composition, 6), "total": item.total} for item in sorted(eligible, key=lambda item: item.master_id)],
+    }
+
+
+def master_selection_policy(selection: dict[str, object]) -> dict[str, object]:
+    """Classify a completed ranking without persisting embeddings or images."""
+    scores = [item for item in selection.get("scores", []) if isinstance(item, dict)]
+    ranked = sorted(scores, key=lambda item: (-float(item.get("total", 0.0)), str(item.get("masterId", ""))))
+    if not ranked:
+        return {
+            **selection,
+            "selectionSource": None,
+            "decision": "RANKING_FAILED",
+            "decisionReason": "NO_ELIGIBLE_MASTER",
+            "masterRankerPolicyVersion": MASTER_RANKER_POLICY_VERSION,
+            "top1Score": None,
+            "top2Score": None,
+            "margin": None,
+        }
+    if len(ranked) > 3 or not selection.get("selectedMasterId"):
+        raise ValueError("Master ranking policy received an invalid candidate set.")
+    if len(ranked) == 1:
+        return {
+            **selection,
+            "selectionSource": None,
+            "decision": "NEEDS_HUMAN_SELECTION",
+            "decisionReason": "SINGLE_ELIGIBLE_MASTER",
+            "masterRankerPolicyVersion": MASTER_RANKER_POLICY_VERSION,
+            "top1Score": round(float(ranked[0]["total"]), 6),
+            "top2Score": None,
+            "margin": None,
+        }
+    top1, top2 = float(ranked[0]["total"]), float(ranked[1]["total"])
+    margin = round(top1 - top2, 6)
+    decision = "AUTO_SELECTED" if top1 >= AUTO_SELECT_MIN_TOP1_SCORE and margin >= AUTO_SELECT_MIN_MARGIN else "NEEDS_HUMAN_SELECTION"
+    return {
+        **selection,
+        "selectionSource": "auto" if decision == "AUTO_SELECTED" else None,
+        "decision": decision,
+        "decisionReason": "CONFIDENT_RANKING" if decision == "AUTO_SELECTED" else "RANKING_AMBIGUOUS",
+        "masterRankerPolicyVersion": MASTER_RANKER_POLICY_VERSION,
+        "top1Score": round(top1, 6),
+        "top2Score": round(top2, 6),
+        "margin": margin,
     }
 
 
@@ -405,6 +453,8 @@ def product_state(job: JobRecord) -> str:
         return "FAILED"
     if job.generation_ready_at or job.state is JobState.COMPLETED:
         return "READY_TO_HATCH"
+    if job.state is JobState.AWAITING_MASTER_APPROVAL and (job.master_selection or {}).get("decision") == "NEEDS_HUMAN_SELECTION":
+        return "NEEDS_HUMAN_MASTER_SELECTION"
     if job.state in {JobState.REGISTERED, JobState.QUEUED, JobState.VALIDATING_INPUT, JobState.READY_FOR_GENERATION}:
         return "PREPARING"
     return "INCUBATING"

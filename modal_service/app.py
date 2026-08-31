@@ -47,6 +47,7 @@ from modal_service.incubator import (
     VisualEncoderUnavailable,
     is_async_incubation,
     load_pinned_visual_encoder,
+    master_selection_policy,
     pinned_encoder_status,
     rank_masters,
     shadow_ranking_observation,
@@ -697,6 +698,8 @@ def job_control(
             job, changed = coordinator.approve_master(job_id, user_id, master_id, POSE_PROMPT_VERSION)
         elif command is JobOperation.AUTO_SELECT_MASTER:
             job, changed = coordinator.auto_select_master(job_id, master_selection or {}, POSE_PROMPT_VERSION)
+        elif command is JobOperation.SELECT_INCUBATOR_MASTER:
+            job, changed = coordinator.select_incubator_master(job_id, user_id, master_id, POSE_PROMPT_VERSION)
         elif command is JobOperation.RECORD_SHADOW_RANKING:
             job, changed = coordinator.record_shadow_ranking(job_id, shadow_ranking or {})
         elif command is JobOperation.UPDATE_CONFIGURATION:
@@ -888,6 +891,8 @@ def advance_async_incubation(job_id: str) -> dict[str, object]:
             raise DomainError("Async incubation cannot advance from the current state.")
         selected_job = job
         if job.state is JobState.AWAITING_MASTER_APPROVAL:
+            if (job.master_selection or {}).get("decision") == "NEEDS_HUMAN_SELECTION":
+                return {"job": _serialize(job), "changed": False, "deferred": True, "needsHumanSelection": True}
             assets.reload()
             references = _master_references(job)
             qc_by_master = {str(item["id"]): dict(item.get("qc") or {}) for item in references}
@@ -897,13 +902,13 @@ def advance_async_incubation(job_id: str) -> dict[str, object]:
             }
             source = _asset_path(job_id, "original", "source.bin").read_bytes()
             try:
-                selection = rank_masters(
+                selection = master_selection_policy(rank_masters(
                     source,
                     candidates,
                     qc_by_master,
                     str(job.subject_identity.get("category", "other")),
                     load_pinned_visual_encoder(),
-                )
+                ))
             except (OSError, ValueError, VisualEncoderUnavailable):
                 if not INCUBATOR_AUTO_RANKING_ENABLED:
                     structured_event(
@@ -937,6 +942,22 @@ def advance_async_incubation(job_id: str) -> dict[str, object]:
                     **observation,
                 )
                 return {"job": dict(observed["job"]), "changed": False, "deferred": True, "shadow": True}
+            if selection["decision"] == "RANKING_FAILED":
+                failed = job_control.remote(
+                    JobOperation.FAIL_INCUBATION.value,
+                    job_id,
+                    error_code="MASTER_AUTO_RANKING_FAILED",
+                )
+                _raise_guard_error(failed)
+                return dict(failed)
+            if selection["decision"] == "NEEDS_HUMAN_SELECTION":
+                observed = job_control.remote(
+                    JobOperation.RECORD_SHADOW_RANKING.value,
+                    job_id,
+                    shadow_ranking=selection,
+                )
+                _raise_guard_error(observed)
+                return {"job": dict(observed["job"]), "changed": False, "deferred": True, "needsHumanSelection": True}
             selected = job_control.remote(
                 JobOperation.AUTO_SELECT_MASTER.value,
                 job_id,
@@ -1012,6 +1033,8 @@ def reconcile_async_incubations() -> dict[str, int]:
                 _raise_guard_error(reconciled)
                 job = _deserialize(dict(reconciled["job"]))
             if job.state in {JobState.AWAITING_MASTER_APPROVAL, JobState.CONSISTENCY_TEST} and _pose_generation_enabled():
+                if job.state is JobState.AWAITING_MASTER_APPROVAL and (job.master_selection or {}).get("decision") == "NEEDS_HUMAN_SELECTION":
+                    continue
                 advanced = advance_async_incubation.remote(str(job_id))
                 _raise_guard_error(advanced)
                 counters["advanced"] += int(bool(advanced.get("changed") or advanced.get("reserved")))
@@ -2222,6 +2245,34 @@ def api():
             )
             _raise_guard_error(approval)
             return public_job(_deserialize(dict(approval["job"])), _master_references(job))
+        except DomainError as error:
+            raise _api_error(error) from error
+
+    @service.post("/v2/mascot/incubations/{job_id}/masters/{master_id}/select")
+    async def select_incubator_master_v2(
+        job_id: str,
+        master_id: str,
+        context: tuple[BffIdentity, str, str] = Depends(bff_operation_context),
+    ):
+        """Persist one owner selection for an ambiguous incubator ranking."""
+        identity, _, _ = context
+        try:
+            job = _get_job(job_id)
+            _ensure_owner(job, identity.user_id)
+            _refresh_result_assets(job)
+            if master_id not in {reference["id"] for reference in _master_references(job)}:
+                raise JobNotFound("Master was not found.")
+            selected = job_control.remote(
+                JobOperation.SELECT_INCUBATOR_MASTER.value,
+                job_id,
+                identity.user_id,
+                master_id=master_id,
+            )
+            _raise_guard_error(selected)
+            advanced = advance_async_incubation.remote(job_id)
+            _raise_guard_error(advanced)
+            current = _deserialize(dict(advanced["job"]))
+            return _public_job_with_assets(current)
         except DomainError as error:
             raise _api_error(error) from error
 

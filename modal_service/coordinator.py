@@ -33,6 +33,7 @@ class JobOperation(StrEnum):
     CANCEL = "CANCEL"
     DELETE = "DELETE"
     AUTO_SELECT_MASTER = "AUTO_SELECT_MASTER"
+    SELECT_INCUBATOR_MASTER = "SELECT_INCUBATOR_MASTER"
     RECORD_SHADOW_RANKING = "RECORD_SHADOW_RANKING"
     FAIL_INCUBATION = "FAIL_INCUBATION"
     CLAIM_INCUBATION_LEASE = "CLAIM_INCUBATION_LEASE"
@@ -268,6 +269,8 @@ class JobCoordinator:
         job = self.get(job_id)
         if job.workflow_mode != WorkflowMode.ASYNC_INCUBATOR_V1.value:
             raise DomainError("Automatic Master selection is not available for this workflow.")
+        if selection.get("decision") != "AUTO_SELECTED" or selection.get("selectionSource") != "auto":
+            raise DomainError("Automatic Master selection requires a confident ranking policy decision.")
         selected = str(selection.get("selectedMasterId", ""))
         if not selected:
             raise DomainError("Automatic Master selection is incomplete.")
@@ -283,6 +286,26 @@ class JobCoordinator:
         self.save(job)
         return job, changed
 
+    def select_incubator_master(self, job_id: str, user_id: str, master_id: str, prompt_version: str) -> tuple[JobRecord, bool]:
+        job = self.get(job_id)
+        self.ensure_owner(job, user_id)
+        if job.workflow_mode != WorkflowMode.ASYNC_INCUBATOR_V1.value:
+            raise DomainError("Human Master selection is not available for this workflow.")
+        if master_id not in {"master_1", "master_2", "master_3"}:
+            raise JobNotFound("Master was not found.")
+        decision = (job.master_selection or {}).get("decision")
+        if job.master_id:
+            if job.master_id == master_id and (job.master_selection or {}).get("selectionSource") == "human":
+                return job, False
+            raise DomainError("A different Master selection is already recorded.")
+        if job.state is not JobState.AWAITING_MASTER_APPROVAL or decision != "NEEDS_HUMAN_SELECTION":
+            raise DomainError("Human Master selection is not available for this job.")
+        changed = job.approve_master(master_id)
+        job.master_selection = {**(job.master_selection or {}), "selectedMasterId": master_id, "selectionSource": "human", "decision": "HUMAN_SELECTED", "decisionReason": "OWNER_SELECTION"}
+        job.prompt_version = prompt_version
+        self.save(job)
+        return job, changed
+
     def record_shadow_ranking(self, job_id: str, observation: dict[str, object]) -> tuple[JobRecord, bool]:
         job = self.get(job_id)
         if job.state is not JobState.AWAITING_MASTER_APPROVAL or job.master_selection:
@@ -292,6 +315,10 @@ class JobCoordinator:
                 raise DomainError("A different shadow ranking is already recorded.")
             return job, False
         job.shadow_ranking_observation = observation
+        # A policy-declared ambiguous result is durable product state, not a
+        # shadow-only observation. It intentionally leaves master_id empty.
+        if observation.get("decision") == "NEEDS_HUMAN_SELECTION":
+            job.master_selection = observation
         job.encoder_version = str(observation.get("encoderVersion") or "") or None
         job.master_ranker_version = str(observation.get("masterRankerVersion") or "") or None
         self.save(job)
@@ -396,6 +423,8 @@ class JobCoordinator:
             return job, False
         if job.workflow_mode != WorkflowMode.ASYNC_INCUBATOR_V1.value:
             raise DomainError("Incubation failure is not available for this workflow.")
+        if job.state is JobState.AWAITING_MASTER_APPROVAL and error_code == "MASTER_AUTO_RANKING_FAILED":
+            job.master_selection = {**(job.master_selection or {}), "decision": "RANKING_FAILED", "decisionReason": "RANKING_UNAVAILABLE"}
         job.error_code = error_code
         job.transition_to(JobState.FAILED)
         self.save(job)
