@@ -67,6 +67,17 @@ def test_approval_and_registration_v2_do_not_spawn_gpu_or_poses():
     assert "START_POSES" not in approval_block
 
 
+def test_incubation_registration_defers_master_until_generation_gate_is_enabled():
+    source = Path("modal_service/app.py").read_text(encoding="utf-8")
+    route = source.split('@service.post("/v2/mascot/incubations", status_code=202)', 1)[1].split(
+        '@service.delete("/v2/mascot/jobs/{job_id}"', 1
+    )[0]
+    assert "registration_only=True" in route
+    assert "if not _master_generation_enabled()" in route
+    assert route.index('if not _master_generation_enabled()') < route.index("_schedule_master(job")
+    assert '"idempotentReplay"' in route
+
+
 def test_v1_routes_remain_in_the_api_factory():
     source = Path("modal_service/app.py").read_text(encoding="utf-8")
     assert '@service.post("/v1/mascot/jobs"' in source

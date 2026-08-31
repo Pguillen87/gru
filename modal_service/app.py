@@ -2177,6 +2177,12 @@ def api():
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(content)
                 assets.commit()
+            # Registration is deliberately independent from paid worker
+            # readiness. Keep the persisted egg recoverable while all
+            # generation kill-switches are false; the reconciler will resume
+            # this same job after explicit enablement.
+            if not _master_generation_enabled():
+                return public_job(job) | {"idempotentReplay": not bool(registration["created"])}
             scheduled = _schedule_master(job, identity.user_id)
             return public_job(_deserialize(scheduled)) | {"idempotentReplay": not bool(registration["created"])}
         except (ImageValidationError, DomainError, CostLimitExceeded, RateLimitExceeded, ValueError) as error:

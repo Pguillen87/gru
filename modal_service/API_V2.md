@@ -33,6 +33,7 @@ O secret `PULEIRO_BFF_JWT_SECRET` pertence ao Modal Secret `gru-mascot-puleiro-b
 | Método | Rota | Comportamento |
 |---|---|---|
 | POST | `/v2/mascot/jobs` | valida, registra, persiste, responde `generationScheduled:false` |
+| POST | `/v2/mascot/incubations` | registra o ovo e responde `202` mesmo com workers pagos desligados; agenda Master somente quando os gates estiverem habilitados |
 | GET | `/v2/mascot/jobs?attempt_id=` | recupera tentativa do mesmo owner |
 | GET | `/v2/mascot/jobs/{job_id}` | consulta owner-scoped |
 | GET | `/v2/mascot/jobs/{job_id}/masters/{master_id}` | download privado owner-scoped |
