@@ -100,6 +100,7 @@ def test_master_ranking_fails_when_every_candidate_fails_hard_qc():
 
 def test_ranked_master_total_is_bounded_at_one():
     assert RankedMaster("master_1", 1.0, 1.0, 1.0).total == 1.0
+    assert RankedMaster("master_1", 1.2, 1.0, 1.0).total == 1.0
 
 
 def test_qa_known_case_score_uses_the_approved_scale():

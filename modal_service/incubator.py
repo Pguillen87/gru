@@ -334,7 +334,8 @@ class RankedMaster:
 
     @property
     def total(self) -> float:
-        return round(self.identity * 0.50 + self.category * 0.30 + self.composition * 0.20, 6)
+        weighted = round(self.identity * 0.50 + self.category * 0.30 + self.composition * 0.20, 6)
+        return max(0.0, min(1.0, weighted))
 
 
 def cosine_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> float:
