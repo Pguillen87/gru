@@ -942,6 +942,14 @@ def advance_async_incubation(job_id: str) -> dict[str, object]:
                     **observation,
                 )
                 return {"job": dict(observed["job"]), "changed": False, "deferred": True, "shadow": True}
+            if selection["decision"] == "RANKING_FAILED":
+                failed = job_control.remote(
+                    JobOperation.FAIL_INCUBATION.value,
+                    job_id,
+                    error_code="MASTER_AUTO_RANKING_FAILED",
+                )
+                _raise_guard_error(failed)
+                return dict(failed)
             if selection["decision"] == "NEEDS_HUMAN_SELECTION":
                 observed = job_control.remote(
                     JobOperation.RECORD_SHADOW_RANKING.value,

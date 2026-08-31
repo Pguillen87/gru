@@ -4,6 +4,7 @@ import pytest
 
 from modal_service.domain import JobRecord, JobState, WorkflowMode
 from modal_service.incubator import (
+    RankedMaster,
     NeutralVisualEncoder,
     VisualEncoderUnavailable,
     load_pinned_visual_encoder,
@@ -87,14 +88,22 @@ def test_master_ranking_requires_three_candidates_and_is_deterministic():
 
 
 def test_master_ranking_fails_when_every_candidate_fails_hard_qc():
-    with pytest.raises(ValueError, match="No Master"):
-        rank_masters(
-            b"source",
-            {"master_1": b"one", "master_2": b"two", "master_3": b"three"},
-            {master_id: {"status": "failed"} for master_id in ("master_1", "master_2", "master_3")},
-            "human",
-            FakeEncoder(),
-        )
+    selection = rank_masters(
+        b"source",
+        {"master_1": b"one", "master_2": b"two", "master_3": b"three"},
+        {master_id: {"status": "failed"} for master_id in ("master_1", "master_2", "master_3")},
+        "human",
+        FakeEncoder(),
+    )
+    assert master_selection_policy(selection)["decision"] == "RANKING_FAILED"
+
+
+def test_ranked_master_total_is_bounded_at_one():
+    assert RankedMaster("master_1", 1.0, 1.0, 1.0).total == 1.0
+
+
+def test_qa_known_case_score_uses_the_approved_scale():
+    assert RankedMaster("master_2", 0.555722, 0.998718, 1.0).total == 0.777476
 
 
 def test_confident_master_ranking_policy_can_auto_select():
@@ -114,6 +123,26 @@ def test_ambiguous_master_ranking_policy_requires_human_selection():
     })
     assert decision["decision"] == "NEEDS_HUMAN_SELECTION"
     assert decision["margin"] == 0.007685
+
+
+def test_two_eligible_candidates_can_auto_select_when_confident():
+    decision = master_selection_policy({
+        "selectedMasterId": "master_1", "scores": [{"masterId": "master_1", "total": 0.91}, {"masterId": "master_2", "total": 0.82}],
+    })
+    assert decision["decision"] == "AUTO_SELECTED"
+
+
+def test_two_eligible_candidates_with_small_margin_require_human_selection():
+    decision = master_selection_policy({
+        "selectedMasterId": "master_1", "scores": [{"masterId": "master_1", "total": 0.84}, {"masterId": "master_2", "total": 0.82}],
+    })
+    assert decision["decision"] == "NEEDS_HUMAN_SELECTION"
+
+
+def test_one_eligible_candidate_requires_human_selection():
+    decision = master_selection_policy({"selectedMasterId": "master_1", "scores": [{"masterId": "master_1", "total": 0.97}]})
+    assert decision["decision"] == "NEEDS_HUMAN_SELECTION"
+    assert decision["margin"] is None
 
 
 def test_ambiguous_incubation_is_a_recoverable_product_state():
