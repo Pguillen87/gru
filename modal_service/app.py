@@ -541,6 +541,13 @@ def _raise_guard_error(result: dict[str, object]) -> None:
         raise GuardRejected(str(code), str(result.get("error_message", "Request was rejected.")))
 
 
+def incubation_registration_payload(job: JobRecord, created: bool, master_generation_enabled: bool) -> dict[str, object]:
+    """Return the registration response without crossing a paid boundary."""
+    if not master_generation_enabled:
+        return public_job(job) | {"idempotentReplay": not created}
+    raise AssertionError("Paid scheduling must use the guarded master scheduler.")
+
+
 def _request_context(user_id: str, idempotency_key: str) -> tuple[str, str]:
     if not user_id.strip() or not idempotency_key.strip():
         raise DomainError("Verified user identity and idempotency key are required.")
@@ -2177,6 +2184,12 @@ def api():
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(content)
                 assets.commit()
+            # Registration is deliberately independent from paid worker
+            # readiness. Keep the persisted egg recoverable while all
+            # generation kill-switches are false; the reconciler will resume
+            # this same job after explicit enablement.
+            if not _master_generation_enabled():
+                return incubation_registration_payload(job, bool(registration["created"]), False)
             scheduled = _schedule_master(job, identity.user_id)
             return public_job(_deserialize(scheduled)) | {"idempotentReplay": not bool(registration["created"])}
         except (ImageValidationError, DomainError, CostLimitExceeded, RateLimitExceeded, ValueError) as error:
