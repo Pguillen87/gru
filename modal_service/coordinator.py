@@ -39,6 +39,7 @@ class JobOperation(StrEnum):
     CLAIM_INCUBATION_LEASE = "CLAIM_INCUBATION_LEASE"
     HEARTBEAT_INCUBATION = "HEARTBEAT_INCUBATION"
     RELEASE_INCUBATION_LEASE = "RELEASE_INCUBATION_LEASE"
+    RECOVER_POSES_FROM_PRESERVED_RAWS = "RECOVER_POSES_FROM_PRESERVED_RAWS"
 
 
 def deterministic_job_id(user_id: str, idempotency_key: str) -> str:
@@ -473,6 +474,34 @@ class JobCoordinator:
         changed = job.complete_pose_generation(job.job_id)
         job.pose_operation_status = "completed"
         if job.workflow_mode == WorkflowMode.ASYNC_INCUBATOR_V1.value:
+            job.generation_ready_at = utc_now()
+        self.save(job)
+        return job, changed
+
+    def recover_pose_outputs_from_preserved_raws(
+        self,
+        job_id: str,
+        user_id: str,
+        persist: Callable[[JobRecord], None],
+        qc_version: str,
+    ) -> tuple[JobRecord, bool]:
+        """Promote only a compatible failed operation after CPU re-QC of its RAWs.
+
+        The caller supplies a persistence function which may only transform the
+        three reserved raw files.  This method never reserves a worker, changes
+        choices, or writes a GPU call id.
+        """
+        job = self.get(job_id)
+        self.ensure_owner(job, user_id)
+        if job.state is JobState.COMPLETED and job.pose_recovery is not None:
+            return job, False
+        if job.state is not JobState.FAILED or job.error_code != "VISUAL_POSE_CONSISTENCY_FAILED":
+            raise DomainError("Preserved RAW recovery is not compatible with this job failure.")
+        if job.pose_operation_status != "failed":
+            raise DomainError("Preserved RAW recovery requires a failed historical pose operation.")
+        persist(job)
+        changed = job.recover_pose_generation(job.job_id, qc_version)
+        if changed and job.workflow_mode == WorkflowMode.ASYNC_INCUBATOR_V1.value:
             job.generation_ready_at = utc_now()
         self.save(job)
         return job, changed

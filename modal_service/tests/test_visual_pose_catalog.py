@@ -6,7 +6,9 @@ from PIL import Image, ImageDraw
 
 from modal_service import app
 from modal_service.catalog import DEFAULT_POSE_CHOICES, POSE_OPTIONS
-from modal_service.domain import DomainError, JobRecord, PoseAlphaQualityError, PoseVisualConsistencyError
+from modal_service.config import Environment, limits_for
+from modal_service.coordinator import JobCoordinator
+from modal_service.domain import DomainError, JobRecord, JobState, PoseAlphaQualityError, PoseVisualConsistencyError, WorkflowMode
 
 
 class _Volume:
@@ -137,3 +139,97 @@ def test_raw_pose_recovery_requires_exactly_the_three_reserved_outputs(monkeypat
     (raw_root / "unexpected.png").write_bytes(_generated_pose())
     with pytest.raises(DomainError, match="exactly the reserved three"):
         app._load_raw_pose_outputs(job)
+
+
+def _failed_visual_job() -> JobRecord:
+    job = _job()
+    job.state = JobState.FAILED
+    job.error_code = "VISUAL_POSE_CONSISTENCY_FAILED"
+    job.master_id = "master_2"
+    job.pose_operation_id = "incubator_pose_original"
+    job.pose_operation_status = "failed"
+    job.pose_gpu_call_id = "fc-original"
+    job.workflow_mode = WorkflowMode.ASYNC_INCUBATOR_V1.value
+    return job
+
+
+def _recovery_coordinator(job: JobRecord) -> JobCoordinator:
+    jobs = {job.job_id: {**job.__dict__, "state": job.state.value}}
+    return JobCoordinator(jobs, {}, {}, limits_for(Environment.DEVELOPMENT), "2026-09-01")
+
+
+def test_preserved_raw_recovery_promotes_atomically_without_gpu_or_new_operation(monkeypatch, tmp_path):
+    volume = _Volume()
+    monkeypatch.setattr(app, "ASSET_ROOT", str(tmp_path))
+    monkeypatch.setattr(app, "assets", volume)
+    job = _failed_visual_job()
+    coordinator = _recovery_coordinator(job)
+    raw_root = tmp_path / "poses_raw" / job.job_id
+    raw_root.mkdir(parents=True)
+    for option_id, content in _outputs().items():
+        (raw_root / f"{option_id}.png").write_bytes(content)
+
+    recovered, changed = coordinator.recover_pose_outputs_from_preserved_raws(
+        job.job_id, "user", app._recover_pose_outputs_from_preserved_raws, "pose-set-visual-v3"
+    )
+    replay, replay_changed = coordinator.recover_pose_outputs_from_preserved_raws(
+        job.job_id, "user", app._recover_pose_outputs_from_preserved_raws, "pose-set-visual-v3"
+    )
+
+    target = tmp_path / "poses" / job.job_id
+    assert changed and not replay_changed
+    assert recovered.state is JobState.COMPLETED and replay.state is JobState.COMPLETED
+    assert recovered.pose_gpu_call_id == "fc-original"
+    assert recovered.pose_operation_id == "incubator_pose_original"
+    assert recovered.master_id == "master_2"
+    assert len(json.loads((target / "manifest.json").read_text(encoding="utf-8"))["poses"]) == 3
+    assert recovered.pose_recovery["recoveredFromErrorCode"] == "VISUAL_POSE_CONSISTENCY_FAILED"
+    assert recovered.generation_ready_at
+
+
+def test_preserved_raw_recovery_fails_closed_before_promotion_when_raws_or_qc_are_invalid(monkeypatch, tmp_path):
+    volume = _Volume()
+    monkeypatch.setattr(app, "ASSET_ROOT", str(tmp_path))
+    monkeypatch.setattr(app, "assets", volume)
+    job = _failed_visual_job()
+    coordinator = _recovery_coordinator(job)
+    existing = tmp_path / "poses" / job.job_id
+    existing.mkdir(parents=True)
+    (existing / "preserved.txt").write_text("prior set", encoding="utf-8")
+    raw_root = tmp_path / "poses_raw" / job.job_id
+    raw_root.mkdir(parents=True)
+    one_option, one_output = next(iter(_outputs().items()))
+    (raw_root / f"{one_option}.png").write_bytes(one_output)
+
+    with pytest.raises(DomainError, match="exactly the reserved three"):
+        coordinator.recover_pose_outputs_from_preserved_raws(
+            job.job_id, "user", app._recover_pose_outputs_from_preserved_raws, "pose-set-visual-v3"
+        )
+
+    assert (existing / "preserved.txt").read_text(encoding="utf-8") == "prior set"
+
+
+def test_preserved_raw_recovery_fails_closed_on_alpha_qc(monkeypatch, tmp_path):
+    volume = _Volume()
+    monkeypatch.setattr(app, "ASSET_ROOT", str(tmp_path))
+    monkeypatch.setattr(app, "assets", volume)
+    job = _failed_visual_job()
+    coordinator = _recovery_coordinator(job)
+    existing = tmp_path / "poses" / job.job_id
+    existing.mkdir(parents=True)
+    (existing / "preserved.txt").write_text("prior set", encoding="utf-8")
+    raw_root = tmp_path / "poses_raw" / job.job_id
+    raw_root.mkdir(parents=True)
+    outputs = _outputs()
+    failed_option = next(iter(outputs))
+    outputs[failed_option] = _unrecoverable_pose()
+    for option_id, content in outputs.items():
+        (raw_root / f"{option_id}.png").write_bytes(content)
+
+    with pytest.raises(PoseAlphaQualityError):
+        coordinator.recover_pose_outputs_from_preserved_raws(
+            job.job_id, "user", app._recover_pose_outputs_from_preserved_raws, "pose-set-visual-v3"
+        )
+
+    assert (existing / "preserved.txt").read_text(encoding="utf-8") == "prior set"
+    assert coordinator.get(job.job_id).state is JobState.FAILED

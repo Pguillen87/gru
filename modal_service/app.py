@@ -732,6 +732,23 @@ def job_control(
         elif command is JobOperation.COMMIT_POSES:
             assets.reload()
             job, changed = coordinator.commit_pose_outputs(job_id, _verify_pose_outputs)
+        elif command is JobOperation.RECOVER_POSES_FROM_PRESERVED_RAWS:
+            assets.reload()
+            from modal_service.image_processing import POSE_SET_VISUAL_QC_VERSION
+
+            job, changed = coordinator.recover_pose_outputs_from_preserved_raws(
+                job_id,
+                user_id,
+                _recover_pose_outputs_from_preserved_raws,
+                POSE_SET_VISUAL_QC_VERSION,
+            )
+            structured_event(
+                "pose_raw_recovery_completed" if changed else "pose_raw_recovery_replayed",
+                environment=ENVIRONMENT.value,
+                jobId=job.job_id,
+                masterId=job.master_id,
+                operationId=job.pose_operation_id,
+            )
         elif command is JobOperation.FAIL_POSES:
             job, changed = coordinator.fail_pose_generation(job_id, error_code or "POSE_GENERATION_FAILED")
         elif command is JobOperation.FAIL_INCUBATION:
@@ -1665,6 +1682,16 @@ def _load_raw_pose_outputs(job: JobRecord) -> dict[str, bytes]:
     if actual_ids != expected_ids:
         raise DomainError("Raw pose recovery requires exactly the reserved three outputs.")
     return {option.option_id: (raw_root / f"{option.option_id}.png").read_bytes() for option in expected_options}
+
+
+def _recover_pose_outputs_from_preserved_raws(job: JobRecord) -> None:
+    """Run the standard CPU derivative/QC pipeline over exactly the retained RAWs.
+
+    This helper is intentionally a reuse of the normal promotion path: it
+    never calls a provider, reserves a GPU worker or changes the operation
+    fingerprint.  The coordinator performs the owner and failure-code gate.
+    """
+    _persist_pose_outputs(job, _load_raw_pose_outputs(job))
 
 
 def _verify_pose_outputs(job: JobRecord) -> None:

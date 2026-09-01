@@ -2,7 +2,17 @@ from io import BytesIO
 
 from PIL import Image, ImageDraw
 
-from modal_service.image_processing import POSE_BACKGROUND, master_transparency_qc, normalize_pose_presentation, pose_set_visual_consistency_qc, pose_transparency_qc, remove_connected_flat_background, transparency_ratio
+from modal_service.image_processing import (
+    POSE_BACKGROUND,
+    POSE_SET_VISUAL_QC_VERSION,
+    master_transparency_qc,
+    normalize_pose_presentation,
+    pose_set_visual_consistency_qc,
+    pose_set_visual_consistency_qc_v2,
+    pose_transparency_qc,
+    remove_connected_flat_background,
+    transparency_ratio,
+)
 
 
 def _pose(role: str, *, field="runtimeRole", width=1024, height=1024, bbox=(120, 80, 850, 940), foreground_ratio=0.24, qc=True):
@@ -62,6 +72,31 @@ def test_pose_set_visual_consistency_accepts_a_full_body_set_with_a_shared_frame
     assert result["status"] == "passed"
 
 
+def test_pose_set_visual_v3_accepts_the_preserved_parrot_role_aware_geometry():
+    """Regression fixture from the failed preserved RAW set, measured post-alpha QC."""
+    result = pose_set_visual_consistency_qc([
+        _pose("normal", bbox=(219, 65, 785, 958), foreground_ratio=0.223733),
+        _pose("listening", bbox=(227, 87, 941, 938), foreground_ratio=0.276917),
+        _pose("transcribing", bbox=(167, 56, 906, 968), foreground_ratio=0.306104),
+    ])
+
+    assert result["status"] == "passed"
+    assert result["version"] == "pose-set-visual-v3"
+    assert POSE_SET_VISUAL_QC_VERSION == "pose-set-visual-v3"
+
+
+def test_pose_set_visual_v2_preserves_the_historical_global_delta_semantics():
+    result = pose_set_visual_consistency_qc_v2([
+        _pose("normal", bbox=(219, 65, 785, 958), foreground_ratio=0.223733),
+        _pose("listening", bbox=(227, 87, 941, 938), foreground_ratio=0.276917),
+        _pose("transcribing", bbox=(167, 56, 906, 968), foreground_ratio=0.306104),
+    ])
+
+    assert result["status"] == "failed"
+    assert result["version"] == "pose-set-visual-v2"
+    assert {"SCALE_WIDTH_MISMATCH", "VISIBLE_PROPORTION_MISMATCH", "CENTER_OFFSET_MISMATCH"} <= set(result["safe_reasons"])
+
+
 def test_pose_set_visual_consistency_rejects_camera_and_frame_drift():
     result = pose_set_visual_consistency_qc([
         _pose("normal"),
@@ -84,6 +119,29 @@ def test_pose_set_visual_consistency_rejects_excessive_width_and_occupied_area()
 
     assert result["status"] == "failed"
     assert "SCALE_WIDTH_MISMATCH" in result["safe_reasons"]
+    assert "OCCUPANCY_MISMATCH" in result["safe_reasons"]
+
+
+def test_pose_set_visual_v3_rejects_an_extreme_horizontal_offset_even_with_role_aware_width():
+    result = pose_set_visual_consistency_qc([
+        _pose("normal", bbox=(120, 80, 850, 940)),
+        _pose("listening", bbox=(278, 80, 1008, 940)),
+        _pose("transcribing", bbox=(115, 82, 845, 942)),
+    ])
+
+    assert result["status"] == "failed"
+    assert "CENTER_OFFSET_MISMATCH" in result["safe_reasons"]
+
+
+def test_pose_set_visual_v3_rejects_vertical_scale_and_occupancy_extremes():
+    result = pose_set_visual_consistency_qc([
+        _pose("normal", bbox=(120, 80, 850, 940)),
+        _pose("listening", bbox=(125, 360, 855, 620)),
+        _pose("transcribing", bbox=(115, 82, 845, 942)),
+    ])
+
+    assert result["status"] == "failed"
+    assert "SCALE_MISMATCH" in result["safe_reasons"]
     assert "OCCUPANCY_MISMATCH" in result["safe_reasons"]
 
 

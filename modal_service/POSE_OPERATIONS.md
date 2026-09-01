@@ -23,9 +23,9 @@ O caminho síncrono não consulta cache e não aguarda GPU, assets ou conclusão
 
 ## Gate de consistência visual
 
-O alpha/QC de cada PNG é necessário, mas não torna o conjunto utilizável por si só. Antes da promoção, `pose-set-visual-v1` exige canvas idêntico, margens de frame seguras, escala corporal compatível, centralização e linha de pés compatíveis. Falhas como `CANVAS_DIMENSIONS_MISMATCH`, `FRAME_CROP_RISK` ou `SCALE_MISMATCH` preservam os brutos e impedem a promoção e qualquer pacote V1.
+O alpha/QC de cada PNG é necessário, mas não torna o conjunto utilizável por si só. Antes da promoção, `pose-set-visual-v3` exige canvas idêntico, margens de frame seguras, escala vertical e linha de pés compatíveis. Largura, aspecto e centro horizontal são role-aware: `normal`, `listening` e `transcribing` possuem envelopes e limites por par estáveis. Falhas como `CANVAS_DIMENSIONS_MISMATCH`, `FRAME_CROP_RISK` ou `SCALE_MISMATCH` preservam os brutos e impedem a promoção.
 
-Esse gate detecta erros objetivos de enquadramento; a avaliação semântica (por exemplo, se o gesto realmente comunica escuta) continua revisão humana. O próximo smoke usa `pose-v6-full-body-consistent-framing`, que obriga corpo inteiro, cabeça e pés dentro do canvas, câmera/escala constantes e proíbe close, busto, corte e cenário dominante.
+Esse gate detecta erros objetivos de enquadramento; a avaliação semântica (por exemplo, se o gesto realmente comunica escuta) continua revisão humana. Consulte `POSE_QC_V3.md` para a diferença v2 → v3 e para o recovery idempotente de RAWs preservados, que não é retry GPU.
 
 ## Observabilidade e privacidade
 

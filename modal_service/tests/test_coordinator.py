@@ -342,6 +342,55 @@ def test_pose_qc_failure_transitions_the_active_job_to_failed_once():
     assert not repeated_changed and repeated.state is JobState.FAILED
 
 
+def test_preserved_raw_recovery_is_owner_scoped_idempotent_and_never_reserves_gpu():
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "recovery-key", "original/hash", workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value)
+    record = service.get(job.job_id)
+    record.state = JobState.FAILED
+    record.error_code = "VISUAL_POSE_CONSISTENCY_FAILED"
+    record.master_id = "master_2"
+    record.pose_operation_id = "incubator_pose_1"
+    record.pose_operation_status = "failed"
+    record.pose_gpu_call_id = "fc-existing"
+    service.save(record)
+    persisted: list[str] = []
+
+    recovered, changed = service.recover_pose_outputs_from_preserved_raws(
+        job.job_id, "uid-a", lambda current: persisted.append(current.pose_gpu_call_id or ""), "pose-set-visual-v3"
+    )
+    replay, replay_changed = service.recover_pose_outputs_from_preserved_raws(
+        job.job_id, "uid-a", lambda current: persisted.append("unexpected"), "pose-set-visual-v3"
+    )
+
+    assert changed and not replay_changed
+    assert recovered.state is JobState.COMPLETED
+    assert recovered.pose_gpu_call_id == "fc-existing"
+    assert recovered.pose_operation_id == "incubator_pose_1"
+    assert recovered.master_id == "master_2"
+    assert recovered.pose_recovery["recoveredFromErrorCode"] == "VISUAL_POSE_CONSISTENCY_FAILED"
+    assert replay.generation_ready_at
+    assert persisted == ["fc-existing"]
+
+
+@pytest.mark.parametrize("error_code", ["POSE_ALPHA_QC_FAILED", "POSE_GENERATION_FAILED"])
+def test_preserved_raw_recovery_fails_closed_for_an_incompatible_failure(error_code):
+    service, _ = coordinator()
+    job, _ = service.register("uid-a", "recovery-incompatible", "original/hash")
+    record = service.get(job.job_id)
+    record.state = JobState.FAILED
+    record.error_code = error_code
+    record.master_id = "master_2"
+    record.pose_operation_id = "incubator_pose_1"
+    record.pose_operation_status = "failed"
+    record.pose_gpu_call_id = "fc-existing"
+    service.save(record)
+
+    with pytest.raises(DomainError, match="not compatible"):
+        service.recover_pose_outputs_from_preserved_raws(
+            job.job_id, "uid-a", lambda current: (_ for _ in ()).throw(AssertionError("must not persist")), "pose-set-visual-v3"
+        )
+
+
 def test_pose_operation_is_created_once_and_replayed_without_second_worker():
     service, usage = coordinator()
     job, _ = service.register("uid-a", "key-x", "original/hash")
