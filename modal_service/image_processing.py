@@ -18,7 +18,8 @@ ALPHA_COMPONENT_THRESHOLD = 16
 MAX_DISCONNECTED_NOISE_RATIO = 0.0001
 MAX_HALO_RISK_RATIO = 0.02
 MAX_INTERNAL_BACKGROUND_COMPONENT_PIXELS = 12
-POSE_SET_VISUAL_QC_VERSION = "pose-set-visual-v2"
+POSE_SET_VISUAL_QC_V2_VERSION = "pose-set-visual-v2"
+POSE_SET_VISUAL_QC_VERSION = "pose-set-visual-v3"
 MAX_POSE_SCALE_DELTA = 0.12
 MAX_POSE_WIDTH_DELTA = 0.12
 MAX_POSE_OCCUPANCY_DELTA = 0.18
@@ -28,6 +29,23 @@ MAX_POSE_CENTER_DELTA = 0.08
 MAX_POSE_VERTICAL_CENTER_DELTA = 0.08
 MAX_POSE_FOOT_BASE_DELTA = 0.04
 MIN_POSE_FRAME_MARGIN = 0.02
+
+# The three roles are deliberately different compositions.  These constants
+# are calibrated against the reviewed role definitions plus the preserved
+# real-world parrot set.  They are stable policy, not data-derived production
+# thresholds.  Pair limits retain the ability to flag a genuinely different
+# camera while allowing the wider listening/transcribing gestures requested by
+# the catalogue.
+ROLE_HORIZONTAL_ENVELOPES = {
+    "normal": {"width": (0.0, 0.78), "aspect_ratio": (0.20, 1.05), "center_x": (0.36, 0.64)},
+    "listening": {"width": (0.0, 0.84), "aspect_ratio": (0.20, 1.10), "center_x": (0.32, 0.68)},
+    "transcribing": {"width": (0.0, 0.88), "aspect_ratio": (0.20, 1.10), "center_x": (0.32, 0.68)},
+}
+ROLE_PAIR_HORIZONTAL_DELTAS = {
+    frozenset({"normal", "listening"}): {"width": 0.18, "aspect_ratio": 0.23, "center_x": 0.10},
+    frozenset({"normal", "transcribing"}): {"width": 0.20, "aspect_ratio": 0.23, "center_x": 0.10},
+    frozenset({"listening", "transcribing"}): {"width": 0.14, "aspect_ratio": 0.18, "center_x": 0.10},
+}
 
 
 def remove_connected_flat_background(content: bytes, threshold: int = 24, *, crop: bool = True) -> bytes:
@@ -298,14 +316,37 @@ def pose_transparency_qc(content: bytes) -> dict[str, object]:
     return transparent_asset_qc(content, asset_kind="pose")
 
 
-def pose_set_visual_consistency_qc(poses: list[dict[str, object]]) -> dict[str, object]:
-    """Fail closed on deterministic framing drift across the three pose assets.
+def pose_set_visual_consistency_qc_v2(poses: list[dict[str, object]]) -> dict[str, object]:
+    """Preserve the historical global-delta policy for audit and regression tests."""
+    reasons, by_role, metrics, dimensions = _collect_pose_set_evidence(poses)
+    if len(dimensions) > 1:
+        reasons.append("CANVAS_DIMENSIONS_MISMATCH")
+    if len(metrics) == 3:
+        reasons.extend(_hard_geometry_reasons(metrics))
+        reasons.extend(_v2_horizontal_geometry_reasons(metrics))
+    return _pose_set_qc_result(POSE_SET_VISUAL_QC_V2_VERSION, reasons)
 
-    This gate deliberately does not try to score artistic quality. It rejects
-    measurable regressions that make one pose look like a different camera:
-    canvas drift, crop risk, scale/composition drift, a dominant scene and an
-    inconsistent foot baseline. Semantic review remains a separate human gate.
+
+def pose_set_visual_consistency_qc(poses: list[dict[str, object]]) -> dict[str, object]:
+    """Run role-aware v3 framing QC without weakening crop, vertical or scene gates.
+
+    V3 preserves the objective safety checks and changes only horizontal
+    geometry: normal, listening and transcribing use separate calibrated
+    envelopes plus stable pairwise limits rather than one global min/max.
     """
+    reasons, by_role, metrics, dimensions = _collect_pose_set_evidence(poses)
+    if len(dimensions) > 1:
+        reasons.append("CANVAS_DIMENSIONS_MISMATCH")
+    if len(metrics) == 3:
+        reasons.extend(_hard_geometry_reasons(metrics))
+        reasons.extend(_role_aware_horizontal_geometry_reasons(by_role))
+    return _pose_set_qc_result(POSE_SET_VISUAL_QC_VERSION, reasons)
+
+
+def _collect_pose_set_evidence(
+    poses: list[dict[str, object]],
+) -> tuple[list[str], dict[str, dict[str, float]], list[dict[str, float]], set[tuple[int, int]]]:
+    """Read only completed per-asset alpha-QC evidence into safe set metrics."""
     required_roles = {"normal", "listening", "transcribing"}
     # `role` is the canonical v2 manifest field.  Older worker payloads used
     # `runtimeRole`; keep that read-only alias so historical manifests remain
@@ -318,6 +359,7 @@ def pose_set_visual_consistency_qc(poses: list[dict[str, object]]) -> dict[str, 
     if len(poses) != 3 or set(by_role) != required_roles:
         reasons.append("POSE_SET_ROLES_INVALID")
     metrics: list[dict[str, float]] = []
+    metrics_by_role: dict[str, dict[str, float]] = {}
     dimensions: set[tuple[int, int]] = set()
     for role in sorted(required_roles):
         pose = by_role.get(role)
@@ -336,31 +378,68 @@ def pose_set_visual_consistency_qc(poses: list[dict[str, object]]) -> dict[str, 
             continue
         dimensions.add((int(qc["width"]), int(qc["height"])))
         metrics.append(metric)
-    if len(dimensions) > 1:
-        reasons.append("CANVAS_DIMENSIONS_MISMATCH")
-    if len(metrics) == 3:
-        if any(metric["top_margin"] < MIN_POSE_FRAME_MARGIN or metric["bottom_margin"] < MIN_POSE_FRAME_MARGIN for metric in metrics):
-            reasons.append("FRAME_CROP_RISK")
-        if _metric_delta(metrics, "height") > MAX_POSE_SCALE_DELTA:
-            reasons.append("SCALE_MISMATCH")
-        if _metric_delta(metrics, "width") > MAX_POSE_WIDTH_DELTA:
+        metrics_by_role[role] = metric
+    return reasons, metrics_by_role, metrics, dimensions
+
+
+def _hard_geometry_reasons(metrics: list[dict[str, float]]) -> list[str]:
+    reasons: list[str] = []
+    if any(metric["top_margin"] < MIN_POSE_FRAME_MARGIN or metric["bottom_margin"] < MIN_POSE_FRAME_MARGIN for metric in metrics):
+        reasons.append("FRAME_CROP_RISK")
+    if _metric_delta(metrics, "height") > MAX_POSE_SCALE_DELTA:
+        reasons.append("SCALE_MISMATCH")
+    if _metric_delta(metrics, "occupancy") > MAX_POSE_OCCUPANCY_DELTA:
+        reasons.append("OCCUPANCY_MISMATCH")
+    if _metric_delta(metrics, "center_y") > MAX_POSE_VERTICAL_CENTER_DELTA:
+        reasons.append("VERTICAL_CENTER_OFFSET_MISMATCH")
+    if _metric_delta(metrics, "foot_base") > MAX_POSE_FOOT_BASE_DELTA:
+        reasons.append("FOOT_BASE_MISMATCH")
+    if _dominant_scene_detected(metrics):
+        reasons.append("SCENE_DOMINANT")
+    return reasons
+
+
+def _v2_horizontal_geometry_reasons(metrics: list[dict[str, float]]) -> list[str]:
+    reasons: list[str] = []
+    if _metric_delta(metrics, "width") > MAX_POSE_WIDTH_DELTA:
+        reasons.append("SCALE_WIDTH_MISMATCH")
+    if _metric_delta(metrics, "aspect_ratio") > MAX_POSE_ASPECT_RATIO_DELTA:
+        reasons.append("VISIBLE_PROPORTION_MISMATCH")
+    if _metric_delta(metrics, "center_x") > MAX_POSE_CENTER_DELTA:
+        reasons.append("CENTER_OFFSET_MISMATCH")
+    return reasons
+
+
+def _role_aware_horizontal_geometry_reasons(metrics_by_role: dict[str, dict[str, float]]) -> list[str]:
+    reasons: list[str] = []
+    for role, metric in metrics_by_role.items():
+        limits = ROLE_HORIZONTAL_ENVELOPES[role]
+        if not _metric_in_range(metric["width"], limits["width"]):
             reasons.append("SCALE_WIDTH_MISMATCH")
-        if _metric_delta(metrics, "occupancy") > MAX_POSE_OCCUPANCY_DELTA:
-            reasons.append("OCCUPANCY_MISMATCH")
-        if _metric_delta(metrics, "aspect_ratio") > MAX_POSE_ASPECT_RATIO_DELTA:
+        if not _metric_in_range(metric["aspect_ratio"], limits["aspect_ratio"]):
             reasons.append("VISIBLE_PROPORTION_MISMATCH")
-        if _metric_delta(metrics, "center_x") > MAX_POSE_CENTER_DELTA:
+        if not _metric_in_range(metric["center_x"], limits["center_x"]):
             reasons.append("CENTER_OFFSET_MISMATCH")
-        if _metric_delta(metrics, "center_y") > MAX_POSE_VERTICAL_CENTER_DELTA:
-            reasons.append("VERTICAL_CENTER_OFFSET_MISMATCH")
-        if _metric_delta(metrics, "foot_base") > MAX_POSE_FOOT_BASE_DELTA:
-            reasons.append("FOOT_BASE_MISMATCH")
-        if _dominant_scene_detected(metrics):
-            reasons.append("SCENE_DOMINANT")
+    for roles, limits in ROLE_PAIR_HORIZONTAL_DELTAS.items():
+        first, second = sorted(roles)
+        if abs(metrics_by_role[first]["width"] - metrics_by_role[second]["width"]) > limits["width"]:
+            reasons.append("SCALE_WIDTH_MISMATCH")
+        if abs(metrics_by_role[first]["aspect_ratio"] - metrics_by_role[second]["aspect_ratio"]) > limits["aspect_ratio"]:
+            reasons.append("VISIBLE_PROPORTION_MISMATCH")
+        if abs(metrics_by_role[first]["center_x"] - metrics_by_role[second]["center_x"]) > limits["center_x"]:
+            reasons.append("CENTER_OFFSET_MISMATCH")
+    return reasons
+
+
+def _metric_in_range(value: float, bounds: tuple[float, float]) -> bool:
+    return bounds[0] <= value <= bounds[1]
+
+
+def _pose_set_qc_result(version: str, reasons: list[str]) -> dict[str, object]:
     return {
         "status": "passed" if not reasons else "failed",
         "code": "VISUAL_POSE_CONSISTENCY_FAILED" if reasons else "VISUAL_POSE_CONSISTENCY_PASSED",
-        "version": POSE_SET_VISUAL_QC_VERSION,
+        "version": version,
         "safe_reasons": sorted(set(reasons)),
     }
 

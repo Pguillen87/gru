@@ -152,6 +152,7 @@ class JobRecord:
     lease_expires_at: str | None = None
     heartbeat_at: str | None = None
     workflow_revision: int = 0
+    pose_recovery: dict[str, object] | None = None
 
     def transition_to(self, target: JobState) -> None:
         require_transition(self.state, target)
@@ -185,6 +186,34 @@ class JobRecord:
             raise DomainError("Pose generation is not active for this job.")
         self.pose_set_id = pose_set_id
         self.transition_to(JobState.COMPLETED)
+        return True
+
+    def recover_pose_generation(self, pose_set_id: str, qc_version: str) -> bool:
+        """Complete a compatible failed pose operation after preserved-RAW re-QC.
+
+        This is intentionally narrower than a generic terminal-state retry: no
+        generation state is reopened and no GPU reservation can be made.
+        """
+        if self.state is JobState.COMPLETED and self.pose_recovery is not None:
+            return False
+        if self.state is not JobState.FAILED or self.error_code != PoseVisualConsistencyError.code:
+            raise DomainError("Preserved RAW recovery is not compatible with this job failure.")
+        if not self.master_id or not self.pose_operation_id or not self.pose_gpu_call_id or self.pose_gpu_call_id == "reserved":
+            raise DomainError("Preserved RAW recovery requires the original completed pose operation.")
+        previous_error = self.error_code
+        self.pose_set_id = pose_set_id
+        self.pose_operation_status = "recovered"
+        self.pose_recovery = {
+            "recoveredFromErrorCode": previous_error,
+            "qcVersion": qc_version,
+            "recoveredAt": utc_now(),
+        }
+        self.error_code = None
+        # This is the sole terminal recovery transition.  It intentionally
+        # bypasses the normal retry graph only after the preserved RAWs have
+        # passed every current deterministic gate.
+        self.state = JobState.COMPLETED
+        self.updated_at = utc_now()
         return True
 
     def cancel(self) -> bool:
