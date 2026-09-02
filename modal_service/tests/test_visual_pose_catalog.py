@@ -182,6 +182,9 @@ def test_preserved_raw_recovery_promotes_atomically_without_gpu_or_new_operation
     assert recovered.pose_gpu_call_id == "fc-original"
     assert recovered.pose_operation_id == "incubator_pose_original"
     assert recovered.master_id == "master_2"
+    assert len(coordinator.jobs) == 1
+    assert recovered.gpu_call_id is None
+    assert recovered.generation_reserved is False
     assert len(json.loads((target / "manifest.json").read_text(encoding="utf-8"))["poses"]) == 3
     assert recovered.pose_recovery["recoveredFromErrorCode"] == "VISUAL_POSE_CONSISTENCY_FAILED"
     assert recovered.generation_ready_at
