@@ -85,6 +85,26 @@ def test_pose_set_visual_v3_accepts_the_preserved_parrot_role_aware_geometry():
     assert POSE_SET_VISUAL_QC_VERSION == "pose-set-visual-v3"
 
 
+def test_pose_set_visual_v3_rejects_uniformly_small_framing():
+    result = pose_set_visual_consistency_qc([
+        _pose("normal", bbox=(380, 220, 640, 820)),
+        _pose("listening", bbox=(380, 220, 640, 820)),
+        _pose("transcribing", bbox=(380, 220, 640, 820)),
+    ])
+    assert result["status"] == "failed"
+    assert "POSE_ABSOLUTE_FRAMING_INVALID" in result["safe_reasons"]
+
+
+def test_pose_set_visual_v3_rejects_uniformly_oversized_framing():
+    result = pose_set_visual_consistency_qc([
+        _pose("normal", bbox=(40, 25, 984, 990)),
+        _pose("listening", bbox=(40, 25, 984, 990)),
+        _pose("transcribing", bbox=(40, 25, 984, 990)),
+    ])
+    assert result["status"] == "failed"
+    assert "POSE_ABSOLUTE_FRAMING_INVALID" in result["safe_reasons"]
+
+
 def test_pose_set_visual_v2_preserves_the_historical_global_delta_semantics():
     result = pose_set_visual_consistency_qc_v2([
         _pose("normal", bbox=(219, 65, 785, 958), foreground_ratio=0.223733),
