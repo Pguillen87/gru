@@ -64,7 +64,7 @@ from modal_service.model_cache import (
 from modal_service.persistent_runtime import PersistentPipelineRuntime
 from modal_service.security import AuthenticationRejected, app_check_token, bearer_token, may_schedule_gpu, valid_firebase_claims
 from modal_service.validation import ImageValidationError, validate_image
-from modal_service.v2_contract import public_job
+from modal_service.v2_contract import public_job, ready_to_hatch_evidence
 from modal_service.structured_observability import structured_event
 from modal_service.templates import TemplatePackageError, validate_active_template_package
 
@@ -487,7 +487,17 @@ def _pose_set_qc(job: JobRecord, poses: list[dict[str, object]]) -> dict[str, ob
 def _public_job_with_assets(job: JobRecord) -> dict[str, object]:
     masters = _master_references(job)
     poses = _pose_references(job)
-    return public_job(job, masters, poses, _pose_set_qc(job, poses))
+    pose_set_qc = _pose_set_qc(job, poses)
+    storage_verified = False
+    if job.state is JobState.COMPLETED:
+        try:
+            _verify_master_outputs(job)
+            _verify_pose_outputs(job)
+            storage_verified = True
+        except (DomainError, OSError, ValueError, KeyError, TypeError):
+            storage_verified = False
+    ready = ready_to_hatch_evidence(job, masters, poses, pose_set_qc, storage_verified)
+    return public_job(job, masters, poses, pose_set_qc, ready_evidence=ready)
 
 
 def _deserialize(record: dict[str, object]) -> JobRecord:
