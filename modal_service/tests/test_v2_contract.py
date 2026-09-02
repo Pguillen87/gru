@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from modal_service.domain import JobRecord, JobState, WorkflowMode
-from modal_service.v2_contract import public_job
+from modal_service.v2_contract import public_job, ready_to_hatch_evidence
 from modal_service.app import incubation_registration_payload
 
 
@@ -44,6 +44,27 @@ def test_completed_modal_step_is_not_publicly_ready():
     assert payload["poses"][0]["role"] == "normal"
     assert payload["poses"][0]["qc"] == qc
     assert payload["poseSetQc"]["status"] == "passed"
+
+
+def test_completed_without_operational_evidence_is_not_ready_to_hatch():
+    job = record(JobState.COMPLETED, generation_ready_at="2026-09-01T00:00:00+00:00", master_id="master_1")
+    payload = public_job(job, masters=[{"id": "master_1"}], poses=[], pose_set_qc=None)
+    assert payload["productState"] == "INCUBATING"
+    assert not ready_to_hatch_evidence(job, [{"id": "master_1"}], [], None, False)
+
+
+def test_ready_to_hatch_requires_exact_verified_master_and_three_pose_roles():
+    job = record(JobState.COMPLETED, generation_ready_at="2026-09-01T00:00:00+00:00", master_id="master_2")
+    poses = [
+        {"id": "pose_01", "role": "normal", "qc": {"status": "passed"}},
+        {"id": "pose_02", "role": "listening", "qc": {"status": "passed"}},
+        {"id": "pose_03", "role": "transcribing", "qc": {"status": "passed"}},
+    ]
+    qc = {"status": "passed", "version": "pose-set-visual-v3"}
+    assert not ready_to_hatch_evidence(job, [{"id": "master_1"}], poses, qc, True)
+    assert not ready_to_hatch_evidence(job, [{"id": "master_2"}], poses[:2], qc, True)
+    assert ready_to_hatch_evidence(job, [{"id": "master_2"}], poses, qc, True)
+    assert public_job(job, [{"id": "master_2"}], poses, qc, ready_evidence=True)["productState"] == "READY_TO_HATCH"
 
 
 def test_public_states_needed_for_no_gpu_simulation_are_stable():

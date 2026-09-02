@@ -32,6 +32,14 @@ V3 usa envelopes fixos por papel e limites fixos por par para `width`,
 Diferenças horizontais legítimas passam, mas deslocamento extremo, largura
 realmente incompatível e proporção visível extrema continuam falhando.
 
+## Invariante de prontidão
+
+`COMPLETED` não é, sozinho, `READY_TO_HATCH`. A projeção pública só pode
+expor prontidão quando o Master aprovado é verificável e existem exatamente
+as três roles operacionais (`normal`, `listening`, `transcribing`) promovidas,
+com manifest e checksums íntegros, alpha QC aprovado e `pose-set-visual-v3`
+aprovado. Qualquer evidência ausente ou inconsistente permanece fail-closed.
+
 ## Gates preservados
 
 V3 continua fail-closed para:

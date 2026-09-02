@@ -171,5 +171,5 @@ def test_product_state_is_derived_instead_of_persisted_separately():
     base = JobRecord("job", "owner", "key", "source", workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value)
     assert product_state(replace(base, state=JobState.REGISTERED)) == "PREPARING"
     assert product_state(replace(base, state=JobState.GENERATING_MASTER)) == "INCUBATING"
-    assert product_state(replace(base, state=JobState.COMPLETED, generation_ready_at="2026-08-29T00:00:00+00:00")) == "READY_TO_HATCH"
+    assert product_state(replace(base, state=JobState.COMPLETED, generation_ready_at="2026-08-29T00:00:00+00:00")) == "INCUBATING"
     assert product_state(replace(base, state=JobState.FAILED)) == "FAILED"
