@@ -29,6 +29,15 @@ MAX_POSE_CENTER_DELTA = 0.08
 MAX_POSE_VERTICAL_CENTER_DELTA = 0.08
 MAX_POSE_FOOT_BASE_DELTA = 0.04
 MIN_POSE_FRAME_MARGIN = 0.02
+# Absolute framing envelopes prevent a uniformly tiny or oversized set from
+# passing merely because all three poses agree with one another.  Bounds are
+# calibrated from the reviewed catalogue fixtures and preserved parrot set.
+MIN_POSE_VISIBLE_WIDTH = 0.30
+MAX_POSE_VISIBLE_WIDTH = 0.90
+MIN_POSE_VISIBLE_HEIGHT = 0.65
+MAX_POSE_VISIBLE_HEIGHT = 0.95
+MIN_POSE_OCCUPANCY = 0.15
+MAX_POSE_OCCUPANCY = 0.85
 
 # The three roles are deliberately different compositions.  These constants
 # are calibrated against the reviewed role definitions plus the preserved
@@ -37,9 +46,9 @@ MIN_POSE_FRAME_MARGIN = 0.02
 # camera while allowing the wider listening/transcribing gestures requested by
 # the catalogue.
 ROLE_HORIZONTAL_ENVELOPES = {
-    "normal": {"width": (0.0, 0.78), "aspect_ratio": (0.20, 1.05), "center_x": (0.36, 0.64)},
-    "listening": {"width": (0.0, 0.84), "aspect_ratio": (0.20, 1.10), "center_x": (0.32, 0.68)},
-    "transcribing": {"width": (0.0, 0.88), "aspect_ratio": (0.20, 1.10), "center_x": (0.32, 0.68)},
+    "normal": {"width": (MIN_POSE_VISIBLE_WIDTH, 0.78), "aspect_ratio": (0.20, 1.05), "center_x": (0.36, 0.64)},
+    "listening": {"width": (MIN_POSE_VISIBLE_WIDTH, 0.84), "aspect_ratio": (0.20, 1.10), "center_x": (0.32, 0.68)},
+    "transcribing": {"width": (MIN_POSE_VISIBLE_WIDTH, 0.88), "aspect_ratio": (0.20, 1.10), "center_x": (0.32, 0.68)},
 }
 ROLE_PAIR_HORIZONTAL_DELTAS = {
     frozenset({"normal", "listening"}): {"width": 0.18, "aspect_ratio": 0.23, "center_x": 0.10},
@@ -384,6 +393,16 @@ def _collect_pose_set_evidence(
 
 def _hard_geometry_reasons(metrics: list[dict[str, float]]) -> list[str]:
     reasons: list[str] = []
+    if any(
+        metric["width"] < MIN_POSE_VISIBLE_WIDTH
+        or metric["width"] > MAX_POSE_VISIBLE_WIDTH
+        or metric["height"] < MIN_POSE_VISIBLE_HEIGHT
+        or metric["height"] > MAX_POSE_VISIBLE_HEIGHT
+        or metric["occupancy"] < MIN_POSE_OCCUPANCY
+        or metric["occupancy"] > MAX_POSE_OCCUPANCY
+        for metric in metrics
+    ):
+        reasons.append("POSE_ABSOLUTE_FRAMING_INVALID")
     if any(metric["top_margin"] < MIN_POSE_FRAME_MARGIN or metric["bottom_margin"] < MIN_POSE_FRAME_MARGIN for metric in metrics):
         reasons.append("FRAME_CROP_RISK")
     if _metric_delta(metrics, "height") > MAX_POSE_SCALE_DELTA:
