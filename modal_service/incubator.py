@@ -451,8 +451,11 @@ def shadow_ranking_observation(selection: dict[str, object]) -> dict[str, object
 def product_state(job: JobRecord) -> str:
     if job.state in {JobState.FAILED, JobState.CANCELED}:
         return "FAILED"
-    if job.generation_ready_at or job.state is JobState.COMPLETED:
-        return "READY_TO_HATCH"
+    # Public readiness is derived by v2_contract.ready_to_hatch_evidence,
+    # which verifies the manifest, checksums, alpha QC and complete role set.
+    # A bare COMPLETED record must remain fail-closed.
+    if job.state is JobState.COMPLETED:
+        return "INCUBATING"
     if job.state is JobState.AWAITING_MASTER_APPROVAL and (job.master_selection or {}).get("decision") == "NEEDS_HUMAN_SELECTION":
         return "NEEDS_HUMAN_MASTER_SELECTION"
     if job.state in {JobState.REGISTERED, JobState.QUEUED, JobState.VALIDATING_INPUT, JobState.READY_FOR_GENERATION}:

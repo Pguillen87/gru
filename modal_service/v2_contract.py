@@ -23,11 +23,37 @@ PUBLIC_STATUS_BY_STATE = {
 }
 
 
+def ready_to_hatch_evidence(
+    job: JobRecord,
+    masters: list[dict[str, object]],
+    poses: list[dict[str, object]],
+    pose_set_qc: dict[str, object] | None,
+    storage_verified: bool,
+) -> bool:
+    """Return true only when the complete, verified pose set is present.
+
+    ``COMPLETED`` is an internal workflow state, not by itself proof that the
+    public hatch contract is safe.  Callers must provide the result of the
+    checksum/manifest verifier as ``storage_verified``.
+    """
+    if job.state is not JobState.COMPLETED or not job.generation_ready_at or not storage_verified:
+        return False
+    if not job.master_id or not any(item.get("id") == job.master_id for item in masters):
+        return False
+    if len(poses) != 3 or {item.get("role") for item in poses} != {"normal", "listening", "transcribing"}:
+        return False
+    if any(not isinstance(item.get("qc"), dict) or item["qc"].get("status") != "passed" for item in poses):
+        return False
+    return bool(isinstance(pose_set_qc, dict) and pose_set_qc.get("status") == "passed"
+                and pose_set_qc.get("version") == "pose-set-visual-v3")
+
+
 def public_job(
     job: JobRecord,
     masters: list[dict[str, object]] | None = None,
     poses: list[dict[str, object]] | None = None,
     pose_set_qc: dict[str, object] | None = None,
+    ready_evidence: bool = False,
 ) -> dict[str, object]:
     status = PUBLIC_STATUS_BY_STATE[job.state]
     payload: dict[str, object] = {
@@ -45,7 +71,7 @@ def public_job(
             "configurationRevision": job.configuration_revision,
         },
         "workflowMode": job.workflow_mode,
-        "productState": product_state(job),
+        "productState": "READY_TO_HATCH" if ready_evidence else product_state(job),
     }
     if status == "awaiting_master_approval":
         payload["masters"] = masters or []
