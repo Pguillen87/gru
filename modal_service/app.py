@@ -52,6 +52,7 @@ from modal_service.incubator import (
     rank_masters,
     shadow_ranking_observation,
     subject_hint,
+    MASTER_RANKER_POLICY_VERSION,
 )
 from modal_service.inference_observability import InferenceObserver, trace_id_for_job
 from modal_service.model_cache import (
