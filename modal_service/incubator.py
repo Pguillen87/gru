@@ -22,11 +22,7 @@ from modal_service.domain import JobRecord, JobState, WorkflowMode
 ENCODER_VERSION = "siglip-base-p16-224-zeroshot-v1"
 SUBJECT_HINT_POLICY_VERSION = "subject-hint-policy-v2"
 MASTER_RANKER_VERSION = "master-ranker-v2"
-MASTER_RANKER_POLICY_VERSION = "master-ranker-policy-v1"
-# Provisional and deliberately conservative: until the real QA sample grows,
-# uncertainty always prefers an owner decision over a paid pose operation.
-AUTO_SELECT_MIN_TOP1_SCORE = 0.82
-AUTO_SELECT_MIN_MARGIN = 0.04
+MASTER_RANKER_POLICY_VERSION = "master-ranker-policy-v2"
 ARTIFACT_PACKAGE_NAME = "siglip-base-p16-224-zeroshot-v1"
 ARTIFACT_SCHEMA_VERSION = 1
 UPSTREAM_MODEL_ID = "google/siglip-base-patch16-224"
@@ -321,8 +317,14 @@ def pinned_encoder_status() -> dict[str, object]:
             "encoderVersion": ENCODER_VERSION,
             "subjectHintPolicyVersion": SUBJECT_HINT_POLICY_VERSION,
             "masterRankerVersion": MASTER_RANKER_VERSION,
+            "masterRankerPolicyVersion": MASTER_RANKER_POLICY_VERSION,
         }
-    return {"ready": True, "reasonCode": None, **encoder.provenance()}
+    return {
+        "ready": True,
+        "reasonCode": None,
+        "masterRankerPolicyVersion": MASTER_RANKER_POLICY_VERSION,
+        **encoder.provenance(),
+    }
 
 
 @dataclass(frozen=True)
@@ -392,7 +394,7 @@ def rank_masters(source: bytes, candidates: dict[str, bytes], qc_by_master: dict
 
 
 def master_selection_policy(selection: dict[str, object]) -> dict[str, object]:
-    """Classify a completed ranking without persisting embeddings or images."""
+    """Select the strongest eligible candidate with a deterministic tie-break."""
     scores = [item for item in selection.get("scores", []) if isinstance(item, dict)]
     ranked = sorted(scores, key=lambda item: (-float(item.get("total", 0.0)), str(item.get("masterId", ""))))
     if not ranked:
@@ -406,30 +408,20 @@ def master_selection_policy(selection: dict[str, object]) -> dict[str, object]:
             "top2Score": None,
             "margin": None,
         }
-    if len(ranked) > 3 or not selection.get("selectedMasterId"):
+    if len(ranked) > 3:
         raise ValueError("Master ranking policy received an invalid candidate set.")
-    if len(ranked) == 1:
-        return {
-            **selection,
-            "selectionSource": None,
-            "decision": "NEEDS_HUMAN_SELECTION",
-            "decisionReason": "SINGLE_ELIGIBLE_MASTER",
-            "masterRankerPolicyVersion": MASTER_RANKER_POLICY_VERSION,
-            "top1Score": round(float(ranked[0]["total"]), 6),
-            "top2Score": None,
-            "margin": None,
-        }
-    top1, top2 = float(ranked[0]["total"]), float(ranked[1]["total"])
-    margin = round(top1 - top2, 6)
-    decision = "AUTO_SELECTED" if top1 >= AUTO_SELECT_MIN_TOP1_SCORE and margin >= AUTO_SELECT_MIN_MARGIN else "NEEDS_HUMAN_SELECTION"
+    top1 = float(ranked[0]["total"])
+    top2 = float(ranked[1]["total"]) if len(ranked) > 1 else 0.0
+    margin = round(top1 - top2, 6) if len(ranked) > 1 else None
     return {
         **selection,
-        "selectionSource": "auto" if decision == "AUTO_SELECTED" else None,
-        "decision": decision,
-        "decisionReason": "CONFIDENT_RANKING" if decision == "AUTO_SELECTED" else "RANKING_AMBIGUOUS",
+        "selectedMasterId": str(ranked[0].get("masterId")),
+        "selectionSource": "auto",
+        "decision": "AUTO_SELECTED",
+        "decisionReason": "ELIGIBLE_MASTER_SELECTED",
         "masterRankerPolicyVersion": MASTER_RANKER_POLICY_VERSION,
         "top1Score": round(top1, 6),
-        "top2Score": round(top2, 6),
+        "top2Score": round(top2, 6) if len(ranked) > 1 else None,
         "margin": margin,
     }
 

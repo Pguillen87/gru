@@ -2001,6 +2001,8 @@ def api():
 
     @service.get("/health")
     async def health() -> dict[str, object]:
+        from modal_service.image_processing import POSE_SET_VISUAL_QC_VERSION
+
         _reload_template_assets()
         templates_ready = _templates_installed()
         return {
@@ -2010,8 +2012,12 @@ def api():
             "registration_enabled": REGISTRATION_ENABLED,
             "master_generation_enabled": MASTER_GENERATION_ENABLED,
             "pose_generation_enabled": POSE_GENERATION_ENABLED,
+            "incubator_flow_enabled": INCUBATOR_FLOW_ENABLED,
+            "incubator_auto_ranking_enabled": INCUBATOR_AUTO_RANKING_ENABLED,
             "templates_installed": templates_ready,
             "template_version": _active_pose_template_version(),
+            "pose_qc_version": POSE_SET_VISUAL_QC_VERSION,
+            "master_ranker_policy_version": MASTER_RANKER_POLICY_VERSION,
             "pose_preflight_ready": templates_ready,
             "pose_operational_ready": templates_ready and POSE_GENERATION_ENABLED and GPU_GENERATION_ENABLED,
             "model_configured": True,
@@ -2066,6 +2072,7 @@ def api():
                 "encoder": encoder,
                 "workflowVersion": WorkflowMode.ASYNC_INCUBATOR_V1.value,
                 "rankerVersion": encoder["masterRankerVersion"],
+                "rankerPolicyVersion": encoder["masterRankerPolicyVersion"],
                 "subjectHintVersion": encoder["subjectHintPolicyVersion"],
             },
         }

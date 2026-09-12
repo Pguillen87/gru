@@ -114,15 +114,16 @@ def test_confident_master_ranking_policy_can_auto_select():
     })
     assert decision["decision"] == "AUTO_SELECTED"
     assert decision["selectionSource"] == "auto"
-    assert decision["masterRankerPolicyVersion"] == "master-ranker-policy-v1"
+    assert decision["masterRankerPolicyVersion"] == "master-ranker-policy-v2"
 
 
-def test_ambiguous_master_ranking_policy_requires_human_selection():
+def test_close_eligible_master_ranking_is_still_selected_deterministically():
     decision = master_selection_policy({
         "selectedMasterId": "master_2", "encoderVersion": "fake-v1", "masterRankerVersion": "master-ranker-v2",
         "scores": [{"masterId": "master_1", "total": 0.75}, {"masterId": "master_2", "total": 0.777476}, {"masterId": "master_3", "total": 0.769791}],
     })
-    assert decision["decision"] == "NEEDS_HUMAN_SELECTION"
+    assert decision["decision"] == "AUTO_SELECTED"
+    assert decision["selectionSource"] == "auto"
     assert decision["margin"] == 0.007685
 
 
@@ -133,16 +134,17 @@ def test_two_eligible_candidates_can_auto_select_when_confident():
     assert decision["decision"] == "AUTO_SELECTED"
 
 
-def test_two_eligible_candidates_with_small_margin_require_human_selection():
+def test_two_eligible_candidates_with_small_margin_are_not_blocked_by_policy_v2():
     decision = master_selection_policy({
         "selectedMasterId": "master_1", "scores": [{"masterId": "master_1", "total": 0.84}, {"masterId": "master_2", "total": 0.82}],
     })
-    assert decision["decision"] == "NEEDS_HUMAN_SELECTION"
+    assert decision["decision"] == "AUTO_SELECTED"
 
 
-def test_one_eligible_candidate_requires_human_selection():
+def test_one_eligible_candidate_is_auto_selected():
     decision = master_selection_policy({"selectedMasterId": "master_1", "scores": [{"masterId": "master_1", "total": 0.97}]})
-    assert decision["decision"] == "NEEDS_HUMAN_SELECTION"
+    assert decision["decision"] == "AUTO_SELECTED"
+    assert decision["selectionSource"] == "auto"
     assert decision["margin"] is None
 
 
