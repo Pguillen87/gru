@@ -299,6 +299,22 @@ def test_editorial_background_inside_legs_and_at_feet_is_removed_but_paper_skin_
     assert pose_transparency_qc(normalized)["status"] == "passed"
 
 
+def test_editorial_cleanup_removes_fragments_created_by_internal_background_removal():
+    image = Image.new("RGB", (128, 128), (253, 243, 218))
+    drawer = ImageDraw.Draw(image)
+    drawer.rectangle((30, 20, 98, 104), fill=(56, 82, 121))
+    drawer.rectangle((58, 48, 70, 80), fill=(253, 243, 218))
+    drawer.rectangle((62, 62, 63, 63), fill=(56, 82, 121))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    normalized = remove_connected_flat_background(source.getvalue(), crop=False)
+    qc = pose_transparency_qc(normalized)
+
+    assert qc["status"] == "passed"
+    assert qc["component_count"] == 1
+
+
 def test_qc_rejects_clean_outer_alpha_when_internal_editorial_background_remains():
     image = Image.new("RGBA", (96, 96), (0, 0, 0, 0))
     drawer = ImageDraw.Draw(image)

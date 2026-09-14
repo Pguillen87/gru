@@ -65,8 +65,11 @@ def remove_connected_flat_background(content: bytes, threshold: int = 24, *, cro
         _remove_border_connected_editorial_background(image)
     else:
         _remove_flat_background_from_seeds(image, threshold)
-    _remove_disconnected_alpha_noise(image)
     _remove_internal_editorial_background(image)
+    # Removing enclosed backdrop pixels can split tiny remnants away from the
+    # mascot.  Clean those fragments only after every background component has
+    # been removed, otherwise the new islands bypass the noise gate below.
+    _remove_disconnected_alpha_noise(image)
     if crop:
         image = _crop_transparent_margin(image)
     output = BytesIO()
