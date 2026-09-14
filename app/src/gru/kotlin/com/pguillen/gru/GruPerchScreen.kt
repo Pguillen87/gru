@@ -50,7 +50,7 @@ import com.pguillen.gru.mascot.importing.HttpMascotAssetDownloader
 import com.pguillen.gru.mascot.importing.MascotImportCoordinator
 import com.pguillen.gru.mascot.importing.MascotImportState
 import com.pguillen.gru.mascot.importing.MascotPackageInstaller
-import com.pguillen.gru.mascot.importing.UnavailableMascotCodeResolver
+import com.pguillen.gru.mascot.importing.mascotCodeResolverFromBuildConfig
 import kotlinx.coroutines.launch
 
 @Composable
@@ -59,7 +59,7 @@ internal fun GruPerchScreen(prefs: GruPreferences, modifier: Modifier = Modifier
     val coordinator = remember {
         val store = CustomMascotStore(context)
         MascotImportCoordinator(
-            UnavailableMascotCodeResolver,
+            mascotCodeResolverFromBuildConfig(),
             MascotPackageInstaller(store, HttpMascotAssetDownloader()),
             store,
             HttpMascotAssetDownloader(),

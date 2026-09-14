@@ -17,6 +17,7 @@ import com.pguillen.gru.mascot.importing.MascotVisibility
 import com.pguillen.gru.mascot.importing.MascotImportManifestParser
 import com.pguillen.gru.mascot.importing.MascotManifestParseResult
 import com.pguillen.gru.mascot.importing.UnavailableMascotCodeResolver
+import com.pguillen.gru.mascot.importing.HttpMascotCodeResolver
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.Locale
@@ -29,6 +30,11 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import okhttp3.MediaType.Companion.toMediaType
 
 class MascotImportTest {
     @Test fun `versioned manifest parser accepts valid payload and rejects malformed payload`() {
@@ -41,6 +47,24 @@ class MascotImportTest {
     }
     @Test fun `production resolver is honest while no endpoint exists`() = runTest {
         assertIs<MascotResolveResult.NotConfigured>(UnavailableMascotCodeResolver.resolve(assertNotNull(MascotImportCode.parse("BOB-AB12"))))
+    }
+
+    @Test fun `http resolver accepts only a valid bounded schema-v1 manifest`() = runTest {
+        val resolver = resolverWith(200, validManifestJson())
+        val resolved = resolver.resolve(assertNotNull(MascotImportCode.parse("GRU-ABCD-2345")))
+        assertIs<MascotResolveResult.Found>(resolved)
+        assertEquals("bob", resolved.manifest.mascotId)
+    }
+
+    @Test fun `http resolver does not accept an insecure base or redirects`() = runTest {
+        assertIs<MascotResolveResult.NotConfigured>(HttpMascotCodeResolver("http://puleiro.example").resolve(assertNotNull(MascotImportCode.parse("GRU-ABCD-2345"))))
+        assertIs<MascotResolveResult.Failed>(resolverWith(302, "").resolve(assertNotNull(MascotImportCode.parse("GRU-ABCD-2345"))))
+    }
+
+    @Test fun `http resolver rejects a response beyond the manifest limit`() = runTest {
+        val huge = "x".repeat(MascotImportManifest.MAX_MANIFEST_BYTES + 1)
+        val result = resolverWith(200, huge).resolve(assertNotNull(MascotImportCode.parse("GRU-ABCD-2345")))
+        assertEquals("MANIFEST_TOO_LARGE", assertIs<MascotResolveResult.Failed>(result).errorCode)
     }
     @Test fun `code is normalized without coupling to pose numbers`() {
         assertEquals("BOB-AB12", MascotImportCode.parse("  bob-ab12 ")?.value)
@@ -182,6 +206,21 @@ class MascotImportTest {
         val poses = MascotPoseRole.entries.map(::asset)
         return MascotImportManifest(1, "bob", "v1", "Bob", MascotVisibility.PUBLIC, poses.first(), poses)
     }
+
+    private fun validManifestJson(): String {
+        val checksum = BYTES.sha256()
+        fun asset(role: String) = """{"poseId":"${role.lowercase()}","role":"$role","assetUrl":"https://assets.example.invalid/${role.lowercase()}.png","sha256":"$checksum","expectedBytes":4,"mimeType":"image/png","width":24,"height":24}"""
+        val normal = asset("NORMAL")
+        return """{"schemaVersion":1,"mascotId":"bob","packageVersion":"v1","displayName":"Bob","visibility":"PRIVATE","preview":$normal,"poses":[$normal,${asset("LISTENING")},${asset("TRANSCRIBING")}]}"""
+    }
+
+    private fun resolverWith(code: Int, body: String): HttpMascotCodeResolver = HttpMascotCodeResolver(
+        "https://puleiro.example",
+        OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(code).message("test")
+                .body(body.toResponseBody("application/json".toMediaType())).build()
+        }.build(),
+    )
 
     private fun ByteArray.sha256(): String = MessageDigest.getInstance("SHA-256").digest(this)
         .joinToString("") { "%02x".format(it) }

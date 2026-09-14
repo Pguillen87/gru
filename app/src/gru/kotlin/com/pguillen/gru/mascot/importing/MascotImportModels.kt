@@ -100,7 +100,7 @@ internal fun String.isSafeHttpsAssetUrl(): Boolean = runCatching {
         uri.port in setOf(-1, 443) && !host.isLocalOrPrivateHost()
 }.getOrDefault(false)
 
-private fun String.isLocalOrPrivateHost(): Boolean =
+internal fun String.isLocalOrPrivateHost(): Boolean =
     this == "localhost" || this.endsWith(".localhost") || this == "::1" ||
         startsWith("127.") || startsWith("10.") || startsWith("192.168.") ||
         Regex("^172\\.(1[6-9]|2[0-9]|3[01])\\.").containsMatchIn(this) ||
