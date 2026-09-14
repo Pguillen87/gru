@@ -90,6 +90,7 @@ class JobCoordinator:
         correlation_id: str | None = None,
         workflow_mode: str = WorkflowMode.LEGACY_MANUAL.value,
         subject_hint: dict[str, object] | None = None,
+        automatic_generation_authorized: bool = False,
     ) -> tuple[JobRecord, bool]:
         selected_poses = validate_pose_choices(pose_choices or dict(DEFAULT_POSE_CHOICES))
         confirmed_identity = subject_identity or {
@@ -148,6 +149,7 @@ class JobCoordinator:
             attempt_id=attempt_id,
             correlation_id=correlation_id,
             workflow_mode=workflow_mode,
+            automatic_generation_authorized=automatic_generation_authorized,
             subject_hint=subject_hint,
             subject_hint_policy_version=str(subject_hint.get("version")) if subject_hint else None,
         )

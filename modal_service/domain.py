@@ -141,6 +141,7 @@ class JobRecord:
     pose_operation_created_at: str | None = None
     pose_request_id: str | None = None
     workflow_mode: str = WorkflowMode.LEGACY_MANUAL.value
+    automatic_generation_authorized: bool = False
     subject_hint: dict[str, object] | None = None
     encoder_version: str | None = None
     subject_hint_policy_version: str | None = None

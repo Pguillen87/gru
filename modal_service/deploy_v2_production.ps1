@@ -18,6 +18,7 @@ $env:MASTER_GENERATION_ENABLED = if ($enabled) { "true" } else { "false" }
 $env:POSE_GENERATION_ENABLED = if ($enabled) { "true" } else { "false" }
 $env:INCUBATOR_FLOW_ENABLED = if ($enabled) { "true" } else { "false" }
 $env:INCUBATOR_AUTO_RANKING_ENABLED = if ($enabled) { "true" } else { "false" }
+$env:INCUBATOR_VISUAL_ENCODER_DIR = "/gru-models/siglip-base-p16-224-zeroshot-v1/puleiro-siglip-artifact-verified-v1"
 
 if ($enabled) {
   Write-Host "Deploying the production generation path with explicit GPU authorization."

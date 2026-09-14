@@ -116,7 +116,8 @@ def test_pose_spawn_boundary_requires_both_generation_flags(
     assert master.calls == 0
 
 
-def test_reconciler_defers_disabled_incubator_gpu_and_resumes_once(monkeypatch):
+@pytest.mark.parametrize("authorized", [False, True])
+def test_reconciler_defers_disabled_incubator_gpu_and_resumes_once(monkeypatch, authorized):
     job = JobRecord(
         "job-incubator",
         "owner",
@@ -126,6 +127,7 @@ def test_reconciler_defers_disabled_incubator_gpu_and_resumes_once(monkeypatch):
         state=JobState.AWAITING_MASTER_APPROVAL,
     )
     records = {job.job_id: mascot_app._serialize(job)}
+    records[job.job_id]["automatic_generation_authorized"] = authorized
     calls = 0
 
     class _DeferredAdvance:
@@ -147,10 +149,11 @@ def test_reconciler_defers_disabled_incubator_gpu_and_resumes_once(monkeypatch):
     monkeypatch.setattr(mascot_app, "GPU_GENERATION_ENABLED", True)
     mascot_app.reconcile_async_incubations.local()
     mascot_app.reconcile_async_incubations.local()
-    assert calls == 1
+    assert calls == int(authorized)
 
 
-def test_reconciler_defers_disabled_master_without_reservation(monkeypatch):
+@pytest.mark.parametrize("authorized", [False, True])
+def test_reconciler_defers_disabled_master_without_reservation(monkeypatch, authorized):
     job = JobRecord(
         "job-incubator-master",
         "owner",
@@ -160,6 +163,7 @@ def test_reconciler_defers_disabled_master_without_reservation(monkeypatch):
         state=JobState.REGISTERED,
     )
     records = {job.job_id: mascot_app._serialize(job)}
+    records[job.job_id]["automatic_generation_authorized"] = authorized
     calls = 0
 
     def schedule_once(current: JobRecord, user_id: str) -> dict[str, object]:
@@ -181,4 +185,4 @@ def test_reconciler_defers_disabled_master_without_reservation(monkeypatch):
     monkeypatch.setattr(mascot_app, "GPU_GENERATION_ENABLED", True)
     mascot_app.reconcile_async_incubations.local()
     mascot_app.reconcile_async_incubations.local()
-    assert calls == 1
+    assert calls == int(authorized)

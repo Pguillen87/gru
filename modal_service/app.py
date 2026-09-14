@@ -594,6 +594,7 @@ def register_job(
     correlation_id: str | None = None,
     workflow_mode: str = WorkflowMode.LEGACY_MANUAL.value,
     subject_hint_payload: dict[str, object] | None = None,
+    automatic_generation_authorized: bool = False,
 ) -> dict[str, object]:
     try:
         coordinator = JobCoordinator(jobs, idempotency, usage, LIMITS, utc_day_key())
@@ -608,6 +609,7 @@ def register_job(
             correlation_id=correlation_id,
             workflow_mode=workflow_mode,
             subject_hint=subject_hint_payload,
+            automatic_generation_authorized=automatic_generation_authorized,
         )
         if attempt_id:
             coordinator.idempotency[_attempt_key(user_id, attempt_id)] = job.job_id
@@ -1056,6 +1058,8 @@ def reconcile_async_incubations() -> dict[str, int]:
             if not is_async_incubation(job) or job.state in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELED}:
                 continue
             counters["examined"] += 1
+            if not job.automatic_generation_authorized:
+                continue
             if job.state in {JobState.REGISTERED, JobState.READY_FOR_GENERATION}:
                 # A disabled flag defers this CPU reconciler path without
                 # changing the job or reserving another GPU operation.
@@ -2168,10 +2172,6 @@ def api():
         try:
             job = _get_job(job_id)
             _ensure_owner(job, identity.user_id)
-            if is_async_incubation(job) and job.state is JobState.AWAITING_MASTER_APPROVAL and not job.master_selection:
-                advanced = advance_async_incubation.remote(job_id)
-                _raise_guard_error(advanced)
-                job = _deserialize(dict(advanced["job"]))
             _refresh_result_assets(job)
             return _public_job_with_assets(job)
         except DomainError as error:
@@ -2221,6 +2221,7 @@ def api():
                 correlation_id=_safe_correlation_id(x_correlation_id),
                 workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
                 subject_hint_payload=normalized_hint,
+                automatic_generation_authorized=_master_generation_enabled(),
             )
             _raise_guard_error(registration)
             job = _deserialize(dict(registration["job"]))
@@ -2233,7 +2234,7 @@ def api():
             # readiness. Keep the persisted egg recoverable while all
             # generation kill-switches are false; the reconciler will resume
             # this same job after explicit enablement.
-            if not _master_generation_enabled():
+            if not _master_generation_enabled() or not job.automatic_generation_authorized:
                 return incubation_registration_payload(job, bool(registration["created"]), False)
             scheduled = _schedule_master(job, identity.user_id)
             return public_job(_deserialize(scheduled)) | {"idempotentReplay": not bool(registration["created"])}

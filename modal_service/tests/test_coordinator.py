@@ -24,6 +24,24 @@ def test_create_replay_returns_same_job_without_new_quota_or_cost():
     assert all("cost" not in key for key in usage)
 
 
+@pytest.mark.parametrize("authorized", [False, True])
+def test_async_admission_is_persisted_and_replay_cannot_enable_old_work(authorized):
+    service, _ = coordinator()
+    job, _ = service.register(
+        "owner", "admission", "source", registration_only=True,
+        workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
+        automatic_generation_authorized=authorized,
+    )
+    replay, created = service.register(
+        "owner", "admission", "source", registration_only=True,
+        workflow_mode=WorkflowMode.ASYNC_INCUBATOR_V1.value,
+        automatic_generation_authorized=True,
+    )
+    assert not created
+    assert service.get(job.job_id).automatic_generation_authorized is authorized
+    assert replay.automatic_generation_authorized is authorized
+
+
 def test_v2_registration_stops_before_generation_and_is_attempt_idempotent():
     service, usage = coordinator()
     first, created = service.register(
